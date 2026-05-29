@@ -7,8 +7,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 ---
 
 ## ▶ Current
-- **Phase:** 2 — Indicators
-- **Next step:** Step 8 — `indicators/*` pure functions (MA/RSI/MACD/returns/vol/drawdown) + golden-file tests
+- **Phase:** 3 — News + LLM (Role A)
+- **Next step:** Step 9 — `news/` fetch → dedup → clean → rank
 - **Gate to advance:** `make check` green
 - **Last updated:** 2026-05-29
 
@@ -25,8 +25,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - [x] 6. Alpha Vantage + Finnhub + Marketaux providers
 - [x] 7. `data/loader.py` + `data/validation.py`
 
-## Phase 2 — Indicators
-- [ ] 8. `indicators/*` + golden-file tests
+## Phase 2 — Indicators ✅
+- [x] 8. `indicators/*` + golden-file tests
 
 ## Phase 3 — News + LLM (Role A)
 - [ ] 9. `news/` fetch → dedup → clean → rank
@@ -75,3 +75,4 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - 2026-05-29 — Phase 1 done; gate green (ruff + mypy strict + 47 pytest). Live smoke verified: yfinance prices (NVDA, adj_close present), Finnhub 247 + Marketaux 3 merged = 250 news, Alpha Vantage skipped (no key). Deps added: httpx, yfinance, pandas.
 - 2026-05-29 — Provider design: structural Protocols (base `Provider` + capability sub-Protocols); typed error contract (`ProviderError`/`Unavailable`/`RateLimit`/`SymbolNotFound`); disk TTL cache via `cached_model`; news = merge mode, prices = failover; HTTP via injectable `HttpJson` (MockTransport in tests). `FundamentalsProvider` Protocol defined; concrete impl deferred to Phase 4.
 - 2026-05-29 — Alpha Vantage key added + live-tested. Fixed free-tier bug: `outputsize=full` is now premium → switched to `compact` (~100 trading days; fine since yfinance is primary price source). Live OK: AV prices (AAPL, 10 bars) and AV news (50 articles w/ sentiment). Note: AV free throttles to ~1 req/sec — registry merge fires providers sequentially so this is generally fine; heavy multi-call flows may need spacing.
+- 2026-05-29 — Phase 2 done; gate green (ruff + mypy strict + 62 pytest). Indicators: pure pandas fns (returns/trend/momentum/volatility) + `wilder_smooth` (RSI/ATR) + frame adapter + typed `IndicatorSnapshot`. Conventions: Wilder RMA (SMA seed), MACD EMA adjust=False, vol = annualized log-return std ddof=1 (252d), drawdown = close/cummax-1, analysis close = adj_close|close. Golden values hand-derived (period=2 RSI/ATR). Live sanity on NVDA: MA20>MA50>MA200, vol 40%, MDD -20% — all consistent.
