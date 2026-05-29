@@ -3,10 +3,11 @@
 Sentiment design note:
   Finnhub and Marketaux do not return sentiment scores; only Alpha Vantage
   does, covering ~17% of articles. To get full-coverage, consistent sentiment,
-  we send all articles to Claude in a single batched call (~$0.08 per run at
-  Sonnet pricing) and receive a score per article in [-1, 1]. This lives in
-  ``features/`` (not ``news/``) so it only fires when building the ML feature
-  matrix — not on every news fetch for the report or chat agent.
+  we send the articles to Claude in a single batched call and receive a score
+  per article in [-1, 1]. Measured cost: ~$0.035 per run for 25 articles on
+  Sonnet (see scripts/estimate_sentiment_cost.py). This lives in ``features/``
+  (not ``news/``) so it only fires when building the ML feature matrix — not on
+  every news fetch for the report or chat agent.
 
   Limitation: we only have *current* news from the API, not historical news at
   each past date t. Therefore news features are used for live inference only;
@@ -51,19 +52,24 @@ _DOWNGRADE_RE = re.compile(
 )
 
 
-def _score_sentiment_batch(articles: list[Article], ticker: str, llm: TextLLM) -> dict[str, float]:
-    """Send all articles to Claude in one call; return {canonical_url → score}."""
-    if not articles:
-        return {}
-
+def build_sentiment_user(articles: list[Article], ticker: str) -> str:
+    """Build the user message for batch sentiment scoring (one line block per article)."""
     user_lines = [f"Ticker: {ticker}\n"]
     for i, a in enumerate(articles, 1):
         line = f"[{i}] url: {a.url}\n    title: {a.title}"
         if a.summary:
             line += f"\n    summary: {a.summary[:300]}"  # cap per-article tokens
         user_lines.append(line)
+    return "\n".join(user_lines)
 
-    raw = llm.complete_json(system=_SENTIMENT_SYSTEM, user="\n".join(user_lines), max_tokens=2048)
+
+def _score_sentiment_batch(articles: list[Article], ticker: str, llm: TextLLM) -> dict[str, float]:
+    """Send all articles to Claude in one call; return {canonical_url → score}."""
+    if not articles:
+        return {}
+
+    user = build_sentiment_user(articles, ticker)
+    raw = llm.complete_json(system=_SENTIMENT_SYSTEM, user=user, max_tokens=2048)
 
     try:
         parsed = json.loads(raw)
