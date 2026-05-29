@@ -7,8 +7,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 ---
 
 ## ▶ Current
-- **Phase:** 3 — News + LLM (Role A)
-- **Next step:** Step 9 — `news/` fetch → dedup → clean → rank
+- **Phase:** 4.5 — Chat agent (Role B) ← MVP milestone
+- **Next step:** Step 15 — `agent/tools.py` (analyze + baseline-forecast tools)
 - **Gate to advance:** `make check` green
 - **Last updated:** 2026-05-29
 
@@ -28,15 +28,15 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 ## Phase 2 — Indicators ✅
 - [x] 8. `indicators/*` + golden-file tests
 
-## Phase 3 — News + LLM (Role A)
-- [ ] 9. `news/` fetch → dedup → clean → rank
-- [ ] 10. `llm/` client + prompts + `news_summarizer.py` + `guards.py`
+## Phase 3 — News + LLM (Role A) ✅
+- [x] 9. `news/` fetch → dedup → clean → rank
+- [x] 10. `llm/` client + prompts + `news_summarizer.py` + `guards.py`
 
-## Phase 4 — Baseline forecast + report
-- [ ] 11. `forecasting/` base + buckets + historical
-- [ ] 12. `reports/` builder + render_md + templates
-- [ ] 13. `pipelines/analyze.py` + `cli/app.py` (`analyze`)
-- [ ] 14. Integration test: analyze pipeline with fakes
+## Phase 4 — Baseline forecast + report ✅
+- [x] 11. `forecasting/` base + buckets + historical
+- [x] 12. `reports/` builder + render_md (rendered in code; no jinja2 dep)
+- [x] 13. `pipelines/analyze.py` + `cli/app.py` (`analyze`)
+- [x] 14. Integration test: analyze pipeline with fakes
 
 ## Phase 4.5 — Chat agent (Role B) ← MVP milestone
 - [ ] 15. `agent/tools.py` (analyze + baseline-forecast tools)
@@ -76,3 +76,6 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - 2026-05-29 — Provider design: structural Protocols (base `Provider` + capability sub-Protocols); typed error contract (`ProviderError`/`Unavailable`/`RateLimit`/`SymbolNotFound`); disk TTL cache via `cached_model`; news = merge mode, prices = failover; HTTP via injectable `HttpJson` (MockTransport in tests). `FundamentalsProvider` Protocol defined; concrete impl deferred to Phase 4.
 - 2026-05-29 — Alpha Vantage key added + live-tested. Fixed free-tier bug: `outputsize=full` is now premium → switched to `compact` (~100 trading days; fine since yfinance is primary price source). Live OK: AV prices (AAPL, 10 bars) and AV news (50 articles w/ sentiment). Note: AV free throttles to ~1 req/sec — registry merge fires providers sequentially so this is generally fine; heavy multi-call flows may need spacing.
 - 2026-05-29 — Phase 2 done; gate green (ruff + mypy strict + 62 pytest). Indicators: pure pandas fns (returns/trend/momentum/volatility) + `wilder_smooth` (RSI/ATR) + frame adapter + typed `IndicatorSnapshot`. Conventions: Wilder RMA (SMA seed), MACD EMA adjust=False, vol = annualized log-return std ddof=1 (252d), drawdown = close/cummax-1, analysis close = adj_close|close. Golden values hand-derived (period=2 RSI/ATR). Live sanity on NVDA: MA20>MA50>MA200, vol 40%, MDD -20% — all consistent.
+- 2026-05-29 — Phase 4 done; gate green (ruff + mypy strict + 95 pytest). Forecasting: `ForecastModel` protocol, 6 return buckets ([lower,upper)), historical-sim baseline (empirical overlapping h-day returns → bucket probs, E[r], VaR95/99, 90% CI; flags low-confidence <30 samples). Reports: deterministic `build_report` (templated narrative from numbers + LLM news summary) + `render_markdown` (all required sections, disclaimer, no recommendation; rendered in code — chose not to add jinja2). Pipeline `run_analyze` degrades gracefully if LLM disabled/fails. CLI `analyze` via Typer (Annotated style; needs a `@app.callback()` so single command keeps its name). Deps: typer. Live: AAPL `--no-llm` (uptrend, RSI 78, 289 bars, scenarios/VaR/CI) + MSFT full LLM run (rich grounded news section, valid citations). Fixed: summarizer truncation (max_tokens 2048→4096) + pipeline now degrades on parse/validation errors too.
+- Deferred to later: `forecast`/`backtest` CLI commands (Phases 5-6); fundamentals provider + report fundamentals section (when a provider is added).
+- 2026-05-29 — Phase 3 done; gate green (ruff + mypy strict + 86 pytest). News pipeline (clean/canonical-url, dedup by canonical-url+title-Jaccard with field merge, recency+mention rank) + LLM Role A (AnthropicClient w/ system-block prompt caching, NewsSummary schema, anti-forecast + citation guards, summarizer w/ 1 corrective retry). Live NVDA end-to-end: 300→297 deduped→8 ranked→Sonnet summary; 0 forecast violations, 0 invalid citations. Fixed Sonnet-4.x bug: model rejects assistant-message prefill → removed prefill, rely on JSON instruction + lenient parse. Dep added: anthropic 0.105.
