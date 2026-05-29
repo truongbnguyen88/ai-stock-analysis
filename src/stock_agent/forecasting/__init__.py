@@ -1,7 +1,7 @@
 """Probabilistic forecasting — model-generated scenario distributions.
 
-Phase 4 ships the historical-simulation baseline. Monte-Carlo and ML models
-(Phase 5) implement the same ``ForecastModel`` interface.
+All models implement the same ``ForecastModel`` interface so they are
+swappable in pipelines, reports, and backtests.
 """
 
 from stock_agent.forecasting.base import ForecastModel
@@ -11,7 +11,13 @@ from stock_agent.forecasting.buckets import (
     bucket_probabilities,
     make_prob_buckets,
 )
-from stock_agent.forecasting.historical import HistoricalSimulation, historical_forecast
+from stock_agent.forecasting.historical import (
+    HistoricalSimulation,
+    historical_forecast,
+    sample_to_forecast,
+)
+from stock_agent.forecasting.ml import MLForecaster
+from stock_agent.forecasting.monte_carlo import MonteCarlo
 
 __all__ = [
     "ForecastModel",
@@ -19,6 +25,9 @@ __all__ = [
     "assign_bucket",
     "bucket_probabilities",
     "make_prob_buckets",
+    "sample_to_forecast",
     "HistoricalSimulation",
     "historical_forecast",
+    "MonteCarlo",
+    "MLForecaster",
 ]

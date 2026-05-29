@@ -1,7 +1,7 @@
 """Command-line interface (Typer).
 
-Thin dispatch layer: parse arguments, run a pipeline, render output. Currently
-exposes ``analyze``; ``forecast`` and ``backtest`` arrive in Phases 5-6.
+Thin dispatch layer: parse arguments, run a pipeline, render output.
+Commands: analyze (Phase 4), forecast (Phase 5), chat (Phase 4.5).
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import typer
 
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
+from stock_agent.pipelines.forecast import MODEL_REGISTRY, run_forecast
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.settings import get_settings
 
@@ -60,6 +61,49 @@ def analyze(
         typer.echo(f"Wrote report to {output}")
     else:
         typer.echo(markdown)
+
+
+@app.command()
+def forecast(
+    ticker: Annotated[str, typer.Option("--ticker", "-t", help="Ticker symbol")],
+    horizon: Annotated[
+        int, typer.Option("--horizon", help="Forecast horizon in trading days")
+    ] = 20,
+    model: Annotated[
+        str, typer.Option("--model", "-m", help=f"Forecaster: {list(MODEL_REGISTRY)}")
+    ] = "historical_sim",
+    all_models: Annotated[
+        bool, typer.Option("--all-models", help="Run and compare all available models")
+    ] = False,
+) -> None:
+    """Run a probabilistic scenario forecast for a ticker."""
+    settings = get_settings()
+    configure_logging(settings)
+    models = list(MODEL_REGISTRY) if all_models else [model]
+    for m in models:
+        try:
+            fc = run_forecast(ticker, horizon, model_name=m, settings=settings)
+        except ValueError as exc:
+            typer.echo(f"[{m}] {exc}")
+            continue
+        typer.echo(f"\n{'=' * 60}")
+        typer.echo(f"  {fc.ticker} — {fc.horizon_days}d forecast ({fc.model_name})")
+        typer.echo(f"{'=' * 60}")
+        typer.echo(f"  Expected return : {fc.expected_return:+.2%}")
+        typer.echo(f"  P(up)           : {fc.upside_prob:.0%}")
+        typer.echo(f"  P(down)         : {fc.downside_prob:.0%}")
+        if fc.var_95 is not None:
+            typer.echo(f"  VaR 95%         : {fc.var_95:.2%}")
+        if fc.ci_low is not None and fc.ci_high is not None:
+            typer.echo(f"  90% CI          : [{fc.ci_low:.2%}, {fc.ci_high:.2%}]")
+        typer.echo(f"  Calibration     : {fc.calibration_status}")
+        typer.echo("")
+        typer.echo("  Scenario buckets:")
+        for b in fc.buckets:
+            bar = "█" * int(b.probability * 30)
+            typer.echo(f"    {b.label:>15s}  {b.probability:5.1%}  {bar}")
+        if fc.notes:
+            typer.echo(f"\n  ⚠  {fc.notes}")
 
 
 @app.command()

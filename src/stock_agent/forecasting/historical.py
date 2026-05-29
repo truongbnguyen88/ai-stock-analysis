@@ -32,6 +32,48 @@ def _horizon_returns(closes: np.ndarray, horizon: int) -> np.ndarray:
     return np.asarray(closes[horizon:] / closes[:-horizon] - 1.0, dtype=float)
 
 
+def sample_to_forecast(
+    sample: np.ndarray,
+    *,
+    ticker: str,
+    as_of: Date,
+    horizon_days: int,
+    model_name: str,
+    min_samples: int = _MIN_SAMPLES,
+) -> ScenarioForecast:
+    """Build a ``ScenarioForecast`` from any sample of forward simple returns.
+
+    Shared by all forecasters (historical sim, Monte Carlo, ML) so the output
+    shape is identical and models are directly comparable.
+    """
+    n = len(sample)
+    if n == 0:
+        raise ValueError(f"empty sample; cannot build forecast for horizon {horizon_days}")
+
+    notes = None
+    if n < min_samples:
+        notes = f"Only {n} samples; estimates are low-confidence."
+
+    return ScenarioForecast(
+        ticker=ticker,
+        as_of=as_of,
+        horizon_days=horizon_days,
+        model_name=model_name,
+        buckets=make_prob_buckets(bucket_probabilities(sample)),
+        expected_return=float(sample.mean()),
+        upside_prob=float((sample > 0).mean()),
+        downside_prob=float((sample < 0).mean()),
+        # 5th / 1st percentile as (typically negative) VaR levels.
+        var_95=float(np.quantile(sample, 0.05)),
+        var_99=float(np.quantile(sample, 0.01)),
+        ci_level=0.90,
+        ci_low=float(np.quantile(sample, 0.05)),
+        ci_high=float(np.quantile(sample, 0.95)),
+        calibration_status="unknown",
+        notes=notes,
+    )
+
+
 def historical_forecast(
     closes: Sequence[float],
     horizon_days: int,
@@ -43,33 +85,15 @@ def historical_forecast(
     """Build a ``ScenarioForecast`` from the empirical horizon-return distribution."""
     arr = np.asarray(closes, dtype=float)
     sample = _horizon_returns(arr, horizon_days)
-    n = len(sample)
-    if n == 0:
+    if len(sample) == 0:
         raise ValueError(f"insufficient price history ({len(arr)} bars) for horizon {horizon_days}")
-
-    buckets = make_prob_buckets(bucket_probabilities(sample))
-    notes = None
-    if n < min_samples:
-        notes = f"Only {n} overlapping {horizon_days}-day samples; estimates are low-confidence."
-
-    return ScenarioForecast(
+    return sample_to_forecast(
+        sample,
         ticker=ticker,
         as_of=as_of,
         horizon_days=horizon_days,
         model_name=_MODEL_NAME,
-        buckets=buckets,
-        expected_return=float(sample.mean()),
-        upside_prob=float((sample > 0).mean()),
-        downside_prob=float((sample < 0).mean()),
-        # VaR as a (negative) return at the tail; e.g. var_95 = 5th percentile.
-        var_95=float(np.quantile(sample, 0.05)),
-        var_99=float(np.quantile(sample, 0.01)),
-        # 90% predictive interval on the horizon return.
-        ci_level=0.90,
-        ci_low=float(np.quantile(sample, 0.05)),
-        ci_high=float(np.quantile(sample, 0.95)),
-        calibration_status="unknown",  # not yet calibrated (Phase 6)
-        notes=notes,
+        min_samples=min_samples,
     )
 
 

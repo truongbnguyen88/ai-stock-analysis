@@ -7,8 +7,8 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 ---
 
 ## ▶ Current
-- **Phase:** 5 — Statistical & ML models (V1)
-- **Next step:** Step 18 — `forecasting/monte_carlo.py` (GBM + block bootstrap) + `forecast` CLI
+- **Phase:** 6 — Backtesting & calibration
+- **Next step:** Step 21 — `backtesting/splitter.py` (walk-forward + embargo) + leakage tests
 - **Gate to advance:** `make check` green
 - **Last updated:** 2026-05-29
 - 🎉 **MVP milestone reached** (Phases 0–4.5): analyze CLI + chat agent working live.
@@ -44,10 +44,10 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - [x] 16. `agent/runtime.py` + prompts + numeric-grounding guard
 - [x] 17. `chat` CLI command + agent integration tests
 
-## Phase 5 — Statistical & ML models
-- [ ] 18. `forecasting/monte_carlo.py` + `forecast` CLI
-- [ ] 19. `features/` price + news + assembler (point-in-time)
-- [ ] 20. `forecasting/ml.py` (logistic → tree ensembles)
+## Phase 5 — Statistical & ML models ✅
+- [x] 18. `forecasting/monte_carlo.py` (GBM + block bootstrap) + `forecast` CLI
+- [x] 19. `features/` price + news + assembler (point-in-time, leakage-tested)
+- [x] 20. `forecasting/ml.py` (logistic, XGBoost, LightGBM, random forest)
 
 ## Phase 6 — Backtesting & calibration
 - [ ] 21. `backtesting/splitter.py` (walk-forward + embargo) + leakage tests
