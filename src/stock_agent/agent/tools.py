@@ -189,4 +189,10 @@ class ToolExecutor:
         horizon = int(args["horizon_days"])
         series = self._load(ticker, _PRICE_LOOKBACK_DAYS)
         forecast = HistoricalSimulation().forecast(series, horizon_days=horizon)
-        return forecast.model_dump(mode="json")
+        result = forecast.model_dump(mode="json")
+        # VaR confidence levels appear only as field *names* (var_95, var_99) in the
+        # model dump — the numbers 95 and 99 never enter the grounding set, so the
+        # agent can't say "99% VaR" without a false-positive grounding violation.
+        # Add them explicitly so standard statistical labels are always grounded.
+        result["var_confidence_levels_pct"] = [90, 95, 99]
+        return result
