@@ -1,4 +1,4 @@
-.PHONY: install check test lint typecheck format clean
+.PHONY: install check test lint typecheck format clean ui
 
 install:  ## editable install with dev tooling
 	pip install -e ".[dev]"
@@ -17,6 +17,9 @@ typecheck:
 format:  ## auto-format and apply safe lint fixes
 	ruff format src tests
 	ruff check --fix src tests
+
+ui:  ## launch the Streamlit chat frontend (browser opens automatically)
+	PYTHONPATH=src streamlit run ui/chat_app.py
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage
