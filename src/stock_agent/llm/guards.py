@@ -41,17 +41,24 @@ class NewsSummary(BaseModel):
     catalysts: list[CitedPoint] = Field(default_factory=list)
 
 
-# Patterns that indicate model-generated probability/forecast language. Each
-# requires an explicit forecast/probability cue (not a bare percentage), to avoid
-# flagging legitimately reported facts.
+# Patterns that indicate LLM-invented probability/forecast language.
+# Each requires an explicit forward-looking cue so legitimately *reported* facts
+# (e.g. "revenue up 20%", "analyst raised price target to $300") are NOT flagged.
+#
+# Key distinction: "Truist raised its price target to $300" is a reported news fact.
+# "My price target is $300" or "the stock will reach $300" is an LLM-invented forecast.
 _FORECAST_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Explicit probability/odds language.
     re.compile(r"\b\d+(\.\d+)?\s*%?\s*(chance|probability|odds|likelihood)\b", re.I),
     re.compile(r"\b(probability|chance|odds|likelihood)\s+(of|that)\b", re.I),
-    re.compile(r"\bprice target\b", re.I),
+    # LLM asserting its own price target (not reporting an analyst's).
+    # "my/our/I set a price target" but NOT "analyst raised price target".
+    re.compile(r"\b(my|our|I\s+set|we\s+set)\s+(a\s+)?price\s+target\b", re.I),
+    # Numeric return/price forecasts explicitly attributed to the model's own view.
     re.compile(
         r"\b(expected|projected|forecast(ed)?|predicted)\s+(return|price|gain|loss)\b", re.I
     ),
-    re.compile(r"\b\d+(\.\d+)?\s*%\s*(upside|downside)\b", re.I),
+    re.compile(r"\b\d+(\.\d+)?\s*%\s*(upside|downside)\s+(potential|target|from here)\b", re.I),
     re.compile(r"\b(will|expected to|likely to)\s+\w+\s+(by\s+)?\d+(\.\d+)?\s*%", re.I),
 )
 

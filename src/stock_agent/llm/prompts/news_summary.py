@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from stock_agent.schemas.news import Article
 
-VERSION = "news_summary.v1"
+VERSION = "news_summary.v2"
 
 # Static instructions — cached. Encodes the numbers-vs-narrative invariant and
 # the exact JSON contract (mirrors stock_agent.llm.guards.NewsSummary).
@@ -18,10 +18,15 @@ synthesis of the provided news articles for a single stock ticker.
 STRICT RULES:
 - Summarize and interpret the articles' content. Do NOT give investment advice and \
 do NOT make buy/sell/hold recommendations.
-- You MUST NOT invent or state any probabilities, odds, likelihoods, price targets, \
-or numeric forecasts of future returns. Probabilities come only from statistical \
-models elsewhere in the system, never from you. You may report concrete facts that \
-appear in the articles (e.g. "revenue rose 20%"), but never forward-looking numbers.
+- You MUST NOT invent your own probabilities, odds, likelihoods, or numeric \
+forecasts of future returns. Probabilities come only from statistical models \
+elsewhere in the system, never from you.
+- You MAY report concrete facts and figures that appear in the articles \
+(e.g. "revenue rose 20%", "analyst raised price target to $300", "EPS of $1.87"). \
+Reporting what articles say is allowed; inventing your own forward-looking numbers \
+is not.
+- Do NOT set your own price targets. Do NOT say "the stock will reach $X" or \
+"I expect a 30% upside." You may report that analysts set or raised price targets.
 - Use ONLY the article URLs provided below as sources. Never invent URLs.
 - Base everything on the supplied articles; if evidence is thin, say so briefly in \
 the overview rather than speculating.

@@ -14,7 +14,7 @@ from stock_agent.llm.guards import (
 def test_forecast_language_is_flagged() -> None:
     bad = NewsSummary(
         overview="There is a 70% chance the stock rallies next quarter.",
-        bullish=[CitedPoint(point="Analysts set a price target of $250.")],
+        bullish=[CitedPoint(point="I set a price target of $250.")],
     )
     violations = find_forecast_violations(bad)
     assert len(violations) >= 2
@@ -27,6 +27,31 @@ def test_reported_facts_not_flagged() -> None:
         key_themes=["earnings", "guidance raised"],
     )
     assert find_forecast_violations(ok) == []
+
+
+def test_reported_analyst_price_target_not_flagged() -> None:
+    # Regression: "Truist raised its price target" is a news fact, not LLM fabrication.
+    ok = NewsSummary(
+        overview=(
+            "NVIDIA reported 85.2% year-over-year revenue growth to $81.62 billion "
+            "with EPS of $1.87, beating estimates."
+        ),
+        bullish=[
+            CitedPoint(
+                point="Truist Securities raised its price target and maintained a Buy rating."
+            ),
+            CitedPoint(
+                point="Analyst upgraded price target to $200 citing strong Q1 results."
+            ),
+        ],
+    )
+    assert find_forecast_violations(ok) == []
+
+
+def test_llm_own_price_target_still_flagged() -> None:
+    # The LLM asserting its own price target must still be caught.
+    bad = NewsSummary(bullish=[CitedPoint(point="My price target is $300 for the next quarter.")])
+    assert len(find_forecast_violations(bad)) >= 1
 
 
 def test_invalid_citations_detected_and_sanitized() -> None:
