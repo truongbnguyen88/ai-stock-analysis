@@ -40,9 +40,7 @@ def test_reported_analyst_price_target_not_flagged() -> None:
             CitedPoint(
                 point="Truist Securities raised its price target and maintained a Buy rating."
             ),
-            CitedPoint(
-                point="Analyst upgraded price target to $200 citing strong Q1 results."
-            ),
+            CitedPoint(point="Analyst upgraded price target to $200 citing strong Q1 results."),
         ],
     )
     assert find_forecast_violations(ok) == []

@@ -62,6 +62,7 @@ with st.sidebar:
     st.divider()
     if st.button("🗑️ Clear chat", use_container_width=True):
         st.session_state.messages = []
+        st.session_state.agent_history = []  # also reset conversation memory
 
     st.divider()
     st.caption(
@@ -74,7 +75,9 @@ with st.sidebar:
 
 # ---- chat state ----
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = []       # display history (user/assistant text)
+if "agent_history" not in st.session_state:
+    st.session_state.agent_history = []  # Anthropic-format message history
 
 # ---- render history ----
 st.title("Stock Research Agent")
@@ -107,8 +110,15 @@ if prompt:
     with st.chat_message("assistant"):
         with st.spinner("Calling tools…"):
             try:
-                result = run_agent(prompt, llm=agent_llm, executor=executor)
+                result = run_agent(
+                    prompt,
+                    llm=agent_llm,
+                    executor=executor,
+                    history=st.session_state.agent_history,  # pass prior turns
+                )
                 response = result.text
+                # Persist the full message history for the next turn.
+                st.session_state.agent_history = result.messages
                 # Show which tools were used as a subtle annotation.
                 if result.tool_calls:
                     unique = list(dict.fromkeys(result.tool_calls))  # preserve order

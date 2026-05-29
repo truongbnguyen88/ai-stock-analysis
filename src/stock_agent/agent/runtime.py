@@ -58,6 +58,10 @@ class AgentResult:
     text: str
     tool_calls: list[str] = field(default_factory=list)
     iterations: int = 0
+    # Full Anthropic-format message history for this turn (user query + tool
+    # calls + final answer). Pass as ``history`` on the next turn to give the
+    # agent memory of prior conversation.
+    messages: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ToolLLM(Protocol):
@@ -129,14 +133,23 @@ def run_agent(
     *,
     llm: ToolLLM,
     executor: ToolExecutor,
+    history: list[dict[str, Any]] | None = None,
     system: str = SYSTEM,
     tools: list[dict[str, Any]] | None = None,
     max_iterations: int = _MAX_ITERATIONS,
     grounding_retries: int = 1,
 ) -> AgentResult:
-    """Run the tool-use loop and return a grounded final answer."""
+    """Run the tool-use loop and return a grounded final answer.
+
+    Pass ``history`` (the ``messages`` field from a prior ``AgentResult``) to
+    give the agent memory of previous turns in the same conversation.
+    Grounding is reset each turn — the agent must call tools again if it needs
+    a number, rather than quoting a value from an earlier turn.
+    """
     tools = tools if tools is not None else TOOL_SCHEMAS
-    messages: list[dict[str, Any]] = [{"role": "user", "content": query}]
+    # Prepend prior turns, then append the new user message.
+    messages: list[dict[str, Any]] = list(history) if history else []
+    messages.append({"role": "user", "content": query})
     grounding = NumberGrounding()
     tool_calls: list[str] = []
     retries_used = 0
@@ -180,6 +193,14 @@ def run_agent(
             continue
         if violations:
             raise AgentGroundingError(f"unverified figures after retry: {', '.join(violations)}")
-        return AgentResult(text=resp.text, tool_calls=tool_calls, iterations=iteration)
+
+        # Append the final assistant turn so the next call has the complete history.
+        messages.append({"role": "assistant", "content": resp.assistant_content})
+        return AgentResult(
+            text=resp.text,
+            tool_calls=tool_calls,
+            iterations=iteration,
+            messages=messages,
+        )
 
     raise AgentError(f"agent did not finish within {max_iterations} iterations")

@@ -20,13 +20,15 @@ from stock_agent.settings import Settings
 
 
 class FakeToolLLM:
-    """Returns scripted ToolResponses in order, ignoring the transcript."""
+    """Returns scripted ToolResponses in order; records the last messages list."""
 
     def __init__(self, responses: list[ToolResponse]) -> None:
         self._responses = responses
         self.calls = 0
+        self._last_messages: list[dict[str, object]] = []
 
     def create(self, *, system, messages, tools, max_tokens) -> ToolResponse:  # type: ignore[no-untyped-def]
+        self._last_messages = list(messages)
         resp = self._responses[min(self.calls, len(self._responses) - 1)]
         self.calls += 1
         return resp
@@ -69,6 +71,26 @@ def test_tool_loop_executes_then_answers() -> None:
     assert "run_forecast" in result.tool_calls
     assert result.iterations == 2
     assert "NVDA" in result.text
+    # messages contains the full turn (user + tool calls + assistant) for next-turn history.
+    assert any(m["role"] == "assistant" for m in result.messages)
+
+
+def test_stateful_history_is_threaded() -> None:
+    # Turn 1: simple answer with no tools.
+    t1 = _final("NVDA closed at a specific price yesterday.")
+    result1 = run_agent("What did NVDA close at?", llm=FakeToolLLM([t1]), executor=_executor())
+
+    # Turn 2: pass turn-1 messages as history; the fake LLM receives a longer transcript.
+    t2 = _final("Based on my earlier answer, NVDA is still the ticker.")
+    llm2 = FakeToolLLM([t2])
+    run_agent(
+        "What ticker were we discussing?",
+        llm=llm2,
+        executor=_executor(),
+        history=result1.messages,
+    )
+    # The messages passed to the LLM on turn 2 must include the prior user + assistant turns.
+    assert len(llm2._last_messages) > 2  # history + new user message
 
 
 def test_fabricated_number_triggers_retry_then_succeeds() -> None:
