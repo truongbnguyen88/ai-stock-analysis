@@ -1,18 +1,17 @@
-"""News feature engineering with Claude batch sentiment scoring.
+"""News display/context features (NOT ML model inputs).
 
-Sentiment design note:
-  Finnhub and Marketaux do not return sentiment scores; only Alpha Vantage
-  does, covering ~17% of articles. To get full-coverage, consistent sentiment,
-  we send the articles to Claude in a single batched call and receive a score
-  per article in [-1, 1]. Measured cost: ~$0.035 per run for 25 articles on
-  Sonnet (see scripts/estimate_sentiment_cost.py). This lives in ``features/``
-  (not ``news/``) so it only fires when building the ML feature matrix — not on
-  every news fetch for the report or chat agent.
+Option A (see docs/TASKS.md): the ML forecaster is PRICE-ONLY. News sentiment is
+never a model feature — it is shown alongside the forecast as context. We have no
+point-in-time historical news to train on, so a news feature could not be applied
+at inference consistently anyway.
 
-  Limitation: we only have *current* news from the API, not historical news at
-  each past date t. Therefore news features are used for live inference only;
-  the training matrix uses price features alone (see assembler.py). When
-  historical news data becomes available, these functions slot in unchanged.
+Sentiment sourcing (display only):
+  - default: Alpha Vantage's free pre-computed ``article.sentiment`` (~17% of
+    articles carry a score; ``sentiment_coverage`` reports the fraction).
+  - optional: Claude batch scoring for full coverage (off by default; ~$0.035 per
+    25 articles, measured — see scripts/estimate_sentiment_cost.py). Scoring all
+    ~300 articles costs ~$0.44 and is fragile (truncates), so the default path
+    uses AV + the existing Role A summary for insight instead.
 """
 
 from __future__ import annotations
@@ -86,26 +85,33 @@ def _score_sentiment_batch(articles: list[Article], ticker: str, llm: TextLLM) -
 
 def build_news_features(
     bundle: NewsBundle,
+    *,
     llm: TextLLM | None = None,
+    use_llm_sentiment: bool = False,
 ) -> dict[str, float]:
-    """Build the news feature dict for the current article bundle.
+    """Build the news **display/context** dict for the current article bundle.
 
-    When ``llm`` is provided, Claude scores sentiment for all articles.
-    When absent (offline / no key), sentiment features default to 0 and
-    ``sentiment_coverage`` to 0 so the ML model learns to ignore them.
+    NOTE (Option A): this is NOT a model input — the ML forecaster is price-only.
+    These features are shown alongside the forecast (report / agent) as context.
+
+    Sentiment source:
+      - default: Alpha Vantage's pre-computed ``article.sentiment`` (free; ~17%
+        coverage — ``sentiment_coverage`` reports how much).
+      - opt-in: pass ``use_llm_sentiment=True`` with an ``llm`` to score ALL
+        articles with Claude (full coverage, ~$0.04/25 articles; see the cost
+        decision in docs/TASKS.md). Off by default to avoid per-call cost.
     """
     articles = bundle.articles
     n = len(articles)
     if n == 0:
         return {col: 0.0 for col in NEWS_FEATURE_COLS}
 
-    # Sentiment scoring.
-    scores: dict[str, float] = {}
-    if llm is not None:
+    # Sentiment per article: Claude (opt-in) overrides AV's free pre-computed score.
+    if use_llm_sentiment and llm is not None:
         scores = _score_sentiment_batch(articles, bundle.ticker, llm)
-
-    # Map scores back to articles by canonical URL.
-    article_scores = [scores.get(canonical_url(str(a.url))) for a in articles]
+        article_scores = [scores.get(canonical_url(str(a.url))) for a in articles]
+    else:
+        article_scores = [a.sentiment for a in articles]  # AV-provided (None if absent)
     scored = [s for s in article_scores if s is not None]
 
     avg_sentiment = sum(scored) / len(scored) if scored else 0.0

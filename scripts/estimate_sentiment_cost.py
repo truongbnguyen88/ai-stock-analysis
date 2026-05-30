@@ -44,6 +44,11 @@ def main() -> int:
         return 1
 
     user = build_sentiment_user(bundle.articles, ticker)
+    n = len(bundle.articles)
+
+    # Scale the output budget with article count (~70 tokens per scored line for
+    # URL echo + score) so the response is not truncated and cost is accurate.
+    max_tokens = min(32_000, max(2_048, n * 70))
 
     # Direct Anthropic call so we can read usage (complete_json discards it).
     import anthropic
@@ -52,7 +57,7 @@ def main() -> int:
     system_block = {"type": "text", "text": _SENTIMENT_SYSTEM, "cache_control": {"type": "ephemeral"}}
     resp = client.messages.create(
         model=settings.llm_model,
-        max_tokens=2048,
+        max_tokens=max_tokens,
         system=[system_block],
         messages=[{"role": "user", "content": user}],
     )
@@ -70,19 +75,26 @@ def main() -> int:
         + cache_read / 1e6 * PRICE_CACHE_READ_PER_MTOK
     )
 
+    per_article = cost / n
+    truncated = resp.stop_reason == "max_tokens"
+
     print(f"\n{'=' * 56}")
     print(f"  Batch sentiment cost — {ticker} ({settings.llm_model})")
     print(f"{'=' * 56}")
-    print(f"  Articles scored      : {len(bundle.articles)}")
+    print(f"  Articles scored      : {n}")
     print(f"  Prompt chars         : {len(user):,}")
+    print(f"  Output token budget  : {max_tokens:,}")
     print(f"  Input tokens         : {inp:,}")
     print(f"  Output tokens        : {out:,}")
+    print(f"  Stop reason          : {resp.stop_reason}")
     if cache_write or cache_read:
         print(f"  Cache write / read   : {cache_write:,} / {cache_read:,}")
     print(f"  {'-' * 40}")
     print(f"  TOTAL COST           : ${cost:.4f}")
-    print(f"  Cost per article     : ${cost / len(bundle.articles):.5f}")
-    print(f"  Est. cost @ 25 arts  : ${cost / len(bundle.articles) * 25:.4f}")
+    print(f"  Cost per article     : ${per_article:.5f}")
+    print(f"  Projected @ 25 arts  : ${per_article * 25:.4f}")
+    if truncated:
+        print("\n  ⚠  Output hit max_tokens — cost is a LOWER BOUND (some scores dropped).")
     print()
     return 0
 

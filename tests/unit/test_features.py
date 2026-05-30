@@ -120,18 +120,37 @@ def _bundle(n: int = 3) -> NewsBundle:
     return NewsBundle(ticker="NVDA", articles=arts)
 
 
-def test_news_features_with_claude_scoring() -> None:
+def test_news_features_with_optional_claude_scoring() -> None:
     bundle = _bundle(3)
     scores = [{"url": f"https://x.com/{i}", "score": [0.5, -0.3, 0.1][i]} for i in range(3)]
-    feats = build_news_features(bundle, llm=FakeLLM(scores))
+    # Claude scoring is opt-in via use_llm_sentiment=True.
+    feats = build_news_features(bundle, llm=FakeLLM(scores), use_llm_sentiment=True)
     assert feats["article_count"] == 3.0
     assert abs(feats["avg_sentiment"] - (0.5 - 0.3 + 0.1) / 3) < 1e-9
     assert feats["sentiment_coverage"] == 1.0
     assert feats["has_earnings"] == 1.0  # "earnings" in titles
 
 
-def test_news_features_without_llm_defaults_neutral() -> None:
-    feats = build_news_features(_bundle(3), llm=None)
+def test_news_features_default_uses_av_sentiment() -> None:
+    # Default path (no opt-in): use Alpha Vantage's pre-computed article.sentiment.
+    arts = [
+        Article(
+            title=f"NVDA news {i}",
+            url=f"https://x.com/{i}",
+            source="alpha_vantage",
+            published_at=datetime(2025, 1, 2 + i, tzinfo=UTC),
+            sentiment=[0.4, None, -0.2][i],  # only 2 of 3 have AV scores
+        )
+        for i in range(3)
+    ]
+    feats = build_news_features(NewsBundle(ticker="NVDA", articles=arts))
+    assert feats["sentiment_coverage"] == pytest.approx(2 / 3)
+    assert feats["avg_sentiment"] == pytest.approx((0.4 - 0.2) / 2)
+
+
+def test_news_features_without_sentiment_defaults_neutral() -> None:
+    # No AV scores and no Claude → neutral with zero coverage.
+    feats = build_news_features(_bundle(3))
     assert feats["avg_sentiment"] == 0.0
     assert feats["sentiment_coverage"] == 0.0
     assert feats["article_count"] == 3.0

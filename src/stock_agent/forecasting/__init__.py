@@ -18,6 +18,8 @@ from stock_agent.forecasting.historical import (
 )
 from stock_agent.forecasting.ml import MLForecaster
 from stock_agent.forecasting.monte_carlo import MonteCarlo
+from stock_agent.forecasting.pooled import PooledModel, train_pooled_from_series
+from stock_agent.forecasting.train_pooled import train_pooled
 
 __all__ = [
     "ForecastModel",
@@ -30,4 +32,7 @@ __all__ = [
     "historical_forecast",
     "MonteCarlo",
     "MLForecaster",
+    "PooledModel",
+    "train_pooled_from_series",
+    "train_pooled",
 ]

@@ -13,25 +13,17 @@ from stock_agent.settings import Settings
 
 _PRICE_LOOKBACK_DAYS = 420
 
-
-# MLForecaster instances are stateful (lazy-trained per series call), so the
-# registry returns fresh instances each run to avoid state leaking across tickers.
-def _ml(model_type: str, horizon: int) -> MLForecaster:
-    return MLForecaster(model_type=model_type, horizon_days=horizon)  # type: ignore[arg-type]
-
-
+# Pooled ML forecasters load a shared, ticker-agnostic artifact (cached on first
+# use), so one instance is safe to reuse across tickers — no per-ticker state.
 MODEL_REGISTRY: dict[str, ForecastModel] = {
     "historical_sim": HistoricalSimulation(),
     "monte_carlo_gbm": MonteCarlo(variant="gbm"),
     "monte_carlo_bootstrap": MonteCarlo(variant="bootstrap"),
-    # ML models instantiated fresh per call (see run_forecast below).
-    "logistic": HistoricalSimulation(),  # placeholder; resolved in run_forecast
-    "xgboost": HistoricalSimulation(),
-    "lightgbm": HistoricalSimulation(),
-    "random_forest": HistoricalSimulation(),
+    "logistic": MLForecaster("logistic"),
+    "xgboost": MLForecaster("xgboost"),
+    "lightgbm": MLForecaster("lightgbm"),
+    "random_forest": MLForecaster("random_forest"),
 }
-
-_ML_MODELS = {"logistic", "xgboost", "lightgbm", "random_forest"}
 
 
 def run_forecast(
@@ -50,11 +42,4 @@ def run_forecast(
     series = (
         PriceLoader(registry).load_recent(ticker.upper(), _PRICE_LOOKBACK_DAYS, min_bars=30).series
     )
-    # ML models are stateful (lazy-trained); instantiate fresh per call so
-    # runs on different tickers don't share fitted classifiers.
-    if model_name in _ML_MODELS:
-        model: ForecastModel = _ml(model_name, horizon_days)
-    else:
-        model = MODEL_REGISTRY[model_name]
-
-    return model.forecast(series, horizon_days=horizon_days)
+    return MODEL_REGISTRY[model_name].forecast(series, horizon_days=horizon_days)

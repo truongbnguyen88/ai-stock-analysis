@@ -69,7 +69,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "xgboost.*", "lightgbm.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "xgboost.*", "lightgbm.*", "joblib.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

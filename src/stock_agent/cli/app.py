@@ -106,6 +106,47 @@ def forecast(
             typer.echo(f"\n  ⚠  {fc.notes}")
 
 
+_ML_MODEL_TYPES = ("logistic", "xgboost", "lightgbm", "random_forest")
+
+
+@app.command()
+def train(
+    model: Annotated[
+        str, typer.Option("--model", "-m", help=f"ML model: {list(_ML_MODEL_TYPES)}")
+    ] = "xgboost",
+    horizon: Annotated[
+        int, typer.Option("--horizon", help="Forecast horizon in trading days")
+    ] = 20,
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file (one ticker per line)")
+    ] = Path("configs/universe.txt"),
+) -> None:
+    """Train a pooled ML model over the universe and persist the artifact."""
+    if model not in _ML_MODEL_TYPES:
+        typer.echo(f"--model must be one of {list(_ML_MODEL_TYPES)}")
+        raise typer.Exit(code=1)
+    if not universe.exists():
+        typer.echo(f"Universe file not found: {universe}")
+        raise typer.Exit(code=1)
+
+    settings = get_settings()
+    configure_logging(settings)
+
+    from stock_agent.forecasting.pooled import ModelType
+    from stock_agent.forecasting.train_pooled import train_pooled
+
+    model_type: ModelType = model  # type: ignore[assignment]  # validated above
+    typer.echo(f"Training pooled {model} (horizon {horizon}) over {universe} …")
+    trained, path = train_pooled(universe, settings, model_type=model_type, horizon_days=horizon)
+    typer.echo(
+        f"Done: {trained.n_tickers} tickers, {trained.n_train_rows:,} rows, "
+        f"{len(trained.classifiers)} thresholds → {path}"
+    )
+    if trained.notes:
+        for note in trained.notes:
+            typer.echo(f"  note: {note}")
+
+
 @app.command()
 def chat(
     message: Annotated[

@@ -1,116 +1,57 @@
-"""ML-based probabilistic forecasters.
+"""ML-based probabilistic forecaster (pooled, price-only).
 
-Each ``MLForecaster`` trains one binary classifier per return-threshold boundary
-on the stock's own price history (stock-specific, no cross-sectional data), then
-combines the per-threshold probabilities into the six-bucket scenario distribution.
+``MLForecaster`` loads a *pooled* model artifact — one binary classifier per
+return-threshold, trained across a universe of tickers (see ``pooled.py`` and
+``train_pooled.py``) — and applies it to the target ticker's current features.
 
-Architecture:
-  - One classifier per threshold in [-0.10, -0.05, 0.00, +0.05, +0.10].
-  - Training: price features only (historical news unavailable from free APIs).
-  - Inference: price features from the current series.
-  - Lazy training: ``forecast()`` triggers ``_fit()`` on the first call.
-  - Isotonicity: P(return > θ) is enforced to decrease as θ increases by
-    clipping; separate classifiers have no such guarantee.
-  - Fallback: if fewer than ``min_train_rows`` usable rows exist, falls back
-    to the historical-simulation baseline with a warning note.
+Design:
+  - PRICE-ONLY (Option A): news sentiment is display context, never a model input.
+  - Pooled, not per-ticker: train once offline, persist, load at inference.
+  - One classifier per threshold in [-0.10, -0.05, 0.00, +0.05, +0.10]; the
+    per-threshold P(return > θ) are combined into the six-bucket distribution,
+    with isotonicity enforced (P decreases as θ increases).
+  - Fallback: if no trained artifact exists for the (model_type, horizon), falls
+    back to the historical-simulation baseline with a note telling you to train.
 
-Supported model types: "logistic", "xgboost", "lightgbm", "random_forest".
+Train an artifact with:  python -m stock_agent train --model xgboost --horizon 20
 """
 
 from __future__ import annotations
 
 from datetime import date as Date
-from typing import Any, Literal
+from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
 
-from stock_agent.features.assembler import (
-    THRESHOLDS,
-    _target_col,
-    build_training_matrix,
-    current_features_vector,
-)
+from stock_agent.features.assembler import THRESHOLDS, current_features_vector
 from stock_agent.forecasting.historical import HistoricalSimulation
+from stock_agent.forecasting.pooled import PooledModel, default_model_path
 from stock_agent.logging_config import get_logger
 from stock_agent.schemas.forecast import ProbBucket, ScenarioForecast
 from stock_agent.schemas.market import PriceSeries
+from stock_agent.settings import get_settings
 
 log = get_logger(__name__)
 
 ModelType = Literal["logistic", "xgboost", "lightgbm", "random_forest"]
-_MIN_TRAIN_ROWS = 60  # below this, fall back to historical_sim
-
-
-def _make_classifier(model_type: ModelType) -> Any:
-    """Instantiate a fresh, unfitted classifier for the given type."""
-    if model_type == "logistic":
-        from sklearn.linear_model import LogisticRegression
-
-        return LogisticRegression(max_iter=1000, random_state=42)
-    if model_type == "xgboost":
-        from xgboost import XGBClassifier
-
-        return XGBClassifier(
-            n_estimators=100,
-            max_depth=3,
-            learning_rate=0.1,
-            use_label_encoder=False,
-            eval_metric="logloss",
-            random_state=42,
-            verbosity=0,
-        )
-    if model_type == "lightgbm":
-        from lightgbm import LGBMClassifier
-
-        return LGBMClassifier(
-            n_estimators=100,
-            max_depth=3,
-            learning_rate=0.1,
-            random_state=42,
-            verbose=-1,
-        )
-    if model_type == "random_forest":
-        from sklearn.ensemble import RandomForestClassifier
-
-        return RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
-    raise ValueError(f"unknown model_type '{model_type}'")
-
-
-def _impute(X: pd.DataFrame) -> pd.DataFrame:
-    """Fill NaN with column mean (for sklearn models; XGBoost/LGBM handle NaN natively).
-
-    ``keep_empty_features=True`` preserves all-NaN columns (e.g. ma50_to_ma200 on a
-    short series) as zeros rather than dropping them, keeping the column count stable
-    across training and inference.
-    """
-    from sklearn.impute import SimpleImputer
-
-    imp = SimpleImputer(strategy="mean", keep_empty_features=True)
-    return pd.DataFrame(imp.fit_transform(X), columns=X.columns, index=X.index)
 
 
 def _exceedance_to_buckets(probs_gt: list[float]) -> list[ProbBucket]:
     """Convert P(return > θ) for each threshold into the six bucket probabilities.
 
-    The thresholds partition the return space, so bucket probs are differences
-    of consecutive exceedance probs. Isotonicity is enforced first (P(return > θ)
+    The thresholds partition the return space, so bucket probs are differences of
+    consecutive exceedance probs. Isotonicity is enforced first (P(return > θ)
     must decrease as θ increases).
-
-    Bucket order (matches DEFAULT_BUCKETS):
-      P(< -10%) = 1 - P(> -10%)
-      P(-10% to -5%) = P(> -10%) - P(> -5%)
-      ...
-      P(> +10%) = P(> +10%)
     """
     from stock_agent.forecasting.buckets import DEFAULT_BUCKETS
 
-    # Enforce monotone decreasing exceedance (higher threshold → lower prob).
+    # Enforce monotone-decreasing exceedance (higher threshold → lower prob).
     monotone = list(probs_gt)
     for i in range(1, len(monotone)):
         monotone[i] = min(monotone[i], monotone[i - 1])
 
-    # Build bucket probs from the six regions.
     bucket_probs = [
         1.0 - monotone[0],  # P(< -10%)
         monotone[0] - monotone[1],  # P(-10% to -5%)
@@ -119,8 +60,7 @@ def _exceedance_to_buckets(probs_gt: list[float]) -> list[ProbBucket]:
         monotone[3] - monotone[4],  # P(+5% to +10%)
         monotone[4],  # P(> +10%)
     ]
-    # Clip to [0,1] and renormalize (floating-point and isotonic clipping may
-    # produce tiny negatives or a sum slightly off 1).
+    # Clip and renormalize (isotonic clipping / float noise may drift off 1).
     bucket_probs = [max(0.0, p) for p in bucket_probs]
     total = sum(bucket_probs)
     if total > 0:
@@ -132,100 +72,75 @@ def _exceedance_to_buckets(probs_gt: list[float]) -> list[ProbBucket]:
     ]
 
 
-class MLForecaster:
-    """``ForecastModel`` using binary classifiers on price features.
+def _bucket_midpoint(b: ProbBucket) -> float:
+    """A representative return for a bucket (midpoint, with tail floors/caps)."""
+    lo = b.lower if b.lower is not None else -0.20
+    hi = b.upper if b.upper is not None else 0.20
+    return (lo + hi) / 2.0
 
-    Trains lazily on the first ``forecast()`` call. The model is stock-specific:
-    each call with a different series re-trains from scratch.
-    """
+
+class MLForecaster:
+    """``ForecastModel`` that applies a pooled, price-only classifier ensemble."""
 
     def __init__(
         self,
         model_type: ModelType = "xgboost",
-        horizon_days: int = 20,
-        min_train_rows: int = _MIN_TRAIN_ROWS,
+        *,
+        models_dir: Path | None = None,
+        model: PooledModel | None = None,
     ) -> None:
         self.name = f"ml_{model_type}"
         self._model_type = model_type
-        self._horizon_days = horizon_days
-        self._min_train_rows = min_train_rows
-        self._classifiers: dict[float, Any] = {}
-        self._needs_imputation = model_type in ("logistic", "random_forest")
+        self._models_dir = models_dir  # default resolved from settings at load time
+        self._model = model  # optional preloaded artifact (tests / warm cache)
 
-    def _fit(self, series: PriceSeries) -> str | None:
-        """Train one classifier per threshold. Returns a note if quality is low."""
-        try:
-            X, y = build_training_matrix(series, self._horizon_days, min_rows=self._min_train_rows)
-        except ValueError as exc:
-            return str(exc)
+    def _resolve_model(self, horizon_days: int) -> PooledModel | None:
+        """Return a pooled model for this horizon (cached, then disk), or None."""
+        if self._model is not None and self._model.horizon_days == horizon_days:
+            return self._model
+        models_dir = self._models_dir or (Path(get_settings().output_dir) / "models")
+        path = default_model_path(models_dir, self._model_type, horizon_days)
+        if not path.exists():
+            return None
+        self._model = PooledModel.load(path)
+        return self._model
 
-        X_fit = _impute(X) if self._needs_imputation else X
-
-        self._classifiers = {}
-        for thresh in THRESHOLDS:
-            col = _target_col(thresh)
-            labels = y[col]
-            # Skip thresholds where all labels are the same (classifier can't learn).
-            if labels.nunique() < 2:
-                log.debug("ml.skip_threshold", threshold=thresh, reason="single class")
-                continue
-            clf = _make_classifier(self._model_type)
-            clf.fit(X_fit, labels)
-            self._classifiers[thresh] = clf
-
-        n_trained = len(self._classifiers)
-        if n_trained < len(THRESHOLDS):
-            return (
-                f"{len(THRESHOLDS) - n_trained} thresholds skipped (single class in training data)."
-            )
-        return None
+    def _base_rate(self, series: PriceSeries, horizon_days: int, threshold: float) -> float:
+        """Historical exceedance rate, used to fill a threshold with no classifier."""
+        closes = np.array(series.closes)
+        if len(closes) <= horizon_days:
+            return 0.5
+        fwd = closes[horizon_days:] / closes[:-horizon_days] - 1.0
+        return float((fwd > threshold).mean())
 
     def forecast(
         self, series: PriceSeries, *, horizon_days: int, as_of: Date | None = None
     ) -> ScenarioForecast:
-        # Horizon mismatch: retrain if needed (the model bakes in a fixed horizon).
-        if horizon_days != self._horizon_days:
-            self._horizon_days = horizon_days
-            self._classifiers = {}
-
-        note = None
-        if not self._classifiers:
-            note = self._fit(series)
-
         as_of = as_of or series.bars[-1].date
+        model = self._resolve_model(horizon_days)
 
-        # Fall back to historical_sim when training failed.
-        if not self._classifiers:
-            reason = note or "insufficient training data"
-            log.warning("ml.fallback", model=self.name, reason=reason)
+        # No trained artifact → fall back to the historical baseline.
+        if model is None:
             fc = HistoricalSimulation().forecast(series, horizon_days=horizon_days, as_of=as_of)
-            fallback_note = f"[{self.name}] Fell back to historical_sim: {reason}"
-            return fc.model_copy(update={"model_name": self.name, "notes": fallback_note})
+            note = (
+                f"[{self.name}] no trained pooled model for horizon {horizon_days}; "
+                f"run `python -m stock_agent train --model {self._model_type} "
+                f"--horizon {horizon_days}`. Fell back to historical_sim."
+            )
+            log.warning("ml.no_artifact", model=self.name, horizon=horizon_days)
+            return fc.model_copy(update={"model_name": self.name, "notes": note})
 
-        # Build inference features for the most recent bar.
-        x_current = current_features_vector(series)
-        x_df = pd.DataFrame([x_current])
-        if self._needs_imputation:
-            x_df = _impute(x_df)
-
-        # Predict P(return > threshold) for each trained classifier.
-        probs_gt: list[float] = []
-        for thresh in THRESHOLDS:
-            clf = self._classifiers.get(thresh)
-            if clf is None:
-                # Fallback for skipped thresholds: use historical base rate.
-                closes = np.array(series.closes)
-                fwd = closes[horizon_days:] / closes[:-horizon_days] - 1
-                probs_gt.append(float((fwd > thresh).mean()) if len(fwd) > 0 else 0.5)
-            else:
-                probs_gt.append(float(clf.predict_proba(x_df)[0, 1]))
+        # Inference: current price features → per-threshold exceedance → buckets.
+        x_df = pd.DataFrame([current_features_vector(series)])
+        probs_raw = model.predict_exceedance(x_df)
+        probs_gt = [
+            p if p is not None else self._base_rate(series, horizon_days, thresh)
+            for thresh, p in zip(THRESHOLDS, probs_raw, strict=True)
+        ]
 
         buckets = _exceedance_to_buckets(probs_gt)
-        expected_return = sum(
-            # Midpoint of each bucket * its probability.
-            _bucket_midpoint(b) * b.probability
-            for b in buckets
-        )
+        expected_return = sum(_bucket_midpoint(b) * b.probability for b in buckets)
+        note = f"Pooled {self._model_type}: {model.n_tickers} tickers, {model.n_train_rows} rows."
 
         return ScenarioForecast(
             ticker=series.ticker,
@@ -234,15 +149,16 @@ class MLForecaster:
             model_name=self.name,
             buckets=buckets,
             expected_return=expected_return,
-            upside_prob=sum(b.probability for b in buckets if (b.lower or 0.0) >= 0.0),
-            downside_prob=sum(b.probability for b in buckets if (b.upper or 0.0) <= 0.0),
-            calibration_status="unknown",
+            # A bucket is upside if it lies entirely at/above 0 (lower >= 0) and
+            # downside if entirely at/below 0 (upper <= 0). Guard against None so
+            # the open tails are classified by their finite bound, not coalesced
+            # to 0 (which would miscount < -10% as upside and > +10% as downside).
+            upside_prob=sum(
+                b.probability for b in buckets if b.lower is not None and b.lower >= 0.0
+            ),
+            downside_prob=sum(
+                b.probability for b in buckets if b.upper is not None and b.upper <= 0.0
+            ),
+            calibration_status="unknown",  # calibrated in Phase 6
             notes=note,
         )
-
-
-def _bucket_midpoint(b: ProbBucket) -> float:
-    """Return a representative return for a bucket (midpoint or edge estimate)."""
-    lo = b.lower if b.lower is not None else -0.20  # open left tail floor
-    hi = b.upper if b.upper is not None else 0.20  # open right tail cap
-    return (lo + hi) / 2.0
