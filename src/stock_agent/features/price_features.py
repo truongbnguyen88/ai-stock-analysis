@@ -14,10 +14,16 @@ from stock_agent.indicators.frame import adjusted_close, to_ohlcv_frame
 from stock_agent.indicators.momentum import macd, rsi
 from stock_agent.indicators.returns import daily_returns
 from stock_agent.indicators.trend import moving_averages
-from stock_agent.indicators.volatility import atr, drawdown_series, historical_volatility
+from stock_agent.indicators.volatility import (
+    atr,
+    bollinger_percent_b,
+    drawdown_series,
+    historical_volatility,
+)
 from stock_agent.schemas.market import PriceSeries
 
 # Feature columns expected by the ML models. Keep consistent across train / infer.
+# All scale-free (ratios / bounded indicators) so cross-ticker pooling is valid.
 PRICE_FEATURE_COLS: list[str] = [
     "ret_1d",
     "ret_5d",
@@ -33,6 +39,7 @@ PRICE_FEATURE_COLS: list[str] = [
     "vol_ratio",
     "atr_pct",
     "drawdown",
+    "B_perc",  # Bollinger %B: position within the 20-day volatility band
 ]
 
 
@@ -76,6 +83,9 @@ def build_price_feature_matrix(series: PriceSeries) -> pd.DataFrame:
 
     # Drawdown from the rolling peak (always <= 0).
     df["drawdown"] = drawdown_series(close)
+
+    # Bollinger %B: where price sits within its 20-day volatility band (mean-reversion).
+    df["B_perc"] = bollinger_percent_b(close, window=20)
 
     return df[PRICE_FEATURE_COLS]
 

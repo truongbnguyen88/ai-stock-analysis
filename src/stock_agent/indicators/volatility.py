@@ -46,6 +46,22 @@ def atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> 
     return wilder_smooth(true_range(high, low, close), period)
 
 
+def bollinger_percent_b(close: pd.Series, window: int = 20, num_std: float = 2.0) -> pd.Series:
+    """%B: where the close sits inside its Bollinger Bands.
+
+    Bands = SMA(window) ± num_std · rolling sample std (ddof=1).
+    %B = (close - lower) / (upper - lower): ~0 at the lower band, ~1 at the upper
+    band, and outside [0, 1] on breakouts. Scale-free (a position ratio), so it is
+    safe for pooled cross-ticker models. NaN until ``window`` observations, and
+    NaN when the band has zero width (flat prices).
+    """
+    mid = close.rolling(window=window, min_periods=window).mean()
+    sd = close.rolling(window=window, min_periods=window).std(ddof=1)
+    lower = mid - num_std * sd
+    width = 2.0 * num_std * sd  # = upper - lower
+    return (close - lower) / width
+
+
 def drawdown_series(close: pd.Series) -> pd.Series:
     """Drawdown at each point relative to the running peak (values <= 0)."""
     running_max = close.cummax()

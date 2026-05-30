@@ -15,6 +15,7 @@ import pytest
 
 from stock_agent.indicators.volatility import (
     atr,
+    bollinger_percent_b,
     drawdown_series,
     historical_volatility,
     max_drawdown,
@@ -35,6 +36,21 @@ def test_atr_wilder() -> None:
     assert math.isnan(out[0])
     assert out[1] == pytest.approx(1.25)
     assert out[2] == pytest.approx(1.375)
+
+
+def test_bollinger_percent_b() -> None:
+    # closes [1,3,2], window 3: mean=2, sample std=1 → lower=0, upper=4, width=4.
+    # last close=2 → %B=(2-0)/4=0.5; first two bars NaN (window not full).
+    out = bollinger_percent_b(pd.Series([1.0, 3.0, 2.0]), window=3, num_std=2.0).tolist()
+    assert math.isnan(out[0]) and math.isnan(out[1])
+    assert out[2] == pytest.approx(0.5)
+
+
+def test_bollinger_percent_b_above_band_exceeds_one() -> None:
+    # 19 flat bars then a spike: the last close breaks above the upper band → %B > 1.
+    # (Needs a wide window — a single point's z-score is capped below 2 for small n.)
+    out = bollinger_percent_b(pd.Series([10.0] * 19 + [15.0]), window=20).tolist()
+    assert out[-1] > 1.0
 
 
 def test_historical_volatility_annualized() -> None:

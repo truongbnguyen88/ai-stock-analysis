@@ -12,6 +12,7 @@ from stock_agent.indicators.snapshot import IndicatorSnapshot, compute_snapshot
 from stock_agent.indicators.trend import moving_averages, sma
 from stock_agent.indicators.volatility import (
     atr,
+    bollinger_percent_b,
     drawdown_series,
     historical_volatility,
     max_drawdown,
@@ -37,6 +38,7 @@ __all__ = [
     "historical_volatility",
     "true_range",
     "atr",
+    "bollinger_percent_b",
     "drawdown_series",
     "max_drawdown",
     # snapshot
