@@ -88,6 +88,14 @@ def render_markdown(report: ResearchReport) -> str:
             out.append(f"| {_LABELS.get(key, key)} | {_fmt_indicator(key, value)} |")
         out.append("")
 
+    # Earnings proximity (context the price-only forecast can't see)
+    if report.earnings is not None and report.earnings.next_earnings_date is not None:
+        e = report.earnings
+        line = f"**Next earnings:** {e.next_earnings_date} ({e.days_to_next_earnings} days)"
+        if e.earnings_in_horizon:
+            line += " — **inside the forecast horizon** (expect wider outcomes)"
+        out += ["## Earnings", line, ""]
+
     # Probabilistic scenarios
     out += ["## Probabilistic Scenarios", ""]
     if report.forecasts:

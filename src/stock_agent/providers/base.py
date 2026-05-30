@@ -103,3 +103,12 @@ class FundamentalsProvider(Provider, Protocol):
     """
 
     def get_fundamentals(self, ticker: str) -> Fundamentals: ...
+
+
+@runtime_checkable
+class EarningsProvider(Provider, Protocol):
+    """Supplies earnings announcement dates (past and upcoming)."""
+
+    def get_earnings_dates(self, ticker: str) -> list[Date]:
+        """Return known earnings announcement dates for ``ticker``, sorted ascending."""
+        ...

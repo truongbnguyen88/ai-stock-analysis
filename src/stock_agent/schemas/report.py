@@ -12,6 +12,7 @@ from datetime import date as Date
 
 from pydantic import BaseModel, Field, HttpUrl
 
+from stock_agent.schemas.earnings import EarningsContext
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.market import Fundamentals
 
@@ -59,6 +60,7 @@ class ResearchReport(BaseModel):
     technical_analysis: TechnicalAnalysisSection = Field(default_factory=TechnicalAnalysisSection)
     news_analysis: NewsAnalysisSection = Field(default_factory=NewsAnalysisSection)
     fundamentals: Fundamentals | None = None
+    earnings: EarningsContext | None = None
     forecasts: list[ScenarioForecast] = Field(default_factory=list)
 
     # Structured signal lists

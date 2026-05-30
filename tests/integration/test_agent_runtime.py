@@ -182,3 +182,12 @@ def test_compute_indicators_surfaces_data_warnings() -> None:
     r = _executor(n_bars=60).execute("compute_indicators", {"ticker": "NVDA"})
     assert "data_warnings" in r
     assert any("stale_data" in w for w in r["data_warnings"])
+
+
+def test_get_earnings_context_tool() -> None:
+    # FakeProvider has no earnings capability → registry raises → graceful empty context.
+    r = _executor().execute("get_earnings_context", {"ticker": "NVDA", "horizon_days": 20})
+    assert "error" not in r
+    assert r["ticker"] == "NVDA"
+    assert r["horizon_days"] == 20
+    assert r["next_earnings_date"] is None  # fake provider supplies no earnings dates

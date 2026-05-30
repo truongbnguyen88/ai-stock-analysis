@@ -20,6 +20,7 @@ from typing import Literal, TypeVar
 
 from stock_agent.logging_config import get_logger
 from stock_agent.providers.base import (
+    EarningsProvider,
     NewsProvider,
     PriceProvider,
     Provider,
@@ -128,6 +129,28 @@ class ProviderRegistry:
             assert last_error is not None
             raise last_error
         return NewsBundle(ticker=ticker, articles=collected)
+
+    # ---- earnings: failover ---------------------------------------------------
+    def get_earnings_dates(self, ticker: str) -> list[Date]:
+        """Return earnings announcement dates from the first provider that succeeds."""
+        chain = self._chain(self._settings.earnings_priority, EarningsProvider)  # type: ignore[type-abstract]
+        if not chain:
+            raise ProviderUnavailable("registry", "no earnings providers available")
+        last_error: ProviderError | None = None
+        for provider in chain:
+            try:
+                return provider.get_earnings_dates(ticker)
+            except ProviderError as exc:
+                log.warning(
+                    "provider.earnings_failed",
+                    provider=provider.name,
+                    ticker=ticker,
+                    error=str(exc),
+                )
+                last_error = exc
+                continue
+        assert last_error is not None
+        raise last_error
 
     def close(self) -> None:
         """Close any providers that hold resources (e.g. HTTP clients)."""

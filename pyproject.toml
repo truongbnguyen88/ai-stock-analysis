@@ -22,6 +22,7 @@ dependencies = [
     "httpx>=0.27",       # HTTP client for REST providers (Finnhub/Marketaux/AlphaVantage)
     "yfinance>=0.2.40",  # keyless historical price source
     "pandas>=2.2",       # yfinance returns DataFrames; used at the provider boundary
+    "lxml>=5.0",         # required by yfinance get_earnings_dates (earnings history)
     # Phase 3 — LLM (Role A news summarizer)
     "anthropic>=0.40",   # Claude API client (news summarization; prompt caching)
     # Phase 4 — CLI

@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     # intentionally absent from the price chain.
     provider_price_priority: str = "yfinance,alpha_vantage"
     provider_news_priority: str = "finnhub,marketaux,alpha_vantage"
+    provider_earnings_priority: str = "yfinance"  # earnings dates (keyless, unlimited)
 
     # ---- Provider behavior ----
     cache_dir: Path = Path(".cache")
@@ -79,6 +80,11 @@ class Settings(BaseSettings):
     log_format: Literal["json", "console"] = "json"
     output_dir: Path = Path("outputs")
     random_seed: int = 42
+
+    @property
+    def earnings_priority(self) -> list[str]:
+        """Ordered earnings-provider fallback chain (highest priority first)."""
+        return _split_csv(self.provider_earnings_priority)
 
     @property
     def price_priority(self) -> list[str]:

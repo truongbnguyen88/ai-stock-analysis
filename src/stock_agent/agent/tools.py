@@ -11,8 +11,10 @@ No business logic lives here — tools delegate to data/indicators/news/forecast
 
 from __future__ import annotations
 
+from datetime import date as Date
 from typing import Any
 
+from stock_agent.data.earnings import fetch_earnings_context
 from stock_agent.data.loader import LoadResult, PriceLoader
 from stock_agent.data.validation import DataIssue
 from stock_agent.features.news_features import build_news_features
@@ -107,6 +109,27 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "type": "boolean",
                     "default": False,
                     "description": "Claude-score all articles for fuller coverage (small cost).",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
+        "name": "get_earnings_context",
+        "description": (
+            "Next and last earnings dates with proximity: days_to_next_earnings, "
+            "days_since_last_earnings, and whether earnings fall WITHIN the horizon. Important "
+            "because the price-only forecast cannot see a scheduled earnings event inside the "
+            "window — if earnings_in_horizon is true, expect a wider/fatter-tailed outcome."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "horizon_days": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Horizon to check earnings against.",
                 },
             },
             "required": ["ticker"],
@@ -242,6 +265,14 @@ class ToolExecutor:
             "claude" if (use_llm and self._llm is not None) else "alpha_vantage"
         )
         return result
+
+    def _tool_get_earnings_context(self, args: dict[str, Any]) -> dict[str, Any]:
+        ticker = str(args["ticker"]).upper()
+        horizon = int(args.get("horizon_days", 20))
+        ctx = fetch_earnings_context(
+            self._registry, ticker, as_of=Date.today(), horizon_days=horizon
+        )
+        return ctx.model_dump(mode="json")
 
     def _tool_run_forecast(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()

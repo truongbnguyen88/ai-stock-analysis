@@ -27,6 +27,8 @@ TOOLS:
 - summarize_news(ticker, days): qualitative news synthesis with citations.
 - get_news_sentiment(ticker, days, use_llm?): numeric sentiment (avg, % positive/negative, \
 coverage) + event flags. Use for "what's the sentiment" questions; summarize_news for themes.
+- get_earnings_context(ticker, horizon_days?): next/last earnings dates + whether earnings fall \
+inside the horizon. Check this for any forecast — the price-only model can't see scheduled earnings.
 - run_forecast(ticker, horizon_days, model?): scenario probabilities, expected return, VaR, CI. \
 Models: 'historical_sim' (default baseline), 'monte_carlo_gbm'/'monte_carlo_bootstrap', or ML \
 ('xgboost'/'lightgbm'/'logistic'/'random_forest'). ML models need a trained artifact and fall \

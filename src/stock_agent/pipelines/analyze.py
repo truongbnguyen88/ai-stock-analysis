@@ -11,6 +11,7 @@ from collections.abc import Sequence
 
 from pydantic import ValidationError
 
+from stock_agent.data.earnings import fetch_earnings_context
 from stock_agent.data.loader import PriceLoader
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.indicators.snapshot import compute_snapshot
@@ -66,6 +67,11 @@ def run_analyze(
         ticker, lookback_days=days, company_name=company_name, top_n=25
     )
 
+    # Earnings proximity context (flag if earnings fall within the LONGEST horizon).
+    earnings = fetch_earnings_context(
+        registry, ticker, as_of=as_of, horizon_days=max(horizons) if horizons else 20
+    )
+
     summary = None
     client = llm
     if client is None and use_llm and settings.anthropic_api_key:
@@ -86,4 +92,5 @@ def run_analyze(
         news_summary=summary,
         data_issue_messages=[f"{i.code}: {i.message}" for i in load.issues],
         n_price_bars=len(series),
+        earnings=earnings,
     )

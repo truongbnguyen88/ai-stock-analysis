@@ -15,6 +15,7 @@ from datetime import date as Date
 from stock_agent.indicators.snapshot import IndicatorSnapshot
 from stock_agent.llm.guards import NewsSummary
 from stock_agent.news.clean import canonical_url
+from stock_agent.schemas.earnings import EarningsContext
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.market import Fundamentals
 from stock_agent.schemas.news import NewsBundle
@@ -151,6 +152,7 @@ def build_report(
     data_issue_messages: Sequence[str] = (),
     n_price_bars: int = 0,
     fundamentals: Fundamentals | None = None,
+    earnings: EarningsContext | None = None,
 ) -> ResearchReport:
     """Compose the full research report from computed inputs."""
     tech_bull, tech_bear, tech_risk = _technical_flags(snapshot)
@@ -194,11 +196,33 @@ def build_report(
     if news_summary:
         for cat in news_summary.catalysts[:2]:
             observations.append(f"Catalyst: {cat.point}")
+    if earnings is not None and earnings.next_earnings_date is not None:
+        observations.append(
+            f"Next earnings {earnings.next_earnings_date} ({earnings.days_to_next_earnings}d away)."
+        )
 
     confidence_notes = (
         f"Based on {len(news_bundle.articles)} news articles and {n_price_bars} price bars. "
         "Forecasts are a historical-simulation baseline (uncalibrated)."
     )
+
+    uncertainty = list(
+        _uncertainty_notes(
+            snapshot,
+            forecasts,
+            news_bundle,
+            data_issue_messages,
+            has_summary=news_summary is not None,
+        )
+    )
+    # The single most useful earnings caveat: a scheduled event the price-only
+    # forecast cannot see, which widens the actual return distribution.
+    if earnings is not None and earnings.earnings_in_horizon:
+        uncertainty.append(
+            f"Earnings on {earnings.next_earnings_date} fall WITHIN the forecast horizon — "
+            "the model is price-only and cannot price this event; expect a wider, "
+            "more bimodal outcome than the forecast suggests."
+        )
 
     return ResearchReport(
         ticker=ticker,
@@ -212,16 +236,11 @@ def build_report(
         ),
         news_analysis=_news_section(news_summary, news_bundle),
         fundamentals=fundamentals,
+        earnings=earnings,
         forecasts=list(forecasts),
         bullish_factors=bullish,
         bearish_factors=bearish,
         risk_flags=risks,
-        uncertainty_notes=_uncertainty_notes(
-            snapshot,
-            forecasts,
-            news_bundle,
-            data_issue_messages,
-            has_summary=news_summary is not None,
-        ),
+        uncertainty_notes=uncertainty,
         citations=_citations(news_summary, news_bundle),
     )

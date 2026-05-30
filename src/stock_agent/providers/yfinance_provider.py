@@ -12,6 +12,7 @@ without hitting the network.
 
 from __future__ import annotations
 
+import json
 from datetime import date as Date
 from datetime import timedelta
 
@@ -101,3 +102,25 @@ class YFinanceProvider:
             PriceSeries,
             lambda: _frame_to_series(ticker.upper(), self._download(ticker, start, end)),
         )
+
+    def get_earnings_dates(self, ticker: str) -> list[Date]:
+        """Earnings announcement dates (past + upcoming) from yfinance, ascending.
+
+        Cached as ISO date strings (the disk cache stores JSON). Requires ``lxml``
+        (yfinance scrapes the earnings table). Returns [] if none are available.
+        """
+        key = make_key(_NAME, "earnings_dates", ticker.upper())
+        cached = self._cache.get(key)
+        if cached is not None:
+            return [Date.fromisoformat(d) for d in json.loads(cached)]
+
+        try:
+            df = yf.Ticker(ticker.upper()).get_earnings_dates(limit=40)
+        except Exception as exc:  # noqa: BLE001 - normalize any yfinance/network error
+            raise ProviderError(_NAME, f"earnings fetch failed: {exc}") from exc
+
+        dates: list[Date] = []
+        if df is not None and not df.empty:
+            dates = sorted({pd.Timestamp(idx).date() for idx in df.index})
+        self._cache.set(key, json.dumps([d.isoformat() for d in dates]))
+        return dates
