@@ -240,6 +240,10 @@ CLI / Chat Agent  →  pipelines.analyze
 
 ## 10. Backtesting & calibration
 
+*Implemented in `backtesting/` (splitter · metrics · calibration · runner) + `pipelines/backtest.py` + `backtest` CLI.*
+
+- **One comparison surface for every model** — any `ScenarioForecast` is reduced to per-threshold exceedance probabilities `P(r > θ_k) = Σ buckets above θ_k` (θ_k = the bucket boundaries = the ML `THRESHOLDS`), scored against the realized label `1[r > θ_k]`. So historical-sim, Monte-Carlo, and ML are evaluated on identical folds with the exact target the ML models train on.
+- **Leakage discipline** — the runner forecasts from `bars[:t+1]` at each as-of (historical/MC point-in-time by construction); refittable models (pooled ML) are rebuilt per fold via `build_model(train_end_date)` on universe data ≤ cutoff.
 - **Temporal splitting only** — walk-forward folds (expanding/rolling train → fixed OOS test, stepped). No random K-fold.
 - **Embargo** between train end and test start equal to horizon `h` (prevents target overlap leakage).
 - **Metrics** per fold + aggregated with dispersion: accuracy, precision, recall, ROC AUC, Brier, log loss.

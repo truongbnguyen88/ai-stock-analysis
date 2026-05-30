@@ -78,7 +78,7 @@ Bracketed = primary deliverable.
 19. `features/price_features.py` + `assembler.py` (point-in-time, leakage-tested) — **price-only**; `news_features.py` builds display context only (AV sentiment default, Claude opt-in).
 20. `forecasting/ml.py` + `pooled.py` + `train_pooled.py`: **pooled** classifiers persisted as an artifact, loaded at inference; `train` CLI. [price-only, calibratable]
 
-### Phase 6 — Backtesting & calibration (V1)
+### Phase 6 — Backtesting & calibration (V1) ✅
 21. `backtesting/splitter.py` (walk-forward + embargo) + leakage tests.
 22. `backtesting/runner.py` + `metrics.py`. [OOS metric suite]
 23. `backtesting/calibration.py` (reliability, isotonic/Platt, ECE). [trustworthiness output]

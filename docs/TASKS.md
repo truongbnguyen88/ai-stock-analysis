@@ -7,12 +7,12 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 ---
 
 ## ▶ Current
-- **Phase:** 6 — Backtesting & calibration
-- **Next step:** Step 21 — `backtesting/splitter.py` (walk-forward + embargo) + leakage tests
+- **Phase:** 6.5 — Agent gains evaluation tools (← V1 milestone)
+- **Next step:** Step 25 — `agent/tools.py` adds `run_backtest` + `get_calibration` (bounded args/timeouts) + system-prompt update so the agent reports calibration/trust honestly
 - **Gate to advance:** `make check` green
 - **Last updated:** 2026-05-30
 - 🎉 **MVP milestone** (Phases 0–4.5): analyze CLI + chat agent live.
-- ✅ **Phases 5 + 5.5 done** (162 pytest): pooled ML, earnings (context + feature), Role C synthesis layer. Phase 6 (backtest/calibration) is the next roadmap step — and what makes all forecasts *trustworthy* + lets synthesis/agent speak to calibration.
+- ✅ **Phase 6 done** (182 pytest): walk-forward backtest harness (splitter+embargo, metric suite, calibration/ECE, `backtest` CLI + experiment logging). Forecasts are now *measurably* trustworthy. Live AAPL 20d: bootstrap/historical (Brier ≈0.164, ECE ≈0.05) beat GBM (0.192); AUC ≈0.5 confirms the unconditional baselines have no directional edge — the bar pooled ML must clear.
 
 ---
 
@@ -57,11 +57,11 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - [x] 20d. Earnings: `EarningsProvider` (yfinance) + context in report + `get_earnings_context` agent tool
 - [x] 20e. **Synthesis layer (Role C)**: `llm/synthesizer.py` → Integrated Analysis reconciling forecast + news + earnings + technicals (numeric-grounding guarded)
 
-## Phase 6 — Backtesting & calibration
-- [ ] 21. `backtesting/splitter.py` (walk-forward + embargo) + leakage tests
-- [ ] 22. `backtesting/runner.py` + `metrics.py`
-- [ ] 23. `backtesting/calibration.py`
-- [ ] 24. `pipelines/backtest.py` + `backtest` CLI + experiment logging
+## Phase 6 — Backtesting & calibration ✅
+- [x] 21. `backtesting/splitter.py` (walk-forward + embargo) + leakage tests
+- [x] 22. `backtesting/runner.py` + `metrics.py`
+- [x] 23. `backtesting/calibration.py`
+- [x] 24. `pipelines/backtest.py` + `backtest` CLI + experiment logging
 
 ## Phase 6.5 — Agent evaluation tools ← V1 milestone
 - [ ] 25. `agent/tools.py` adds `run_backtest` + `get_calibration`
@@ -103,3 +103,4 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - 2026-05-30 — DECISION: defer ML+MC ensemble (`forecasting/ensemble.py`) until AFTER Phase 6. Rationale: principled ensemble weighting needs OOS skill (∝1/Brier) from backtesting, and only the backtest harness can validate whether an ensemble beats the best single model. Planned approach: linear probability pool over {historical, monte_carlo_bootstrap, xgboost}, skill-weighted, with derived stats (E[r], VaR, CI) RECOMPUTED from the blended bucket CDF (never average quantiles). Equal-weight version is trivial to add earlier for comparison but would be uncalibrated/unvalidated.
 - 2026-05-30 — **Synthesis layer (Role C) built** — the integrated "numbers + narrative" read, the project's core goal made first-class (exec summary was templated). `llm/synthesizer.py` + `prompts/synthesis.py`: `Synthesis` schema (overview/alignments/tensions/confidence); reconciles forecast(s) + news summary + AV sentiment + earnings + technicals. Guard: reuses **NumberGrounding** (moved agent/guards→llm/guards; agent re-exports) — the LLM may interpret numbers but the grounding check rejects any decimal/percent not in the inputs (1 retry, else raises). Report gains an Integrated Analysis section (after exec summary); `run_analyze` computes AV sentiment + calls synthesize, degrades gracefully. Live NVDA: high-quality reconciliation — flagged institutional-selling-vs-high-P(up), bear-case-37%-vs-+13.4%-E[r], earnings-beyond-horizon→wider distribution; 0 grounding violations. Gate green (162 pytest). Decision: synthesis is orthogonal to Phase 6 but gets richer once `get_calibration` exists (can state how trustworthy the forecast is).
 - 2026-05-30 — **Earnings-jump Monte Carlo (`monte_carlo_jump`) built.** GBM plus an empirical jump fired when the next earnings date lands in the horizon. The jump is bootstrapped from the stock's OWN historical post-earnings close-to-close log moves (`historical_earnings_moves` pure fn), capturing real, *skewed* event risk a plain price model can't see — NVDA live: 16 moves, σ=8.5%, positive-skewed → widens upper tail + worsens VaR (−14.5%→−15.4% at 65d). Key correctness choices: (a) **calibration needs a longer window than the forecast** — the ~420d forecast series holds only ~4–5 quarterly earnings (<`_MIN_JUMP_SAMPLES`=8), so the jump fetches ~4y of prices via the registry *just* for calibration, ending at `as_of` (point-in-time preserved); without this the jump silently never fired. (b) **horizon−1 day replacement** — simulate horizon−1 normal GBM days + 1 jump draw so the earnings day isn't double-counted as both a diffusion day and a jump day. (c) **moves used as-is (mean-inclusive)** — keeps the stock's real post-earnings skew rather than imposing a zero-mean shock; consistent with the tool's empirical-extrapolation philosophy and still non-advisory (every figure data-derived, no LLM number). Graceful GBM fallback + disclosing `note` when no earnings data / earnings beyond horizon / too few moves. Wired into `pipelines.forecast` (`MODEL_NAMES`+`_build_model`, registry-fed); `FakeProvider` gained `earnings_dates`. Gate green (156 pytest; 5 new: golden moves, 3 fallback notes, fattened-tails behavioral). NOTE: NVDA next earnings 2026-08-26 (~88 cal days) → fires only at horizon ≳62; shorter horizons correctly report "beyond horizon; GBM only".
+- 2026-05-30 — **Phase 6 done: backtesting & calibration** (gate green: ruff + mypy strict + 182 pytest, +26 new). `backtesting/`: `splitter.py` (walk-forward folds, embargo = horizon, stride = horizon for non-overlapping targets, expanding/rolling, `assert_no_leakage` invariant) + `metrics.py` (hand-rolled Brier/log-loss/acc/precision/recall, golden-tested; sklearn ROC-AUC with single-class→None guard) + `calibration.py` (reliability bins, ECE/MCE, isotonic+Platt, honest post-hoc via earlier-fit/later-eval temporal holdout) + `runner.py`. **Unifying design:** any `ScenarioForecast` → per-threshold exceedance `P(r>θ_k)=Σ buckets above θ_k` (θ_k = bucket boundaries = ML THRESHOLDS), realized label `1[r>θ_k]` — makes historical/MC/ML comparable on identical folds and reuses the exact ML training target. **Leakage discipline:** runner slices `bars[:t+1]` per as-of (historical/MC point-in-time by construction); refittable ML rebuilt per fold via `build_model(train_end_date)` (pooled retrain on universe ≤ cutoff). `pipelines/backtest.py` + `backtest` CLI: default compares offline stateless trio (historical_sim + MC gbm/bootstrap, MC n_paths=5000); ML opt-in (slow, per-fold pooled refit). Experiments logged to `outputs/experiments/<run_id>/` (config + per-model JSON; gitignored). Live AAPL 20d (62 OOS / 11 folds, 2021–2026): Brier bootstrap 0.164 ≈ historical 0.166 < gbm 0.192 (thin Normal tails penalized); ECE 0.05–0.085; AUC ≈0.3–0.5 → unconditional baselines have no directional edge (expected; the bar ML must beat). **This is the deliverable that makes every forecast measurably trustworthy** + the dependency for synthesis/agent to speak to calibration.

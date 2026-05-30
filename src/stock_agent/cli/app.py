@@ -7,9 +7,12 @@ Commands: analyze (Phase 4), forecast (Phase 5), chat (Phase 4.5).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
+
+if TYPE_CHECKING:
+    from stock_agent.schemas.backtest import BacktestResult
 
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
@@ -145,6 +148,76 @@ def train(
     if trained.notes:
         for note in trained.notes:
             typer.echo(f"  note: {note}")
+
+
+def _print_backtest(result: BacktestResult) -> None:
+    """Render a backtest result as a compact, scannable summary."""
+    c = result.calibration
+    typer.echo(f"\n{'=' * 64}")
+    typer.echo(f"  {result.ticker} — {result.horizon_days}d backtest ({result.model_name})")
+    typer.echo(f"{'=' * 64}")
+    typer.echo(
+        f"  OOS forecasts : {result.n_predictions} over {result.n_folds} folds "
+        f"({result.as_of_start} → {result.as_of_end})"
+    )
+    typer.echo(f"  Mean Brier    : {result.mean_brier:.4f}   (lower is better)")
+    typer.echo(f"  Mean log loss : {result.mean_log_loss:.4f}")
+    post = (
+        f"  →  {c.method_post} recal (held-out): {c.ece_pre_holdout:.3f} → {c.ece_post:.3f}"
+        if c.ece_post is not None and c.ece_pre_holdout is not None
+        else ""
+    )
+    typer.echo(f"  Calibration   : ECE {c.ece:.3f}  MCE {c.mce:.3f}{post}")
+    typer.echo("")
+    typer.echo("  Per-threshold (P(r > θ)):")
+    typer.echo(f"    {'θ':>7s}  {'base':>6s}  {'Brier':>7s}  {'logloss':>8s}  {'AUC':>5s}")
+    for m in result.thresholds:
+        auc = f"{m.roc_auc:.3f}" if m.roc_auc is not None else "  n/a"
+        typer.echo(
+            f"    {m.threshold:>+7.0%}  {m.base_rate:>6.0%}  "
+            f"{m.brier:>7.4f}  {m.log_loss:>8.4f}  {auc:>5s}"
+        )
+    if result.notes:
+        for note in result.notes:
+            typer.echo(f"  ⚠  {note}")
+
+
+@app.command()
+def backtest(
+    ticker: Annotated[str, typer.Option("--ticker", "-t", help="Ticker symbol")],
+    horizon: Annotated[
+        int, typer.Option("--horizon", help="Forecast horizon in trading days")
+    ] = 20,
+    model: Annotated[
+        str | None,
+        typer.Option("--model", "-m", help="Single model; omit to compare offline baselines"),
+    ] = None,
+    test_size: Annotated[int, typer.Option("--test-size", help="Test as-of points per fold")] = 6,
+) -> None:
+    """Walk-forward backtest a forecaster (OOS metrics + calibration)."""
+    from stock_agent.pipelines.backtest import STATELESS_MODELS, run_backtest_pipeline
+
+    settings = get_settings()
+    configure_logging(settings)
+    models = [model] if model else list(STATELESS_MODELS)
+    typer.echo(f"Backtesting {ticker.upper()} (horizon {horizon}d): {', '.join(models)} …")
+    try:
+        results = run_backtest_pipeline(
+            ticker, horizon, model_names=models, settings=settings, test_size=test_size
+        )
+    except ValueError as exc:
+        typer.echo(f"[backtest error] {exc}")
+        raise typer.Exit(code=1) from exc
+    for result in results.values():
+        _print_backtest(result)
+    if len(results) > 1:
+        typer.echo(f"\n{'=' * 64}")
+        typer.echo("  Comparison (mean Brier · ECE — lower is better):")
+        ranked = sorted(results.values(), key=lambda r: r.mean_brier)
+        for r in ranked:
+            typer.echo(
+                f"    {r.model_name:>24s}  Brier {r.mean_brier:.4f}  ECE {r.calibration.ece:.3f}"
+            )
 
 
 @app.command()
