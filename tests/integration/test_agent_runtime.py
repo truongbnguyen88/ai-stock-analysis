@@ -34,7 +34,7 @@ class FakeToolLLM:
         return resp
 
 
-def _executor() -> ToolExecutor:
+def _executor(n_bars: int = 60) -> ToolExecutor:
     bars = [
         PriceBar(
             date=date(2024, 1, 1) + timedelta(days=i),
@@ -43,7 +43,7 @@ def _executor() -> ToolExecutor:
             low=100.0 + i - 0.5,
             close=100.0 + i,
         )
-        for i in range(60)
+        for i in range(n_bars)
     ]
     fake = FakeProvider("fake", prices=PriceSeries(ticker="NVDA", bars=bars))
     registry = ProviderRegistry([fake], Settings(_env_file=None, provider_price_priority="fake"))
@@ -108,3 +108,20 @@ def test_persistent_fabrication_raises() -> None:
     script = [_final("A 92.5% chance."), _final("Still 92.5% likely.")]
     with pytest.raises(AgentGroundingError):
         run_agent("will it go up?", llm=FakeToolLLM(script), executor=_executor())
+
+
+def test_run_forecast_tool_routes_model_selection() -> None:
+    ex = _executor(n_bars=260)  # enough history for Monte Carlo
+    # Default model is the baseline.
+    base = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20})
+    assert base.get("model_name") == "historical_sim"
+    # Monte Carlo needs no trained artifact — routing should pick it.
+    mc = ex.execute(
+        "run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "monte_carlo_gbm"}
+    )
+    assert "error" not in mc
+    assert mc.get("model_name") == "monte_carlo_gbm"
+    # ML without a trained artifact falls back to the baseline but keeps its name.
+    ml = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "xgboost"})
+    assert "error" not in ml
+    assert ml.get("model_name") == "ml_xgboost"

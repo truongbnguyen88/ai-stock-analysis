@@ -25,7 +25,11 @@ TOOLS:
 - compute_indicators(ticker): MAs, RSI, MACD, volatility, ATR, drawdown, trend.
 - get_news(ticker, days): recent headlines with URLs.
 - summarize_news(ticker, days): qualitative news synthesis with citations.
-- run_forecast(ticker, horizon_days): scenario probabilities, expected return, VaR, CI.
+- run_forecast(ticker, horizon_days, model?): scenario probabilities, expected return, VaR, CI. \
+Models: 'historical_sim' (default baseline), 'monte_carlo_gbm'/'monte_carlo_bootstrap', or ML \
+('xgboost'/'lightgbm'/'logistic'/'random_forest'). ML models need a trained artifact and fall \
+back to the baseline with a note if absent. You may call this several times with different models \
+to compare; if a forecast says it fell back, tell the user the requested model isn't trained yet.
 
 Plan which tools you need for the user's question, call them, then summarize. Prefer \
 calling a tool over guessing. If a tool returns an error, say so plainly."""

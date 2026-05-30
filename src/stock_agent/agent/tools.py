@@ -14,12 +14,12 @@ from __future__ import annotations
 from typing import Any
 
 from stock_agent.data.loader import PriceLoader
-from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import TextLLM
 from stock_agent.llm.news_summarizer import summarize_news
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher
+from stock_agent.pipelines.forecast import MODEL_REGISTRY, run_forecast
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.schemas.market import PriceSeries
@@ -88,8 +88,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "name": "run_forecast",
         "description": (
             "Model-generated forward-return scenario probabilities, expected return, VaR, and "
-            "confidence interval for a horizon (trading days). Probabilities come from this "
-            "statistical model only."
+            "confidence interval for a horizon (trading days). Probabilities come from the chosen "
+            "statistical/ML model only. Call multiple times with different models to compare."
         ),
         "input_schema": {
             "type": "object",
@@ -98,6 +98,17 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "horizon_days": {
                     "type": "integer",
                     "description": "Forecast horizon in trading days",
+                },
+                "model": {
+                    "type": "string",
+                    "enum": list(MODEL_REGISTRY),
+                    "default": "historical_sim",
+                    "description": (
+                        "Forecast model: 'historical_sim' (empirical baseline, default), "
+                        "'monte_carlo_gbm'/'monte_carlo_bootstrap' (simulation), or ML "
+                        "('xgboost'/'lightgbm'/'logistic'/'random_forest' — need a trained "
+                        "artifact, else fall back to the baseline with a note)."
+                    ),
                 },
             },
             "required": ["ticker", "horizon_days"],
@@ -187,8 +198,17 @@ class ToolExecutor:
     def _tool_run_forecast(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()
         horizon = int(args["horizon_days"])
-        series = self._load(ticker, _PRICE_LOOKBACK_DAYS)
-        forecast = HistoricalSimulation().forecast(series, horizon_days=horizon)
+        model = str(args.get("model", "historical_sim"))
+        # Route through the forecast pipeline so the agent can use any registered
+        # model (baseline / Monte Carlo / pooled ML); ML falls back to the
+        # baseline with a note when no trained artifact exists.
+        forecast = run_forecast(
+            ticker,
+            horizon,
+            model_name=model,
+            settings=self._settings,
+            registry=self._registry,
+        )
         result = forecast.model_dump(mode="json")
         # VaR confidence levels appear only as field *names* (var_95, var_99) in the
         # model dump — the numbers 95 and 99 never enter the grounding set, so the
