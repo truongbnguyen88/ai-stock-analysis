@@ -19,7 +19,7 @@ Out of MVP: ML models, Monte Carlo, walk-forward backtesting, calibration, ensem
 
 ### V1 — statistical/ML modeling + rigorous evaluation
 
-- Monte Carlo forecaster (GBM + block bootstrap).
+- Monte Carlo forecaster (GBM + block bootstrap + earnings-jump variant).
 - ML forecasters: logistic / XGBoost / LightGBM / random forest under common interface; threshold-bucket targets. **Pooled (cross-sectional) training** across a ticker universe → persisted `PooledModel` artifact loaded at inference (`train` CLI).
 - **Price-only model (Option A):** news sentiment is display context (free AV scores by default; Claude opt-in), never a model input — no point-in-time historical news to train on. See TASKS.md decision log.
 - Backtesting: rolling + walk-forward OOS; full metric suite (accuracy, precision, recall, ROC AUC, Brier, log loss).
@@ -74,7 +74,7 @@ Bracketed = primary deliverable.
 17. `cli/app.py` adds `chat` command + agent integration tests (LLM mocked, fabricated-number rejection tested). **← MVP milestone**
 
 ### Phase 5 — Statistical & ML models (V1) ✅
-18. `forecasting/monte_carlo.py` (GBM + block bootstrap) + `forecast` CLI wiring. [MC scenarios]
+18. `forecasting/monte_carlo.py` (GBM + block bootstrap + earnings-jump) + `forecast` CLI wiring. [MC scenarios]
 19. `features/price_features.py` + `assembler.py` (point-in-time, leakage-tested) — **price-only**; `news_features.py` builds display context only (AV sentiment default, Claude opt-in).
 20. `forecasting/ml.py` + `pooled.py` + `train_pooled.py`: **pooled** classifiers persisted as an artifact, loaded at inference; `train` CLI. [price-only, calibratable]
 
