@@ -6,6 +6,7 @@ from datetime import date
 
 from stock_agent.data.earnings import (
     days_to_next_earnings_estimate,
+    days_to_next_earnings_series,
     earnings_cadence_days,
     earnings_context,
 )
@@ -49,3 +50,17 @@ def test_estimate_clamps_to_zero_when_overdue() -> None:
 def test_estimate_none_without_prior_earnings() -> None:
     est = days_to_next_earnings_estimate(date(2025, 1, 1), [date(2025, 6, 1)], cadence=91.0)
     assert est is None
+
+
+def test_series_per_row_uses_only_past_earnings() -> None:
+    earnings = [date(2024, 1, 15), date(2024, 4, 15), date(2024, 7, 15)]  # cadence 91
+    feat_dates = [date(2024, 1, 1), date(2024, 2, 1), date(2024, 4, 20)]
+    out = days_to_next_earnings_series(feat_dates, earnings)
+    assert out[0] is None  # no earnings on/before 2024-01-01 → leakage-safe None
+    assert out[1] == 74.0  # last past 2024-01-15, days_since 17 → 91-17
+    assert out[2] == 86.0  # last past 2024-04-15, days_since 5 → 91-5
+
+
+def test_series_all_none_without_earnings_data() -> None:
+    out = days_to_next_earnings_series([date(2025, 1, 1), date(2025, 1, 2)], [])
+    assert out == [None, None]

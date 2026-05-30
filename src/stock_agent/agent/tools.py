@@ -23,7 +23,7 @@ from stock_agent.llm.client import TextLLM
 from stock_agent.llm.news_summarizer import summarize_news
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher
-from stock_agent.pipelines.forecast import MODEL_REGISTRY, run_forecast
+from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.settings import Settings
@@ -152,7 +152,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "model": {
                     "type": "string",
-                    "enum": list(MODEL_REGISTRY),
+                    "enum": list(MODEL_NAMES),
                     "default": "historical_sim",
                     "description": (
                         "Forecast model: 'historical_sim' (empirical baseline, default), "

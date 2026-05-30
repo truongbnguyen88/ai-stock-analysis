@@ -19,6 +19,8 @@ by differencing the cumulative exceedance probabilities.
 
 from __future__ import annotations
 
+from datetime import date as Date
+
 import pandas as pd
 
 from stock_agent.features.price_features import PRICE_FEATURE_COLS, build_price_feature_matrix
@@ -40,6 +42,7 @@ def build_training_matrix(
     horizon: int,
     *,
     min_rows: int = 30,
+    earnings_dates: list[Date] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build (X, y) for training ML models on a single stock's price history.
 
@@ -50,7 +53,7 @@ def build_training_matrix(
     Raises:
         ValueError: if fewer than ``min_rows`` valid training rows exist.
     """
-    features = build_price_feature_matrix(series)
+    features = build_price_feature_matrix(series, earnings_dates=earnings_dates)
 
     close = pd.Series(series.closes, index=features.index)
     # Forward h-day simple return at each date t: P_{t+h}/P_t - 1.
@@ -88,7 +91,9 @@ def build_training_matrix(
     return X, y
 
 
-def current_features_vector(series: PriceSeries) -> pd.Series:
-    """Return the most recent price feature row for live inference."""
-    df = build_price_feature_matrix(series)
+def current_features_vector(
+    series: PriceSeries, *, earnings_dates: list[Date] | None = None
+) -> pd.Series:
+    """Return the most recent feature row for live inference."""
+    df = build_price_feature_matrix(series, earnings_dates=earnings_dates)
     return df.iloc[-1][PRICE_FEATURE_COLS]

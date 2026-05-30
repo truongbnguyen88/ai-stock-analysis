@@ -10,6 +10,7 @@ Two distinct uses, deliberately computed differently:
 
 from __future__ import annotations
 
+import bisect
 import statistics
 from collections.abc import Sequence
 from datetime import date as Date
@@ -89,3 +90,27 @@ def days_to_next_earnings_estimate(
     estimate = cadence - days_since
     # Clamp to [0, cadence]: if we're "past due" vs cadence, the event is imminent.
     return float(min(cadence, max(0.0, estimate)))
+
+
+def days_to_next_earnings_series(
+    feature_dates: Sequence[Date], earnings_dates: Sequence[Date]
+) -> list[float | None]:
+    """Per-date leakage-safe ``days_to_next_earnings`` estimates for a feature matrix.
+
+    For each feature date t, uses the most recent earnings date <= t and the
+    overall cadence (computed once). None where no prior earnings exists or no
+    earnings data was supplied. Efficient: one cadence + a bisect per row.
+    """
+    if not earnings_dates:
+        return [None] * len(feature_dates)
+    ordered = sorted(earnings_dates)
+    cadence = earnings_cadence_days(ordered)
+    out: list[float | None] = []
+    for t in feature_dates:
+        idx = bisect.bisect_right(ordered, t) - 1  # last earnings date <= t
+        if idx < 0:
+            out.append(None)
+            continue
+        days_since = (t - ordered[idx]).days
+        out.append(float(min(cadence, max(0.0, cadence - days_since))))
+    return out

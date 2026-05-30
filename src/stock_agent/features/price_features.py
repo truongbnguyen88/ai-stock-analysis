@@ -8,8 +8,11 @@ explicit leakage assertion as a belt-and-suspenders check.
 
 from __future__ import annotations
 
+from datetime import date as Date
+
 import pandas as pd
 
+from stock_agent.data.earnings import days_to_next_earnings_series
 from stock_agent.indicators.frame import adjusted_close, to_ohlcv_frame
 from stock_agent.indicators.momentum import macd, rsi
 from stock_agent.indicators.returns import daily_returns
@@ -40,15 +43,19 @@ PRICE_FEATURE_COLS: list[str] = [
     "atr_pct",
     "drawdown",
     "B_perc",  # Bollinger %B: position within the 20-day volatility band
+    "days_to_next_earnings",  # leakage-safe cadence estimate (NaN if no earnings data)
 ]
 
 
-def build_price_feature_matrix(series: PriceSeries) -> pd.DataFrame:
-    """Return a date-indexed DataFrame of price features (one row per bar).
+def build_price_feature_matrix(
+    series: PriceSeries, *, earnings_dates: list[Date] | None = None
+) -> pd.DataFrame:
+    """Return a date-indexed DataFrame of model features (one row per bar).
 
-    NaN is correct for rows where a lookback window is not yet full (e.g. MA200
-    on a 100-bar series). XGBoost handles NaN natively; scikit-learn models
-    receive imputed values from the assembler.
+    Mostly price-derived; ``days_to_next_earnings`` is an earnings-cadence feature
+    that is NaN unless ``earnings_dates`` is supplied. NaN is correct for rows
+    where a lookback window is not yet full (e.g. MA200 on a 100-bar series).
+    XGBoost handles NaN natively; scikit-learn models receive imputed values.
     """
     frame = to_ohlcv_frame(series)
     close = adjusted_close(frame)
@@ -86,6 +93,14 @@ def build_price_feature_matrix(series: PriceSeries) -> pd.DataFrame:
 
     # Bollinger %B: where price sits within its 20-day volatility band (mean-reversion).
     df["B_perc"] = bollinger_percent_b(close, window=20)
+
+    # Earnings proximity (leakage-safe cadence estimate; same calc at train & infer).
+    feat_dates = [pd.Timestamp(idx).date() for idx in df.index]
+    df["days_to_next_earnings"] = pd.Series(
+        days_to_next_earnings_series(feat_dates, earnings_dates or []),
+        index=df.index,
+        dtype="float64",
+    )
 
     return df[PRICE_FEATURE_COLS]
 

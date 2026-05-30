@@ -29,6 +29,8 @@ from stock_agent.features.assembler import THRESHOLDS, current_features_vector
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.forecasting.pooled import PooledModel, default_model_path
 from stock_agent.logging_config import get_logger
+from stock_agent.providers.base import ProviderError
+from stock_agent.providers.registry import ProviderRegistry
 from stock_agent.schemas.forecast import ProbBucket, ScenarioForecast
 from stock_agent.schemas.market import PriceSeries
 from stock_agent.settings import get_settings
@@ -88,11 +90,22 @@ class MLForecaster:
         *,
         models_dir: Path | None = None,
         model: PooledModel | None = None,
+        registry: ProviderRegistry | None = None,
     ) -> None:
         self.name = f"ml_{model_type}"
         self._model_type = model_type
         self._models_dir = models_dir  # default resolved from settings at load time
         self._model = model  # optional preloaded artifact (tests / warm cache)
+        self._registry = registry  # optional: fetch earnings dates for the feature
+
+    def _earnings_dates(self, ticker: str) -> list[Date] | None:
+        """Fetch the target ticker's earnings dates (or None if unavailable)."""
+        if self._registry is None:
+            return None
+        try:
+            return self._registry.get_earnings_dates(ticker)
+        except ProviderError:
+            return None
 
     def _resolve_model(self, horizon_days: int) -> PooledModel | None:
         """Return a pooled model for this horizon (cached, then disk), or None."""
@@ -130,8 +143,9 @@ class MLForecaster:
             log.warning("ml.no_artifact", model=self.name, horizon=horizon_days)
             return fc.model_copy(update={"model_name": self.name, "notes": note})
 
-        # Inference: current price features → per-threshold exceedance → buckets.
-        x_df = pd.DataFrame([current_features_vector(series)])
+        # Inference: current features (incl. earnings) → per-threshold exceedance → buckets.
+        earnings_dates = self._earnings_dates(series.ticker)
+        x_df = pd.DataFrame([current_features_vector(series, earnings_dates=earnings_dates)])
         probs_raw = model.predict_exceedance(x_df)
         probs_gt = [
             p if p is not None else self._base_rate(series, horizon_days, thresh)

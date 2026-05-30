@@ -13,17 +13,29 @@ from stock_agent.settings import Settings
 
 _PRICE_LOOKBACK_DAYS = 420
 
-# Pooled ML forecasters load a shared, ticker-agnostic artifact (cached on first
-# use), so one instance is safe to reuse across tickers — no per-ticker state.
-MODEL_REGISTRY: dict[str, ForecastModel] = {
-    "historical_sim": HistoricalSimulation(),
-    "monte_carlo_gbm": MonteCarlo(variant="gbm"),
-    "monte_carlo_bootstrap": MonteCarlo(variant="bootstrap"),
-    "logistic": MLForecaster("logistic"),
-    "xgboost": MLForecaster("xgboost"),
-    "lightgbm": MLForecaster("lightgbm"),
-    "random_forest": MLForecaster("random_forest"),
-}
+_ML_TYPES = ("logistic", "xgboost", "lightgbm", "random_forest")
+
+# Available forecaster names (used for the CLI/agent enum). ML models are built
+# per call so they can fetch earnings dates via the registry at inference.
+MODEL_NAMES: list[str] = [
+    "historical_sim",
+    "monte_carlo_gbm",
+    "monte_carlo_bootstrap",
+    *_ML_TYPES,
+]
+
+
+def _build_model(model_name: str, registry: ProviderRegistry) -> ForecastModel:
+    if model_name == "historical_sim":
+        return HistoricalSimulation()
+    if model_name == "monte_carlo_gbm":
+        return MonteCarlo(variant="gbm")
+    if model_name == "monte_carlo_bootstrap":
+        return MonteCarlo(variant="bootstrap")
+    if model_name in _ML_TYPES:
+        # Pass the registry so the earnings feature can be computed at inference.
+        return MLForecaster(model_name, registry=registry)  # type: ignore[arg-type]
+    raise ValueError(f"unknown model '{model_name}'; available: {MODEL_NAMES}")
 
 
 def run_forecast(
@@ -35,11 +47,11 @@ def run_forecast(
     registry: ProviderRegistry | None = None,
 ) -> ScenarioForecast:
     """Load prices and run the requested forecaster."""
-    if model_name not in MODEL_REGISTRY:
-        raise ValueError(f"unknown model '{model_name}'; available: {list(MODEL_REGISTRY)}")
+    if model_name not in MODEL_NAMES:
+        raise ValueError(f"unknown model '{model_name}'; available: {MODEL_NAMES}")
 
     registry = registry or build_default_registry(settings)
     series = (
         PriceLoader(registry).load_recent(ticker.upper(), _PRICE_LOOKBACK_DAYS, min_bars=30).series
     )
-    return MODEL_REGISTRY[model_name].forecast(series, horizon_days=horizon_days)
+    return _build_model(model_name, registry).forecast(series, horizon_days=horizon_days)

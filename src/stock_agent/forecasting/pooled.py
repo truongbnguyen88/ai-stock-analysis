@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from datetime import date as Date
 from pathlib import Path
 from typing import Any, Literal
 
@@ -119,19 +120,28 @@ def train_pooled_from_series(
     model_type: ModelType = "xgboost",
     min_rows_per_ticker: int = 60,
     min_total_rows: int = 500,
+    earnings_by_ticker: dict[str, list[Date]] | None = None,
 ) -> PooledModel:
     """Train a pooled model from in-memory price series (pure; offline-testable).
 
     Each ticker contributes its point-in-time (X, y) rows (built with leakage
     discipline by the assembler); rows are stacked, then one classifier per
     threshold is fit on the pool. Tickers with too little history are skipped.
+    ``earnings_by_ticker`` supplies per-ticker earnings dates for the
+    ``days_to_next_earnings`` feature (NaN where absent).
     """
+    earnings_by_ticker = earnings_by_ticker or {}
     frames_x: list[pd.DataFrame] = []
     frames_y: list[pd.DataFrame] = []
     used = 0
     for series in series_list:
         try:
-            X, y = build_training_matrix(series, horizon_days, min_rows=min_rows_per_ticker)
+            X, y = build_training_matrix(
+                series,
+                horizon_days,
+                min_rows=min_rows_per_ticker,
+                earnings_dates=earnings_by_ticker.get(series.ticker.upper()),
+            )
         except ValueError as exc:
             log.debug("pooled.skip_ticker", ticker=series.ticker, reason=str(exc))
             continue
@@ -158,7 +168,10 @@ def train_pooled_from_series(
 
         # Fit the imputer on the POOLED training data and persist it, so inference
         # uses the same fill values (avoids the per-row imputation leak).
-        imputer = SimpleImputer(strategy="median").fit(X_all)
+        # keep_empty_features=True: an all-NaN feature (e.g. days_to_next_earnings
+        # when earnings data is unavailable) is filled with 0, not dropped — keeps
+        # the column count stable across fit/transform.
+        imputer = SimpleImputer(strategy="median", keep_empty_features=True).fit(X_all)
         X_fit = pd.DataFrame(
             imputer.transform(X_all), columns=PRICE_FEATURE_COLS, index=X_all.index
         )

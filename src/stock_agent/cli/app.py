@@ -13,7 +13,7 @@ import typer
 
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
-from stock_agent.pipelines.forecast import MODEL_REGISTRY, run_forecast
+from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.settings import get_settings
 
@@ -70,7 +70,7 @@ def forecast(
         int, typer.Option("--horizon", help="Forecast horizon in trading days")
     ] = 20,
     model: Annotated[
-        str, typer.Option("--model", "-m", help=f"Forecaster: {list(MODEL_REGISTRY)}")
+        str, typer.Option("--model", "-m", help=f"Forecaster: {MODEL_NAMES}")
     ] = "historical_sim",
     all_models: Annotated[
         bool, typer.Option("--all-models", help="Run and compare all available models")
@@ -79,7 +79,7 @@ def forecast(
     """Run a probabilistic scenario forecast for a ticker."""
     settings = get_settings()
     configure_logging(settings)
-    models = list(MODEL_REGISTRY) if all_models else [model]
+    models = MODEL_NAMES if all_models else [model]
     for m in models:
         try:
             fc = run_forecast(ticker, horizon, model_name=m, settings=settings)

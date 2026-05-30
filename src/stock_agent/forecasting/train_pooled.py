@@ -8,6 +8,7 @@ resulting artifact is loaded cheaply at inference.
 
 from __future__ import annotations
 
+from datetime import date as Date
 from pathlib import Path
 
 from stock_agent.data.loader import PriceLoader
@@ -48,6 +49,19 @@ def fetch_universe_series(
     return out
 
 
+def fetch_universe_earnings(
+    tickers: list[str], registry: ProviderRegistry
+) -> dict[str, list[Date]]:
+    """Fetch earnings dates per ticker; skip any that fail (best-effort)."""
+    out: dict[str, list[Date]] = {}
+    for ticker in tickers:
+        try:
+            out[ticker.upper()] = registry.get_earnings_dates(ticker)
+        except ProviderError as exc:
+            log.warning("train.earnings_failed", ticker=ticker, error=str(exc))
+    return out
+
+
 def train_pooled(
     universe_path: Path,
     settings: Settings,
@@ -67,7 +81,15 @@ def train_pooled(
     if not series_list:
         raise ValueError("no price series fetched for the universe")
 
-    model = train_pooled_from_series(series_list, horizon_days=horizon_days, model_type=model_type)
+    # Earnings dates per ticker for the days_to_next_earnings feature (best-effort).
+    earnings_by_ticker = fetch_universe_earnings([s.ticker for s in series_list], registry)
+
+    model = train_pooled_from_series(
+        series_list,
+        horizon_days=horizon_days,
+        model_type=model_type,
+        earnings_by_ticker=earnings_by_ticker,
+    )
 
     path = default_model_path(Path(settings.output_dir) / "models", model_type, horizon_days)
     model.save(path)
