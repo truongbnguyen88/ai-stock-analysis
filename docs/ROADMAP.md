@@ -32,6 +32,8 @@ Out of MVP: ML models, Monte Carlo, walk-forward backtesting, calibration, ensem
 
 - Sequence/regime models (TFT/LSTM with temporal CV; HMM/changepoint).
 - Probabilistic depth: quantile regression, conformal prediction CIs, GARCH, copula multi-horizon joints.
+- **Temporal features:** earnings proximity (`days_to_next_earnings`) — needs an earnings-date provider with point-in-time history; economically motivated, unlike pure calendar seasonality (deferred — pooling doesn't raise effective N for shared-calendar effects). Validate via backtest.
+- **News-as-model-feature (Option B):** only once point-in-time historical sentiment exists (buy data or log snapshots forward); then backtest whether it beats price-only.
 - News depth: embedding dedup/relevance, entity linking, event-study impact.
 - Cross-sectional/portfolio extension (still non-advisory).
 - Serving: FastAPI report API, scheduled refresh, report diffing.
