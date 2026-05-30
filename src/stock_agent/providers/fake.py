@@ -24,6 +24,7 @@ class FakeProvider:
         prices: PriceSeries | None = None,
         news: NewsBundle | None = None,
         fundamentals: Fundamentals | None = None,
+        earnings_dates: list[Date] | None = None,
         available: bool = True,
         raises: ProviderError | None = None,
     ) -> None:
@@ -31,6 +32,7 @@ class FakeProvider:
         self._prices = prices
         self._news = news
         self._fundamentals = fundamentals
+        self._earnings_dates = earnings_dates
         self._available = available
         self._raises = raises  # if set, every capability call raises this
 
@@ -57,3 +59,10 @@ class FakeProvider:
         if self._fundamentals is None:
             raise ProviderError(self.name, "no fundamentals configured")
         return self._fundamentals
+
+    def get_earnings_dates(self, ticker: str) -> list[Date]:
+        if self._raises is not None:
+            raise self._raises
+        if self._earnings_dates is None:
+            raise ProviderError(self.name, "no earnings configured")
+        return self._earnings_dates
