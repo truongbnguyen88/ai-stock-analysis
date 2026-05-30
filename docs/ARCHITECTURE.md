@@ -79,17 +79,19 @@ src/stock_agent/agent/
 
 ### Exposed tools (thin wrappers; no logic duplication)
 
-| Tool | Wraps | Returns |
-|---|---|---|
-| `get_price_series(ticker, days)` | `data.loader` | `PriceSeries` |
-| `compute_indicators(series)` | `indicators.*` | indicator set |
-| `get_news(ticker, days)` | `news.*` | deduped articles |
-| `summarize_news(articles)` | `llm.news_summarizer` (Role A) | themes + citations |
-| `run_forecast(ticker, horizon, model?)` | `forecasting.*` | bucket probs, E[r], VaR, CIs |
-| `run_backtest(ticker, horizon, model?)` | `backtesting.runner` | OOS metric suite |
-| `get_calibration(ticker, horizon, model?)` | `backtesting.calibration` | reliability curve, ECE, trust flag |
+| Tool | Wraps | Returns | Status |
+|---|---|---|---|
+| `get_price_summary(ticker, days)` | `data.loader` | price stats + `data_warnings` | ✅ |
+| `compute_indicators(ticker)` | `indicators.*` | indicator snapshot + `data_warnings` | ✅ |
+| `get_news(ticker, days)` | `news.*` | deduped headlines | ✅ |
+| `summarize_news(ticker, days)` | `llm.news_summarizer` (Role A) | themes + citations | ✅ |
+| `get_news_sentiment(ticker, days, use_llm?)` | `features.news_features` | avg sentiment, %pos/neg, event flags (AV default; Claude opt-in) | ✅ |
+| `get_earnings_context(ticker, horizon?)` | `data.earnings` | next/last earnings, days-to-next, in-horizon flag | ✅ |
+| `run_forecast(ticker, horizon, model?)` | `pipelines.forecast` | bucket probs, E[r], VaR, CIs (any model) | ✅ |
+| `run_backtest(ticker, horizon, model?)` | `backtesting.runner` | OOS metric suite | Phase 6.5 |
+| `get_calibration(ticker, horizon, model?)` | `backtesting.calibration` | reliability curve, ECE, trust flag | Phase 6.5 |
 
-Backtest and calibration are exposed as tools (per design decision) so a user can ask *"is your 30-day NVDA forecast well-calibrated?"* and the agent answers from `get_calibration`'s output, not from its own reasoning. These tools are heavier; the agent runtime should surface progress and may enforce timeouts / argument bounds.
+Data tools surface `data_warnings` (stale/sparse) so the agent can caveat. Backtest/calibration (Phase 6.5) will let a user ask *"is your 30-day NVDA forecast well-calibrated?"* and be answered from `get_calibration`, not the model's own reasoning. Numbers in every tool result feed the grounding guard, so the agent may only state figures that came from a tool.
 
 ### Dependency rule
 
@@ -137,9 +139,9 @@ ai-stock-analysis/
 │   ├── __main__.py              # python -m stock_agent
 │   ├── settings.py              # pydantic-settings (.env binding)
 │   ├── logging_config.py        # structlog
-│   ├── schemas/                 # market · news · forecast · report
-│   ├── providers/               # base(Protocols) · registry · av · finnhub · yfinance · marketaux · _cache
-│   ├── data/                    # loader · validation (point-in-time)
+│   ├── schemas/                 # market · news · forecast · report · earnings
+│   ├── providers/               # base(Protocols: price/news/earnings) · registry · av · finnhub · yfinance · marketaux · _cache
+│   ├── data/                    # loader · validation · earnings (context + cadence)
 │   ├── indicators/              # trend · momentum · volatility · returns
 │   ├── features/                # price_features · news_features (display) · assembler
 │   ├── news/                    # fetch · dedup · rank · clean
