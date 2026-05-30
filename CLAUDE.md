@@ -18,7 +18,7 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 ## Module boundaries (where code goes)
 - Pure compute (no I/O, no state) → `indicators/`, `features/`.
 - Anything touching an external API → behind a provider Protocol in `providers/`, normalized to `schemas/` at the boundary. Business logic never sees raw JSON.
-- Forecast models implement the common interface in `forecasting/base.py` (`fit` / `predict_proba` / `metadata`).
+- Forecast models implement the common interface in `forecasting/base.py` (`ForecastModel` Protocol: a `name` attr + `forecast(series, *, horizon_days, as_of) -> ScenarioForecast`).
 - LLM calls → `llm/` (Role A summarizer) or `agent/` (Role B router) only. Both pass through their `guards.py`.
 - `pipelines/` and `cli/` stay thin — orchestration only, no business logic.
 

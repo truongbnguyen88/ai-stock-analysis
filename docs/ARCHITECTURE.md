@@ -51,7 +51,7 @@ Key choices:
 - **Pydantic models** are the contract between all layers; validation at boundaries.
 - **Providers normalize raw JSON → domain objects** at the boundary; business logic is provider-agnostic.
 - **Indicators / feature engineering are pure functions** over DataFrames → testable, leakage-free by construction when point-in-time discipline holds.
-- **Forecasting models share one interface** (`fit` / `predict_proba` / `metadata`) so baseline, Monte Carlo, and ML are swappable and directly comparable in backtests.
+- **Forecasting models share one interface** (`ForecastModel` Protocol: a `name` + `forecast(series, *, horizon_days, as_of) -> ScenarioForecast`) so baseline, Monte Carlo, and ML are swappable and directly comparable in backtests.
 - **Two front-ends, one core.** The CLI and the chat agent are independent entry points over the *same* `pipelines/` and `forecasting/` logic.
 
 ## 3. Three LLM roles (keep separate)
