@@ -54,16 +54,16 @@ Key choices:
 - **Forecasting models share one interface** (`fit` / `predict_proba` / `metadata`) so baseline, Monte Carlo, and ML are swappable and directly comparable in backtests.
 - **Two front-ends, one core.** The CLI and the chat agent are independent entry points over the *same* `pipelines/` and `forecasting/` logic.
 
-## 3. Two LLM roles (keep separate)
+## 3. Three LLM roles (keep separate)
 
-| | Role A — News Summarizer | Role B — Orchestrating Agent |
-|---|---|---|
-| Job | Articles → themes, bull/bear, risks, catalysts, citations | NL request → choose tools → narrate results |
-| Scope | Narrow, single-shot, no tools | Conversational, tool-calling loop |
-| Module | `llm/news_summarizer.py` | `agent/` |
-| May emit numbers? | **No** | **No** |
+| | Role A — News Summarizer | Role B — Orchestrating Agent | Role C — Synthesizer |
+|---|---|---|---|
+| Job | Articles → themes, bull/bear, risks, catalysts, citations | NL request → choose tools → narrate results | Reconcile forecast + news/earnings/technicals → Integrated Analysis |
+| Scope | Narrow, single-shot, no tools | Conversational, tool-calling loop | Single-shot over assembled signals |
+| Module | `llm/news_summarizer.py` | `agent/` | `llm/synthesizer.py` |
+| Numbers? | **invents none** | **reports tool numbers only** | **reports input numbers only** |
 
-Role A is a tool that Role B can call. Neither produces quantitative figures.
+Role A invents no figures (anti-forecast guard). Roles B and C **may report** numbers that came from models/tools/news-facts but **never invent or revise** them — both enforced by the shared **numeric-grounding guard** (`llm.guards.NumberGrounding`). Role A is a tool Role B can call; Role C runs in the report pipeline to produce the Integrated Analysis section (the quantitative + qualitative reconciliation).
 
 ## 4. The `agent/` layer
 
@@ -139,13 +139,13 @@ ai-stock-analysis/
 │   ├── __main__.py              # python -m stock_agent
 │   ├── settings.py              # pydantic-settings (.env binding)
 │   ├── logging_config.py        # structlog
-│   ├── schemas/                 # market · news · forecast · report · earnings
+│   ├── schemas/                 # market · news · forecast · report · earnings · synthesis
 │   ├── providers/               # base(Protocols: price/news/earnings) · registry · av · finnhub · yfinance · marketaux · _cache
 │   ├── data/                    # loader · validation · earnings (context + cadence)
 │   ├── indicators/              # trend · momentum · volatility · returns
 │   ├── features/                # price_features · news_features (display) · assembler
 │   ├── news/                    # fetch · dedup · rank · clean
-│   ├── llm/                     # client · prompts · news_summarizer · guards
+│   ├── llm/                     # client · prompts · news_summarizer (A) · synthesizer (C) · guards
 │   ├── forecasting/             # base · buckets · historical · monte_carlo · ml · pooled · train_pooled
 │   ├── backtesting/             # splitter · runner · metrics · calibration
 │   ├── reports/                 # builder · render_md
