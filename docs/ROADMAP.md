@@ -32,7 +32,7 @@ Out of MVP: ML models, Monte Carlo, walk-forward backtesting, calibration, ensem
 
 - Sequence/regime models (TFT/LSTM with temporal CV; HMM/changepoint).
 - Probabilistic depth: quantile regression, conformal prediction CIs, GARCH, copula multi-horizon joints.
-- **Temporal features:** earnings proximity (`days_to_next_earnings`) — needs an earnings-date provider with point-in-time history; economically motivated, unlike pure calendar seasonality (deferred — pooling doesn't raise effective N for shared-calendar effects). Validate via backtest.
+- **Temporal features:** ~~earnings proximity~~ **DONE** — `days_to_next_earnings` is now a model feature (leakage-safe cadence estimate; yfinance earnings dates) + `get_earnings_context` for display. Still validate its OOS lift via Phase 6. (Pure calendar seasonality remains deferred — pooling doesn't raise effective N for shared-calendar effects.)
 - **News-as-model-feature (Option B):** only once point-in-time historical sentiment exists (buy data or log snapshots forward); then backtest whether it beats price-only.
 - News depth: embedding dedup/relevance, entity linking, event-study impact.
 - Cross-sectional/portfolio extension (still non-advisory).
