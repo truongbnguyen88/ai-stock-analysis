@@ -141,19 +141,22 @@ ai-stock-analysis/
 │   ├── providers/               # base(Protocols) · registry · av · finnhub · yfinance · marketaux · _cache
 │   ├── data/                    # loader · validation (point-in-time)
 │   ├── indicators/              # trend · momentum · volatility · returns
-│   ├── features/                # price_features · news_features · assembler
+│   ├── features/                # price_features · news_features (display) · assembler
 │   ├── news/                    # fetch · dedup · rank · clean
 │   ├── llm/                     # client · prompts · news_summarizer · guards
-│   ├── forecasting/             # base · buckets · historical · monte_carlo · ml · ensemble
+│   ├── forecasting/             # base · buckets · historical · monte_carlo · ml · pooled · train_pooled
 │   ├── backtesting/             # splitter · runner · metrics · calibration
-│   ├── reports/                 # builder · render_md · templates
+│   ├── reports/                 # builder · render_md
 │   ├── agent/                   # runtime · tools · prompts · guards
 │   ├── pipelines/               # analyze · forecast · backtest
-│   └── cli/                     # app.py
+│   └── cli/                     # app.py (analyze · forecast · train · chat)
+├── configs/  (default.yaml · models.yaml · providers.yaml · universe.txt)
+├── ui/                          # chat_app.py (Streamlit frontend)
+├── scripts/                     # one-off tools (e.g. estimate_sentiment_cost.py)
 ├── tests/  (unit · integration · data · fixtures)
 ├── notebooks/                   # exploration only — no core logic
-├── outputs/  (reports · experiments)
-└── docs/   (ARCHITECTURE.md · ROADMAP.md · MODELING.md)
+├── outputs/  (reports · experiments · models — gitignored)
+└── docs/   (ARCHITECTURE.md · ROADMAP.md · TASKS.md)
 ```
 
 ## 6. Module responsibilities
@@ -218,16 +221,18 @@ CLI / Chat Agent  →  pipelines.analyze
 
 1. **Historical simulation (baseline)** — empirical distribution of past `h`-day returns → bucket frequencies. Reference for whether complex models add value.
 2. **Volatility-based Monte Carlo** — estimate drift/vol (EWMA/rolling → later GARCH); simulate paths (GBM + block-bootstrap for fat tails) → bucket probs, E[r], VaR, percentile CIs.
-3. **ML classifiers/regressors** — features = price-derived + news-derived; per-bucket probabilities; **must be calibrated** before reporting.
+3. **ML classifiers (pooled, price-only)** — one binary classifier per return-threshold (`> +5/+10%`, `< −5/−10%`), combined into the six buckets with isotonicity enforced. **Must be calibrated** before reporting. Two design decisions (see TASKS.md decision log):
+   - **Pooled, not per-ticker.** Trained once offline across a ticker universe (`configs/universe.txt`), persisted as a `PooledModel` artifact (`forecasting/pooled.py`, `train_pooled.py`) under `outputs/models/`, and loaded at inference. Per-ticker overlapping windows give too-low effective sample size; pooling (~tens of thousands of rows) generalizes because the features are scale-free ratios. Missing artifact → graceful fallback to historical-sim.
+   - **Price-only (Option A).** The model uses price/indicator features only. News sentiment is **never** a model input — we have no point-in-time historical news to train on, and a feature absent at training cannot be applied at inference. News sentiment is *display context* (`features/news_features.py`): default = free Alpha Vantage scores; Claude scoring is opt-in.
 
 **Leakage discipline (priority #1):**
 
-- Feature at `t` uses only data available at `t` (news publish time, indicator windows ending at `t`).
+- Feature at `t` uses only data available at `t` (indicator windows ending at `t`).
 - Target window strictly after feature cutoff; enforce `feature_end < target_start`.
-- Scalers/imputers fit on train fold only.
+- Imputer fit on (pooled) train data only and **persisted** with the artifact — inference uses the same fill values (no per-row imputation leak).
 - Tests assert no future timestamps in feature rows.
 
-**Outputs:** bucket probabilities (sum to 1), expected return, upside/downside probability, VaR (5%/1%), CIs, model identity + calibration status. Sparse-data tickers fall back to baseline with explicit low-confidence flags.
+**Outputs:** bucket probabilities (sum to 1), expected return, upside/downside probability (partition at 0 → sum to 1), VaR (5%/1%), CIs, model identity + calibration status. Sparse-data tickers fall back to baseline with explicit low-confidence flags.
 
 ## 10. Backtesting & calibration
 

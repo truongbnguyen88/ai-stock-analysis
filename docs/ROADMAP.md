@@ -20,8 +20,8 @@ Out of MVP: ML models, Monte Carlo, walk-forward backtesting, calibration, ensem
 ### V1 — statistical/ML modeling + rigorous evaluation
 
 - Monte Carlo forecaster (GBM + block bootstrap).
-- ML forecasters: logistic → XGBoost / LightGBM / random forest under common interface; threshold-bucket targets.
-- News features (sentiment, topic, event/earnings/product/regulatory counts) → point-in-time assembler.
+- ML forecasters: logistic / XGBoost / LightGBM / random forest under common interface; threshold-bucket targets. **Pooled (cross-sectional) training** across a ticker universe → persisted `PooledModel` artifact loaded at inference (`train` CLI).
+- **Price-only model (Option A):** news sentiment is display context (free AV scores by default; Claude opt-in), never a model input — no point-in-time historical news to train on. See TASKS.md decision log.
 - Backtesting: rolling + walk-forward OOS; full metric suite (accuracy, precision, recall, ROC AUC, Brier, log loss).
 - Calibration: reliability diagrams, isotonic/Platt, ECE, predicted-vs-realized.
 - Forecast report section with CIs + VaR across 5/20/60-day horizons.
@@ -71,10 +71,10 @@ Bracketed = primary deliverable.
 16. `agent/runtime.py` (tool-use loop, prompt caching) + `agent/prompts/` (numbers-vs-narrative system prompt) + `agent/guards.py` (numeric-grounding guard). [working chat over deterministic + baseline forecast]
 17. `cli/app.py` adds `chat` command + agent integration tests (LLM mocked, fabricated-number rejection tested). **← MVP milestone**
 
-### Phase 5 — Statistical & ML models (V1)
+### Phase 5 — Statistical & ML models (V1) ✅
 18. `forecasting/monte_carlo.py` (GBM + block bootstrap) + `forecast` CLI wiring. [MC scenarios]
-19. `features/price_features.py` + `news_features.py` + `assembler.py` (point-in-time). [leakage-tested feature matrix]
-20. `forecasting/ml.py` (logistic → tree ensembles) under common interface. [calibratable ML forecasts]
+19. `features/price_features.py` + `assembler.py` (point-in-time, leakage-tested) — **price-only**; `news_features.py` builds display context only (AV sentiment default, Claude opt-in).
+20. `forecasting/ml.py` + `pooled.py` + `train_pooled.py`: **pooled** classifiers persisted as an artifact, loaded at inference; `train` CLI. [price-only, calibratable]
 
 ### Phase 6 — Backtesting & calibration (V1)
 21. `backtesting/splitter.py` (walk-forward + embargo) + leakage tests.
@@ -94,17 +94,23 @@ Bracketed = primary deliverable.
 ```bash
 # Deterministic CLI (scriptable, reproducible)
 python -m stock_agent analyze  --ticker NVDA  --days 90
-python -m stock_agent forecast --ticker MSFT  --horizon 20
-python -m stock_agent backtest --ticker AAPL
+python -m stock_agent train    --model xgboost --horizon 20   # pooled ML (one-time)
+python -m stock_agent forecast --ticker MSFT  --horizon 20  --model xgboost
+python -m stock_agent backtest --ticker AAPL                  # Phase 6
 
 # Conversational agent (same core)
 python -m stock_agent chat
 > Analyze NVDA over the last 3 months and forecast 15 and 30 days
 > Is your 30-day NVDA forecast well-calibrated?
+
+# Browser chat frontend (Streamlit)
+make ui   # → http://localhost:8501
 ```
 
 ## Notes / open decisions
 
-- **CLI framework:** recommend Typer (typed, clean help) over argparse — confirm if stdlib-only preferred.
+- **CLI framework:** Typer (Annotated style; a `@app.callback()` keeps subcommand names).
 - **LLM integration:** Phases 3, 4.5, 6.5 use the `claude-api` skill with prompt caching (news context is large and reused across report sections and chat turns).
 - **Heavy agent tools:** `run_backtest` / `get_calibration` can be slow; runtime should stream progress and bound arguments (max horizon, max window) to keep chat responsive.
+- **UI (added, off-roadmap):** `ui/chat_app.py` — Streamlit chat over the agent; threads conversation history (stateful). Launch with `make ui`.
+- **ML artifacts:** pooled models persist to `outputs/models/` (gitignored); `forecast --model <ml>` falls back to historical-sim until you `train`.
