@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from stock_agent.data.loader import PriceLoader
+from stock_agent.data.loader import LoadResult, PriceLoader
+from stock_agent.data.validation import DataIssue
+from stock_agent.features.news_features import build_news_features
 from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import TextLLM
 from stock_agent.llm.news_summarizer import summarize_news
@@ -22,8 +24,13 @@ from stock_agent.news.fetch import NewsFetcher
 from stock_agent.pipelines.forecast import MODEL_REGISTRY, run_forecast
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
-from stock_agent.schemas.market import PriceSeries
 from stock_agent.settings import Settings
+
+
+def _warnings(issues: list[DataIssue]) -> list[str]:
+    """Format warning/error data-quality issues for tool output (info-level skipped)."""
+    return [f"{i.code}: {i.message}" for i in issues if i.severity in ("warning", "error")]
+
 
 log = get_logger(__name__)
 
@@ -85,6 +92,27 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "get_news_sentiment",
+        "description": (
+            "Aggregate NUMERIC news context: average sentiment, % positive/negative, sentiment "
+            "coverage, article count, and event flags (earnings/regulatory/upgrade/downgrade). "
+            "Default uses free Alpha Vantage scores; set use_llm=true for fuller Claude coverage."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "days": {"type": "integer", "default": 14},
+                "use_llm": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Claude-score all articles for fuller coverage (small cost).",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
+    {
         "name": "run_forecast",
         "description": (
             "Model-generated forward-return scenario probabilities, expected return, VaR, and "
@@ -132,8 +160,9 @@ class ToolExecutor:
         self._llm = llm  # TextLLM for summarize_news (Role A); may be None
 
     # ---- data helpers --------------------------------------------------------
-    def _load(self, ticker: str, days: int) -> PriceSeries:
-        return PriceLoader(self._registry).load_recent(ticker.upper(), days, min_bars=20).series
+    def _load(self, ticker: str, days: int) -> LoadResult:
+        """Load prices AND keep the data-quality issues (so tools can warn)."""
+        return PriceLoader(self._registry).load_recent(ticker.upper(), days, min_bars=20)
 
     # ---- dispatch ------------------------------------------------------------
     def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -151,7 +180,8 @@ class ToolExecutor:
     def _tool_get_price_summary(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()
         days = int(args.get("days", 30))
-        series = self._load(ticker, days)
+        loaded = self._load(ticker, days)
+        series = loaded.series
         closes = series.closes
         return {
             "ticker": ticker,
@@ -163,12 +193,15 @@ class ToolExecutor:
             "pct_change": closes[-1] / closes[0] - 1.0,
             "period_high": max(closes),
             "period_low": min(closes),
+            "data_warnings": _warnings(loaded.issues),
         }
 
     def _tool_compute_indicators(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()
-        series = self._load(ticker, _PRICE_LOOKBACK_DAYS)
-        return compute_snapshot(series).model_dump(mode="json")
+        loaded = self._load(ticker, _PRICE_LOOKBACK_DAYS)
+        result = compute_snapshot(loaded.series).model_dump(mode="json")
+        result["data_warnings"] = _warnings(loaded.issues)
+        return result
 
     def _tool_get_news(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()
@@ -194,6 +227,21 @@ class ToolExecutor:
         days = int(args.get("days", 14))
         bundle = NewsFetcher(self._registry).fetch(ticker, lookback_days=days, top_n=25)
         return summarize_news(bundle, self._llm).model_dump(mode="json")
+
+    def _tool_get_news_sentiment(self, args: dict[str, Any]) -> dict[str, Any]:
+        ticker = str(args["ticker"]).upper()
+        days = int(args.get("days", 14))
+        use_llm = bool(args.get("use_llm", False))
+        bundle = NewsFetcher(self._registry).fetch(ticker, lookback_days=days, top_n=25)
+        # Default = free Alpha Vantage scores; Claude scoring is opt-in (per cost decision).
+        result: dict[str, Any] = dict(
+            build_news_features(bundle, llm=self._llm, use_llm_sentiment=use_llm)
+        )
+        result["ticker"] = ticker
+        result["sentiment_source"] = (
+            "claude" if (use_llm and self._llm is not None) else "alpha_vantage"
+        )
+        return result
 
     def _tool_run_forecast(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -16,6 +16,7 @@ from stock_agent.agent.tools import ToolExecutor
 from stock_agent.providers.fake import FakeProvider
 from stock_agent.providers.registry import ProviderRegistry
 from stock_agent.schemas.market import PriceBar, PriceSeries
+from stock_agent.schemas.news import Article, NewsBundle
 from stock_agent.settings import Settings
 
 
@@ -125,3 +126,59 @@ def test_run_forecast_tool_routes_model_selection() -> None:
     ml = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "xgboost"})
     assert "error" not in ml
     assert ml.get("model_name") == "ml_xgboost"
+
+
+def _executor_with_news() -> ToolExecutor:
+    bars = [
+        PriceBar(
+            date=date(2024, 1, 1) + timedelta(days=i),
+            open=100.0 + i,
+            high=101.0 + i,
+            low=99.0 + i,
+            close=100.0 + i,
+        )
+        for i in range(60)
+    ]
+    arts = [
+        Article(
+            title="NVDA earnings beat estimates",
+            url="https://x.com/1",
+            source="alpha_vantage",
+            published_at=datetime.now(UTC) - timedelta(days=1),
+            sentiment=0.4,
+        ),
+        Article(
+            title="NVDA faces regulatory probe",
+            url="https://x.com/2",
+            source="alpha_vantage",
+            published_at=datetime.now(UTC) - timedelta(days=2),
+            sentiment=-0.2,
+        ),
+    ]
+    fake = FakeProvider(
+        "fake",
+        prices=PriceSeries(ticker="NVDA", bars=bars),
+        news=NewsBundle(ticker="NVDA", articles=arts),
+    )
+    registry = ProviderRegistry(
+        [fake],
+        Settings(_env_file=None, provider_price_priority="fake", provider_news_priority="fake"),
+    )
+    return ToolExecutor(Settings(_env_file=None), registry=registry)
+
+
+def test_get_news_sentiment_tool_uses_av_by_default() -> None:
+    r = _executor_with_news().execute("get_news_sentiment", {"ticker": "NVDA", "days": 14})
+    assert "error" not in r
+    assert r["sentiment_source"] == "alpha_vantage"
+    assert r["article_count"] == 2.0
+    assert r["avg_sentiment"] == pytest.approx((0.4 - 0.2) / 2)  # AV scores averaged
+    assert r["has_earnings"] == 1.0  # "earnings" in a title
+    assert r["has_regulatory"] == 1.0  # "regulatory" in a title
+
+
+def test_compute_indicators_surfaces_data_warnings() -> None:
+    # 60 bars dated 2024 loaded as "recent" → stale_data warning reaches the agent.
+    r = _executor(n_bars=60).execute("compute_indicators", {"ticker": "NVDA"})
+    assert "data_warnings" in r
+    assert any("stale_data" in w for w in r["data_warnings"])
