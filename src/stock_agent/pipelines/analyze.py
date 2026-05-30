@@ -13,10 +13,12 @@ from pydantic import ValidationError
 
 from stock_agent.data.earnings import fetch_earnings_context
 from stock_agent.data.loader import PriceLoader
+from stock_agent.features.news_features import build_news_features
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import AnthropicClient, LLMError, TextLLM
 from stock_agent.llm.news_summarizer import SummaryGuardError, summarize_news
+from stock_agent.llm.synthesizer import SynthesisGuardError, synthesize
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
@@ -83,6 +85,25 @@ def run_analyze(
             # Degrade gracefully: a failed/garbled summary must not sink the report.
             log.warning("analyze.summary_failed", ticker=ticker, error=str(exc))
 
+    # Aggregate news sentiment (free AV scores) — context for the synthesis.
+    news_sentiment = build_news_features(news_bundle)
+
+    # Integrated analysis (Role C): reconcile forecast with news/earnings/technicals.
+    synthesis = None
+    if client is not None and use_llm and forecasts:
+        try:
+            synthesis = synthesize(
+                ticker,
+                forecasts=forecasts,
+                snapshot=snapshot,
+                llm=client,
+                news_summary=summary,
+                news_sentiment=news_sentiment,
+                earnings=earnings,
+            )
+        except (LLMError, SynthesisGuardError, ValueError, ValidationError) as exc:
+            log.warning("analyze.synthesis_failed", ticker=ticker, error=str(exc))
+
     return build_report(
         ticker=ticker,
         as_of=as_of,
@@ -93,4 +114,5 @@ def run_analyze(
         data_issue_messages=[f"{i.code}: {i.message}" for i in load.issues],
         n_price_bars=len(series),
         earnings=earnings,
+        synthesis=synthesis,
     )

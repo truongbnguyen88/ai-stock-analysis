@@ -80,6 +80,19 @@ def render_markdown(report: ResearchReport) -> str:
     if report.confidence_notes:
         out += [f"_{report.confidence_notes}_", ""]
 
+    # Integrated analysis (Role C): reconciles forecast with news/earnings/technicals
+    if report.synthesis is not None:
+        s = report.synthesis
+        out += ["## Integrated Analysis"]
+        if s.overview:
+            out += [s.overview, ""]
+        if s.alignments:
+            out += ["**Where signals align**", *_bullets(s.alignments), ""]
+        if s.tensions:
+            out += ["**Tensions / what tempers the forecast**", *_bullets(s.tensions), ""]
+        if s.confidence:
+            out += [f"_Confidence: {s.confidence}_", ""]
+
     # Technical analysis
     out += ["## Technical Analysis", report.technical_analysis.narrative or "_n/a_", ""]
     if report.technical_analysis.indicators:

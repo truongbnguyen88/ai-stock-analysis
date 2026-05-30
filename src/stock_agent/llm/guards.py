@@ -13,7 +13,9 @@ numbers-vs-narrative invariant at the output boundary:
 
 from __future__ import annotations
 
+import math
 import re
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -115,3 +117,79 @@ def sanitize_citations(summary: NewsSummary, allowed_urls: set[str]) -> NewsSumm
             "catalysts": clean_group(summary.catalysts),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Numeric grounding (shared by the chat agent and the synthesizer)
+# ---------------------------------------------------------------------------
+# An LLM that *reports* model/tool numbers (the agent, the synthesizer) may only
+# state figures that came from those inputs — it must never invent or revise a
+# probability/return. NumberGrounding collects numbers from the inputs and flags
+# any decimal/percent in the LLM's text that doesn't trace back to one.
+
+# Numbers inside input data (structured or text): ints and decimals.
+_ANY_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+# Figures to verify in the LLM's text: percentages (int or decimal) or bare
+# decimals. Bare integers (years, day counts) are intentionally not checked.
+_CHECK_NUMBER = re.compile(r"-?\d+(?:\.\d+)?%|-?\d+\.\d+")
+
+
+def _normalized_forms(value: float) -> set[float]:
+    """Rounded fraction- and percent-scaled forms used for matching."""
+    if not math.isfinite(value):
+        return set()
+    # No 0-digit rounding — it collides distinct values (0.71 and 0.92 both round
+    # to 1.0), which would mask fabricated figures.
+    forms: set[float] = set()
+    for scaled in (value, value * 100.0):
+        for digits in (1, 2, 4):
+            forms.add(round(scaled, digits))
+    return forms
+
+
+class NumberGrounding:
+    """Accumulates numbers from inputs and checks an LLM's text against them."""
+
+    def __init__(self) -> None:
+        self._grounded: set[float] = set()
+
+    def add_value(self, value: float) -> None:
+        self._grounded |= _normalized_forms(value)
+
+    def add_from(self, obj: Any) -> None:
+        """Recursively collect numbers from an input (dicts/lists/strings)."""
+        if isinstance(obj, bool):
+            return  # bool is an int subclass; ignore
+        if isinstance(obj, int | float):
+            self.add_value(float(obj))
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                self.add_from(v)
+        elif isinstance(obj, list | tuple):
+            for item in obj:
+                self.add_from(item)
+        elif isinstance(obj, str):
+            # Ground numbers embedded in text (e.g. "revenue up 20%").
+            for match in _ANY_NUMBER.finditer(obj):
+                try:
+                    self.add_value(float(match.group(0)))
+                except ValueError:
+                    continue
+
+    def ungrounded(self, text: str) -> list[str]:
+        """Return distinct numeric tokens in ``text`` not traceable to an input."""
+        violations: list[str] = []
+        seen: set[str] = set()
+        for match in _CHECK_NUMBER.finditer(text):
+            token = match.group(0)
+            raw = token[:-1] if token.endswith("%") else token
+            try:
+                value = float(raw)
+            except ValueError:
+                continue
+            # A percent token "3%" may also mean the fraction 0.03; check both.
+            candidate = _normalized_forms(value) | _normalized_forms(value / 100.0)
+            if not (candidate & self._grounded) and token not in seen:
+                violations.append(token)
+                seen.add(token)
+        return violations

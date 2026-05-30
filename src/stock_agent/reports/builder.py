@@ -25,6 +25,7 @@ from stock_agent.schemas.report import (
     ResearchReport,
     TechnicalAnalysisSection,
 )
+from stock_agent.schemas.synthesis import Synthesis
 
 _MAX_CITATIONS = 12
 
@@ -153,6 +154,7 @@ def build_report(
     n_price_bars: int = 0,
     fundamentals: Fundamentals | None = None,
     earnings: EarningsContext | None = None,
+    synthesis: Synthesis | None = None,
 ) -> ResearchReport:
     """Compose the full research report from computed inputs."""
     tech_bull, tech_bear, tech_risk = _technical_flags(snapshot)
@@ -234,6 +236,7 @@ def build_report(
             narrative=_technical_narrative(snapshot),
             indicators=snapshot.numeric_indicators(),
         ),
+        synthesis=synthesis,
         news_analysis=_news_section(news_summary, news_bundle),
         fundamentals=fundamentals,
         earnings=earnings,

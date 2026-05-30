@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, HttpUrl
 from stock_agent.schemas.earnings import EarningsContext
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.market import Fundamentals
+from stock_agent.schemas.synthesis import Synthesis
 
 
 class Citation(BaseModel):
@@ -55,6 +56,9 @@ class ResearchReport(BaseModel):
     executive_summary: str = ""
     key_observations: list[str] = Field(default_factory=list)
     confidence_notes: str = ""
+
+    # Integrated analysis (Role C): reconciles the forecast with news/earnings/technicals
+    synthesis: Synthesis | None = None
 
     # Body sections
     technical_analysis: TechnicalAnalysisSection = Field(default_factory=TechnicalAnalysisSection)
