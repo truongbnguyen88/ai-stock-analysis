@@ -65,6 +65,22 @@ The internal boundaries $\{-0.10, -0.05, 0, +0.05, +0.10\}$ are reused by the ML
 models as classifier thresholds (Section 3) — the buckets and the ML targets are
 the *same* partition by design.
 
+*All three models converge on the identical output object — which is exactly what lets reports and backtests compare them directly:*
+
+```mermaid
+flowchart LR
+    PS["PriceSeries + horizon + as_of"]
+    PS --> H["Historical Sim"]
+    PS --> M["Monte Carlo<br/>gbm · bootstrap · jump"]
+    PS --> L["ML pooled classifiers"]
+    H --> SF["ScenarioForecast<br/>6 buckets · mean · VaR · CI"]
+    M --> SF
+    L --> SF
+    SF --> RP["Reports / agent"]
+    SF --> BT["Backtests · Phase 6"]
+    SF --> CMP["Model comparison"]
+```
+
 > **Horizon units.** `horizon_days` is **trading days** throughout (≈ 21/month,
 > 252/year). Where calendar days are needed (e.g. comparing an earnings date), we
 > convert with the factor $365/252 \approx 1.448$.
@@ -97,7 +113,7 @@ this empirical sample:
 $$
 \widehat{\mathbb{E}}[r] = \frac{1}{N}\sum_t r_t,
 \qquad
-P(\text{bucket}_k) = \frac{\#\{t : r_t \in \text{bucket}_k\}}{N}
+P(\text{bucket}_k) = \frac{1}{N}\sum_t \mathbb{1}[\, r_t \in \text{bucket}_k \,]
 $$
 
 $$
@@ -107,10 +123,24 @@ $$
 $$
 
 where $Q_p$ is the empirical $p$-quantile and $N = T-h$. `upside_prob` is just
-$\frac{1}{N}\#\{r_t > 0\}$.
+$\frac{1}{N}\sum_t \mathbb{1}[\, r_t > 0 \,]$.
 
 If fewer than `_MIN_SAMPLES = 30` returns are available, the forecast is still
 produced but flagged low-confidence in `notes`.
+
+*The whole pipeline is a single pass from prices to the empirical distribution:*
+
+```mermaid
+flowchart LR
+    C["Close prices P_0 … P_T"] --> OR["Overlapping h-day returns<br/>r_t = P_(t+h) / P_t − 1"]
+    OR --> S["Empirical sample<br/>N = T − h returns"]
+    S --> BK["Bucket frequencies"]
+    S --> ER["Sample mean → mean return"]
+    S --> VR["Quantiles → VaR 95 / 99 · 90% CI"]
+    BK --> SF["ScenarioForecast"]
+    ER --> SF
+    VR --> SF
+```
 
 ### Worked intuition
 
@@ -146,12 +176,27 @@ path's terminal return, and forms the distribution by *frequency over the
 ensemble* — every path is equiprobable, so:
 
 $$
-P(\text{bucket}_k) = \frac{\#\{\text{paths with terminal } r \in \text{bucket}_k\}}{N}
+P(\text{bucket}_k) = \frac{1}{N}\sum_{i=1}^{N} \mathbb{1}[\, r_i \in \text{bucket}_k \,]
 $$
 
 The terminal-return sample is then fed through the **same** `sample_to_forecast`
 used by historical simulation, so E[r], VaR, and CI are computed identically.
 Three variants differ only in *how the daily returns are generated*.
+
+*Shared simulation core — the three variants diverge only at the increment-generation step, then rejoin:*
+
+```mermaid
+flowchart LR
+    LRx["Recent daily log returns"] --> GEN{"Variant?"}
+    GEN -->|gbm| G["Estimate μ, σ on 60d →<br/>normal increments<br/>(μ − σ²/2) + σ·Z"]
+    GEN -->|bootstrap| B["Resample real<br/>10-day blocks"]
+    GEN -->|jump| J["GBM (h−1 days)<br/>+ earnings jump<br/>(next chart)"]
+    G --> TERM["Terminal return per path:<br/>sum daily increments, then expm1"]
+    B --> TERM
+    J --> TERM
+    TERM --> FREQ["Frequency over 10,000<br/>equiprobable paths"]
+    FREQ --> SF["ScenarioForecast"]
+```
 
 ### 2.1 GBM (parametric) — `monte_carlo_gbm`
 
@@ -249,6 +294,27 @@ plain GBM with an explanatory `note`:
 2. there is a next earnings date $e^\* > \texttt{as\_of}$;
 3. it lands inside the horizon: $(e^\* - \texttt{as\_of})_{\text{cal days}} \le h \cdot \frac{365}{252}$;
 4. at least 8 historical moves exist.
+
+*The fallback ladder — the jump fires only when all four gates pass; any failure degrades to plain GBM with a disclosing note:*
+
+```mermaid
+flowchart TD
+    S["jump variant<br/>horizon h, as_of"] --> Q1{"Earnings dates<br/>available?"}
+    Q1 -->|no| F1["GBM, h days<br/>note: no earnings data"]
+    Q1 -->|yes| Q2{"A next earnings<br/>e* after as_of?"}
+    Q2 -->|no| F2["GBM, h days<br/>note: no upcoming earnings"]
+    Q2 -->|yes| Q3{"e* within horizon?<br/>days ≤ h × 365/252"}
+    Q3 -->|no| F3["GBM, h days<br/>note: earnings beyond horizon"]
+    Q3 -->|yes| CAL["Fetch ~4y prices ending at as_of<br/>→ historical moves m_j"]
+    CAL --> Q4{"at least 8<br/>moves?"}
+    Q4 -->|no| F4["GBM, h days<br/>note: too few moves"]
+    Q4 -->|yes| JUMP["GBM (h−1 days) + bootstrapped move<br/>R = Σ normal days + J<br/>note: earnings jump applied"]
+    F1 --> SF["ScenarioForecast"]
+    F2 --> SF
+    F3 --> SF
+    F4 --> SF
+    JUMP --> SF
+```
 
 **Mean-inclusive design.** The moves are bootstrapped **as-is** (not de-meaned),
 so the path keeps the stock's real post-earnings *skew*. For a name whose
@@ -365,6 +431,26 @@ bucket midpoints (open tails floored/capped at $\mp 0.20$); `upside_prob` sums
 buckets entirely at or above 0. Note $P(r>0) = m_2$ falls straight out of the
 construction.
 
+*From one feature vector to a valid 6-bucket distribution — five survival classifiers, made monotone, then differenced:*
+
+```mermaid
+flowchart TD
+    X["Feature vector x<br/>16 scale-free features"] --> C0["clf θ = −10%"]
+    X --> C1["clf θ = −5%"]
+    X --> C2["clf θ = 0%"]
+    X --> C3["clf θ = +5%"]
+    X --> C4["clf θ = +10%"]
+    C0 --> M["Survival probs m_0 … m_4<br/>m_k = P(return above θ_k)"]
+    C1 --> M
+    C2 --> M
+    C3 --> M
+    C4 --> M
+    M --> ISO["Isotonic clamp<br/>each m_k ≤ previous (non-increasing)"]
+    ISO --> DIFF["Difference neighbors →<br/>p_0 = 1 − m_0 · p_5 = m_4 · else m_(k−1) − m_k"]
+    DIFF --> NORM["Clip ≥ 0 + renormalize → Σp = 1"]
+    NORM --> SF["6-bucket ScenarioForecast"]
+```
+
 #### Worked example
 
 Suppose for some stock today the five classifiers output (already monotone):
@@ -460,6 +546,17 @@ from XOM live in the same space.
 4. Train one classifier per threshold on the pool. A threshold with only one
    class present is skipped (logged in `notes`).
 
+*Training stacks many tickers into one pooled fit per threshold — valid because the features are scale-free:*
+
+```mermaid
+flowchart TD
+    U["Universe ~50-100 tickers<br/>configs/universe.txt"] --> FE["Per ticker: fetch ~6y prices<br/>+ earnings dates"]
+    FE --> PIT["Point-in-time matrix per ticker:<br/>X = 16 features at t (data ≤ t)<br/>y_k = 1 if future h-day return above θ_k"]
+    PIT --> ST["Stack all tickers → pooled rows<br/>replace ±inf with NaN"]
+    ST --> FIT["For each threshold θ_k:<br/>fit one binary classifier"]
+    FIT --> ART["PooledModel artifact<br/>5 classifiers + imputer + metadata<br/>→ joblib (gitignored)"]
+```
+
 **Missing-value handling.** Tree boosters (XGBoost, LightGBM) handle NaN
 natively. Logistic regression and random forest get a `SimpleImputer(median)`
 that is **fit on the pooled training data and persisted in the artifact**, so
@@ -492,6 +589,19 @@ At forecast time (`MLForecaster.forecast`):
 3. `predict_exceedance` → the five $m_k$; any missing classifier is filled with
    the stock's historical base rate $P(r>\theta_k)$.
 4. Isotonic + difference → six buckets → derived stats.
+
+*Inference is cheap and degrades safely — no artifact means an automatic historical-sim fallback:*
+
+```mermaid
+flowchart TD
+    S["MLForecaster.forecast<br/>model_type, horizon"] --> Q{"Trained artifact<br/>for this horizon?"}
+    Q -->|no| FB["Fall back to historical_sim<br/>note: run train command"]
+    Q -->|yes| FEAT["Build current feature row<br/>fetch earnings for feature 16"]
+    FEAT --> PRED["predict_exceedance → m_0 … m_4<br/>missing clf → historical base rate"]
+    PRED --> BUILD["Isotonic + difference → 6 buckets<br/>derive mean, VaR, upside"]
+    FB --> SF["ScenarioForecast"]
+    BUILD --> SF
+```
 
 ### ML: assumptions & failure modes
 
