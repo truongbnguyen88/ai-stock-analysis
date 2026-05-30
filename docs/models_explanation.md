@@ -291,8 +291,8 @@ calibration, yielding ~16 historical moves. Critically the fetch **ends at
 plain GBM with an explanatory `note`:
 
 1. earnings dates are available (registry returns them);
-2. there is a next earnings date $e^\* > \texttt{as\_of}$;
-3. it lands inside the horizon: $(e^\* - \texttt{as\_of})_{\text{cal days}} \le h \cdot \frac{365}{252}$;
+2. there is a next earnings date $e^{*}$ after `as_of`;
+3. it lands inside the horizon — the calendar gap to $e^{*}$ is $\le h \cdot \frac{365}{252}$ days (`as_of` to $e^{*}$);
 4. at least 8 historical moves exist.
 
 *The fallback ladder — the jump fires only when all four gates pass; any failure degrades to plain GBM with a disclosing note:*
@@ -492,7 +492,7 @@ space). Defined in
 | 9 | `ma50_to_ma200` | $\mathrm{MA}_{50}/\mathrm{MA}_{200}-1$ (golden/death cross) |
 | 10 | `hist_vol_20` | Annualized std of log returns, 20-day window, $\times\sqrt{252}$ |
 | 11 | `hist_vol_60` | Same, 60-day window |
-| 12 | `vol_ratio` | $\mathrm{hist\_vol}_{20}/\mathrm{hist\_vol}_{60}$ (>1 = vol expanding) |
+| 12 | `vol_ratio` | `hist_vol_20 / hist_vol_60` (>1 = vol expanding) |
 | 13 | `atr_pct` | ATR(14, Wilder) $/\,P_t$ (normalized daily range) |
 | 14 | `drawdown` | $P_t/\max_{s\le t}P_s - 1\ (\le 0)$ |
 | 15 | `B_perc` | Bollinger %B: $(P_t - \text{lower})/(\text{upper}-\text{lower})$, bands = $\mathrm{SMA}_{20}\pm2\sigma$ |
@@ -515,10 +515,10 @@ quantities are computed ([data/earnings.py](../src/stock_agent/data/earnings.py)
   $e_{\text{last}} \le t$:
 
 $$
-\texttt{days\_to\_next\_earnings}(t) = \mathrm{clip}\big(\text{cadence} - (t - e_{\text{last}}),\ 0,\ \text{cadence}\big)
+d_{\text{earn}}(t) = \mathrm{clip}\big(\text{cadence} - (t - e_{\text{last}}),\ 0,\ \text{cadence}\big)
 $$
 
-This is computed **identically at train and inference** and uses no future
+Here $d_{\text{earn}}(t)$ is the `days_to_next_earnings` value. It is computed **identically at train and inference** and uses no future
 information — point-in-time valid. (NVDA live: feature 82 vs real display 88.)
 
 ### 3.4 Pooled, cross-sectional training

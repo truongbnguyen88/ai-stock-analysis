@@ -37,6 +37,16 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 - Prefer small pure functions over classes unless state/interface is needed (forecast models and providers are the main legitimate classes).
 - `pathlib`, explicit typing, `structlog` (no `print`), config-driven — per global rules.
 
+## Docs: math & Mermaid (rendered on GitHub)
+Markdown docs render on the GitHub website via **MathJax** (`$…$` inline, `$$…$$` block). GitHub **unescapes backslash-escapes of markdown-significant punctuation — `#`, `_`, `*`, `` ` ``, `[`, `]` — even inside math**, so the bare char reaches MathJax and errors. Rules for any doc with equations:
+- **Never write `\#`, `\_`, `\*` (or `` \` ``, `\[`, `\]`) inside `$…$`/`$$…$$`.** They throw *"macro parameter character #"* / *"'_' allowed only in math mode"* on GitHub even though they're valid LaTeX locally.
+  - Count/cardinality → use an indicator sum `\frac{1}{N}\sum_t \mathbb{1}[\,\cdot\,]` or `\lvert\{\cdots\}\rvert`, **not** `\#`.
+  - Literal star → `{*}` or `\ast`, **not** `\*`.
+- **Code/config identifiers with underscores** (`as_of`, `days_to_next_earnings`, `hist_vol_20`) go in **markdown code spans** (backticks) *outside* math, or use a clean math symbol (`d_{\text{earn}}`, `t_0`). Never put a `_`-bearing name inside `\text{}`/`\texttt{}`.
+- **Safe to keep:** `\%`, `\{`, `\}`, `\!`, and all backslash+letter macros (`\frac`, `\sigma`, `\le`, `\mathbb`, `\text{…}` with no underscore). Only the six markdown-significant escapes above are the hazard.
+- **Mermaid:** use fenced ```` ```mermaid ```` blocks; quote any node label containing punctuation (`["P(r) ratio"]`); `<br/>` for line breaks; avoid raw `<`/`>` in labels (use words) — the `-->` arrows are fine.
+- **Before committing a math/diagram doc**, grep the math spans for the hazards: no `\#`, `\_`, `\*` inside `$…$`, and no bare `_` inside `\text{}`/`\texttt{}`.
+
 ## Testing requirements (per module type)
 - **Indicators / features:** golden-file tests with hand-verified expected values; edge cases (short series, NaNs, flat prices). Leakage assertions for features.
 - **Providers:** normalization vs recorded fixtures; fallback chain triggers on simulated rate-limit/unavailable; cache hit/miss.
