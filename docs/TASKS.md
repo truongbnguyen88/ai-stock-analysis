@@ -10,8 +10,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - **Phase:** 6 — Backtesting & calibration
 - **Next step:** Step 21 — `backtesting/splitter.py` (walk-forward + embargo) + leakage tests
 - **Gate to advance:** `make check` green
-- **Last updated:** 2026-05-29
-- 🎉 **MVP milestone reached** (Phases 0–4.5): analyze CLI + chat agent working live.
+- **Last updated:** 2026-05-30
+- 🎉 **MVP milestone** (Phases 0–4.5): analyze CLI + chat agent live.
+- ✅ **Phases 5 + 5.5 done** (162 pytest): pooled ML, earnings (context + feature), Role C synthesis layer. Phase 6 (backtest/calibration) is the next roadmap step — and what makes all forecasts *trustworthy* + lets synthesis/agent speak to calibration.
 
 ---
 
@@ -48,6 +49,13 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 - [x] 18. `forecasting/monte_carlo.py` (GBM + block bootstrap) + `forecast` CLI
 - [x] 19. `features/` price + news + assembler (point-in-time, leakage-tested)
 - [x] 20. `forecasting/ml.py` (logistic, XGBoost, LightGBM, random forest)
+
+## Phase 5.5 — Signal enrichment & synthesis ✅ (off original roadmap; details in decision log)
+- [x] 20a. Pooled-training rework: cross-sectional `PooledModel` artifact + `train` CLI (replaces per-ticker fit); price-only (Option A); AV sentiment = display context (Claude opt-in)
+- [x] 20b. Agent completeness: `get_news_sentiment` (de-orphaned AV sentiment), `data_warnings`, model selection in `run_forecast`, stateful multi-turn memory, guard false-positive fixes
+- [x] 20c. Features: `B_perc` (Bollinger %B) + `days_to_next_earnings` (leakage-safe cadence estimate) → 16 features
+- [x] 20d. Earnings: `EarningsProvider` (yfinance) + context in report + `get_earnings_context` agent tool
+- [x] 20e. **Synthesis layer (Role C)**: `llm/synthesizer.py` → Integrated Analysis reconciling forecast + news + earnings + technicals (numeric-grounding guarded)
 
 ## Phase 6 — Backtesting & calibration
 - [ ] 21. `backtesting/splitter.py` (walk-forward + embargo) + leakage tests
