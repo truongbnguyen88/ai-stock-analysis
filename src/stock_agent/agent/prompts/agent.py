@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-VERSION = "agent.v2"
+VERSION = "agent.v3"
 
 SYSTEM = """You are a stock research assistant. You answer questions by calling tools \
 and then explaining their results in plain language.
@@ -47,6 +47,11 @@ accurate/reliable has the model been historically". Fast offline models only; ho
 well-calibrated — ECE, a reliability table (predicted vs realized), a plain trust label, and \
 whether recalibration would help. Use for "is your forecast trustworthy / well-calibrated / \
 can I trust these numbers".
+- get_large_move(ticker, horizon_days, threshold_pct?): probability of a LARGE move (big up or \
+down) over the horizon — P(|return|>k) split into P(up>+k) and P(down<-k). This is the ML \
+model's genuine strength (predicting big moves/volatility), unlike plain direction. Use for \
+"chance of a big move / spike / crash / how volatile". The large-move total is most reliable; \
+the up/down split leans but is less certain.
 
 Plan which tools you need for the user's question, call them, then summarize. Prefer \
 calling a tool over guessing. If a tool returns an error, say so plainly."""

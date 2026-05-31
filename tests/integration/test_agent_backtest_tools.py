@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+import pytest
+
 from stock_agent.agent.runtime import ToolResponse, ToolUse, run_agent
 from stock_agent.agent.tools import ToolExecutor
 from stock_agent.backtesting.calibration import calibration_label
@@ -142,3 +144,24 @@ class _Scripted:
         resp = self._responses[min(self.calls, len(self._responses) - 1)]
         self.calls += 1
         return resp
+
+
+# ---- get_large_move tool (the big-move build) ---------------------------------
+def test_get_large_move_tool_shape() -> None:
+    # model=historical_sim keeps it hermetic (no artifact); the tool is model-agnostic.
+    out = _executor().execute(
+        "get_large_move",
+        {"ticker": "TST", "horizon_days": 20, "threshold_pct": 10, "model": "historical_sim"},
+    )
+    assert "error" not in out
+    assert 0.0 <= out["prob_large_move"] <= 1.0
+    # P(|r|>k) must equal P(up) + P(down).
+    assert out["prob_large_move"] == pytest.approx(out["prob_big_up"] + out["prob_big_down"])
+    assert out["lean"] in {"up", "down", "balanced"}
+    assert out["threshold_pct"] == 10
+    assert "reliability" in out  # honest trust framing present
+
+
+def test_get_large_move_rejects_bad_threshold() -> None:
+    out = _executor().execute("get_large_move", {"ticker": "TST", "threshold_pct": 7})
+    assert "error" in out and "5 or 10" in out["error"]

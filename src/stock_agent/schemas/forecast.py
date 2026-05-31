@@ -66,3 +66,25 @@ class ScenarioForecast(BaseModel):
             if abs(total - 1.0) > 1e-3:
                 raise ValueError(f"bucket probabilities sum to {total:.4f}, expected 1.0")
         return self
+
+
+class LargeMoveBreakdown(BaseModel):
+    """Magnitude-first ('large move') reading of a forecast, split by direction.
+
+    Derived purely from the bucket distribution: the probability of a large move
+    of size ``threshold`` over the horizon, and its up/down tails. Backtesting
+    shows ML predicts these tails with real skill where it cannot predict
+    direction — so this is ML's genuine niche (see docs/validations_results.md and
+    models_explanation.md §3.6). ``lean`` is a plain-language summary of which tail
+    dominates; it is NOT a directional call on the median.
+    """
+
+    ticker: str
+    as_of: Date
+    horizon_days: int = Field(gt=0)
+    model_name: str
+    threshold: float = Field(gt=0)  # k, fractional (e.g. 0.10 = ±10%)
+    prob_large_move: float = Field(ge=0.0, le=1.0)  # P(|r| > k) = the headline
+    prob_big_up: float = Field(ge=0.0, le=1.0)  # P(r > +k)
+    prob_big_down: float = Field(ge=0.0, le=1.0)  # P(r < -k)
+    lean: Literal["up", "down", "balanced"]  # which tail carries more mass

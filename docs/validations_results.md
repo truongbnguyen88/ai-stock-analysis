@@ -170,3 +170,7 @@ python -m stock_agent backtest --ticker NVDA                    # baselines, sam
 #   run_backtest_pipeline(ticker, horizon, model_names=[...], big_move_k=0.05)
 # then read result.big_move (a ThresholdMetrics for P(|r|>k)).
 ```
+
+**Follow-up — model sweep + which model powers it.** Unlike *direction* (where trees were stuck at AUC ≈ 0.5), on **big-move the trees are competitive** — it has non-linear vol structure they capture. h5 |r|>5% AUC: xgboost/lightgbm 0.63–0.72 vs logistic 0.60–0.66. Key result: **regularizing lightgbm (shallow, `min_child_samples=200`, subsampling, L1+L2) fixes the high-vol overconfidence** — NVDA h20 log-loss **1.31 → 0.72**, Brier 0.281 → 0.259, AUC up. Verdict is **split**: **regularized lightgbm wins high-vol names (NVDA); logistic wins stable names (KO AUC 0.878 vs 0.807; MSFT h20 Brier 0.093 vs 0.102).** Neither dominates.
+
+**Built (2026-05-31).** `forecasting/large_move.py` (`large_move_breakdown` → `LargeMoveBreakdown`) + agent **`get_large_move`** tool (system prompt v3). Model-agnostic; **defaults to logistic**, with regularized lightgbm a documented high-vol swap. Live NVDA 20d k=10%: P(|r|>10%)=18% (up 11% / down 7%, lean up). Next enhancement: a precomputed per-ticker skill scorecard (inline AUC/calibration trust badge).

@@ -662,8 +662,15 @@ names (KO log-loss 0.155 vs 1.24).
 
 **Measured by** `BacktestResult.big_move` (a `ThresholdMetrics` for $P(|r|>k)$ with
 a configurable `big_move_k`) — every backtest computes it, so any model's big-move
-skill is directly comparable. (The product `prob_large_move` output is the planned
-next step.)
+skill is directly comparable.
+
+**Surfaced** via `forecasting/large_move.py` (`large_move_breakdown` → a
+`LargeMoveBreakdown`: `prob_large_move`, `prob_big_up`, `prob_big_down`, `lean`) and
+the agent's **`get_large_move`** tool — *"chance of a big move, and which way it
+leans."* Defaults to logistic (the validated big-move model); a regularized lightgbm
+is a documented swap for high-vol names (it fixes their overconfidence — see
+validations_results.md). A precomputed per-ticker skill scorecard (backtested
+AUC/calibration shown inline as a trust badge) is the next enhancement.
 
 ---
 

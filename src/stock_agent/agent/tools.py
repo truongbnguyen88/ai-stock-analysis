@@ -21,6 +21,7 @@ from stock_agent.data.earnings import fetch_earnings_context
 from stock_agent.data.loader import LoadResult, PriceLoader
 from stock_agent.data.validation import DataIssue
 from stock_agent.features.news_features import build_news_features
+from stock_agent.forecasting.large_move import large_move_breakdown
 from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import TextLLM
 from stock_agent.llm.news_summarizer import summarize_news
@@ -256,6 +257,36 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "required": ["ticker"],
         },
     },
+    {
+        "name": "get_large_move",
+        "description": (
+            "Probability of a LARGE MOVE (a big up or down move, regardless of small-scale "
+            "direction) over the horizon: P(|return| > k), split into P(up > +k) and P(down < -k). "
+            "This is where the ML model has genuine, backtested skill — predicting big moves / "
+            "volatility — unlike plain direction, which is ~a coin flip. Use for 'chance of a big "
+            "move', 'how volatile / could it spike or crash', 'is a large swing likely'. Defaults "
+            "to the logistic model; k is 5% or 10%. The large-move total is the most reliable "
+            "part; the up/down split shows which tail leans but is less certain."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "horizon_days": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Horizon in trading days.",
+                },
+                "threshold_pct": {
+                    "type": "integer",
+                    "enum": [5, 10],
+                    "default": 10,
+                    "description": "How big is 'big' — a 5% or 10% move (a bucket edge).",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
 ]
 
 
@@ -388,6 +419,32 @@ class ToolExecutor:
         # agent can't say "99% VaR" without a false-positive grounding violation.
         # Add them explicitly so standard statistical labels are always grounded.
         result["var_confidence_levels_pct"] = [90, 95, 99]
+        return result
+
+    def _tool_get_large_move(self, args: dict[str, Any]) -> dict[str, Any]:
+        ticker = str(args["ticker"]).upper()
+        horizon = int(args.get("horizon_days", 20))
+        threshold_pct = int(args.get("threshold_pct", 10))
+        if threshold_pct not in (5, 10):
+            return {"error": "threshold_pct must be 5 or 10 (the model's bucket boundaries)"}
+        # Logistic is the validated big-move model; it falls back to the baseline
+        # (with a note) at horizons without a trained artifact.
+        model = str(args.get("model", "logistic"))
+        forecast = run_forecast(
+            ticker, horizon, model_name=model, settings=self._settings, registry=self._registry
+        )
+        breakdown = large_move_breakdown(forecast, threshold=threshold_pct / 100.0)
+        result = breakdown.model_dump(mode="json")
+        result["threshold_pct"] = threshold_pct
+        # Honest static trust framing — a precomputed per-ticker skill scorecard
+        # (backtested AUC/calibration) is the planned next step.
+        result["reliability"] = (
+            "The large-move total P(|r|>k) is the model's most reliable signal in backtesting; "
+            "the up/down split shows which tail leans but is rarer and noisier. Strongest at "
+            "short horizons (<= 20 days). A magnitude signal, not a directional call on the median."
+        )
+        if forecast.notes:
+            result["model_note"] = forecast.notes
         return result
 
     # ---- backtesting / calibration (Phase 6.5) -------------------------------
