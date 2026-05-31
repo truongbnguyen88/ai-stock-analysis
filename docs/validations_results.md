@@ -26,6 +26,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 |---|---|---|---|
 | 2026-05-30 | Pooled xgboost vs baselines (h20, 3 tickers) | ❌ xgboost worse on Brier **and** ECE on all 3 | Keep baselines primary; **do not** expand ML training or surface ML |
 | 2026-05-30 | ML improvement campaign — model / calibration / features / **horizon sweep** (h5–60) | ⚠️ plain logistic ≫ xgboost & ties MC at short h, but **no horizon where it beats the baselines** | **Adopt plain scaled logistic**; baselines stay primary at all horizons |
+| 2026-05-31 | **Big-move reframe** — P(\|r\|>k) magnitude target (h5/h20) | ✅ **First genuine ML win** — logistic beats baselines on big-move AUC everywhere + Brier at h5 (MSFT/KO) | Build a `prob_large_move` signal (logistic, calibrated); ML's real niche |
 
 ---
 
@@ -129,4 +130,43 @@ python -m stock_agent backtest --ticker NVDA            # historical_sim + monte
 ```bash
 python -m stock_agent backtest --ticker NVDA --model logistic   # plain scaled logistic
 python -m stock_agent backtest --ticker NVDA                    # baselines, same folds
+```
+
+---
+
+## 2026-05-31 — Big-move reframe: P(|r| > k) — the first genuine ML win
+
+**Question.** ML can't beat the baselines on *direction* (efficient). But its real skill is *magnitude/volatility* (tail AUC up to 0.81). Does logistic predict a **large move regardless of direction** — `P(|r| > k)` — better than the baselines? `k` sized to horizon (~2–2.5σ): **5% at h5, 10% at h20**.
+
+**Setup.** New `big_move` metric in the harness (`backtesting/runner.py`): scores `P(|r| > k) = P(< −k) + P(> +k)` (the two outer buckets) against realized `1[|r| > k]`. logistic vs baselines, identical folds, 3 tickers, h5 (250 OOS) + h20 (61 OOS).
+
+**Results — big-move prediction** (Brier ↓, log loss ↓, AUC ↑).
+
+**h5, |r| > 5%** (250 OOS):
+
+| ticker | model | Brier | log loss | AUC |
+|---|---|---|---|---|
+| NVDA | historical_sim / MC | **0.334** | 0.95 | 0.46 / 0.48 |
+| | ml_logistic | 0.347 | 1.14 | **0.599** |
+| MSFT | historical_sim / MC | 0.1416 | 0.70 | 0.34 / 0.38 |
+| | ml_logistic | **0.1367** | **0.560** | **0.661** |
+| KO | historical_sim / MC | 0.0360 | 1.24 | 0.50 / 0.50 |
+| | ml_logistic | **0.0348** | **0.155** | **0.878** |
+
+**h20, |r| > 10%** (61 OOS — smaller, noisier): logistic AUC wins everywhere (0.59 / 0.66 / 0.82 vs baselines 0.55 / 0.40–0.60 / 0.13–0.53) but is **overconfident on Brier** (NVDA 0.281 vs 0.247) — too few positives (n+ = 2–28) and the high-vol OOS-overconfidence issue.
+
+**Finding — YES, the reframe wins (the first time ML beats the baselines).**
+- **AUC: logistic wins on *every* ticker/horizon** — it genuinely discriminates big-move periods, which the unconditional/recent-vol baselines cannot (their AUC hovers at 0.5, even *below*).
+- **Brier + log loss: logistic wins at h5 for the stable names** (MSFT, KO). The KO log-loss collapse (**0.155 vs 1.24**) is the headline: the baselines are *terrible* at KO's rare 5% moves; logistic predicts them well.
+- High-vol NVDA and h20 keep the AUC edge but go overconfident on Brier — fixable now because (unlike the directional task) there is **real resolution to calibrate**.
+
+**Interpretation.** Unlike direction, **big-move/volatility is conditionally predictable from the features**, and the baselines are weak at it (unconditional history, or recent-vol that doesn't see the feature state) — so ML's signal is **non-redundant and additive** here. This is ML's genuine product niche.
+
+**Decision.** Validated → **build a `prob_large_move` signal** powered by logistic, surfaced as a distinct *"probability of a large move (±k) over the horizon"* output (separate from the directional scenario forecast, which stays baseline-driven). Calibrate it (post-hoc) to fix high-vol overconfidence, and lead with short horizons where the win is strongest. Recorded metric: `BacktestResult.big_move` (configurable `big_move_k`).
+
+**Reproduce.**
+```bash
+# big_move metric is computed by every backtest; sweep k via the pipeline:
+#   run_backtest_pipeline(ticker, horizon, model_names=[...], big_move_k=0.05)
+# then read result.big_move (a ThresholdMetrics for P(|r|>k)).
 ```

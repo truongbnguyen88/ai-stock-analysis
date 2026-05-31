@@ -103,6 +103,7 @@ def run_backtest_pipeline(
     universe_path: Path = Path("configs/universe.txt"),
     min_train: int = 252,
     test_size: int = 6,
+    big_move_k: float = 0.10,
     log_experiment: bool = True,
 ) -> dict[str, BacktestResult]:
     """Backtest one or more forecasters on a ticker; return {model_name: result}.
@@ -137,6 +138,7 @@ def run_backtest_pipeline(
             min_train=min_train,
             test_size=test_size,
             seed=settings.random_seed,
+            big_move_k=big_move_k,
         )
 
     if log_experiment:

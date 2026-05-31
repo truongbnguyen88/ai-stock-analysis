@@ -87,6 +87,7 @@ def run_backtest(
     rolling_window: int | None = None,
     n_bins: int = 10,
     seed: int = 42,
+    big_move_k: float = 0.10,
 ) -> BacktestResult:
     """Run a leakage-safe walk-forward backtest and score the OOS probabilities.
 
@@ -115,6 +116,8 @@ def run_backtest(
     labels_by_thresh: list[list[float]] = [[] for _ in range(n_thresh)]
     cal_p: list[float] = []  # all predictions, time-ordered, for calibration
     cal_y: list[float] = []
+    big_move_prob: list[float] = []  # P(|r| > big_move_k) per as-of (direction-agnostic)
+    big_move_label: list[float] = []
     fold_summaries: list[FoldSummary] = []
     notes: list[str] = []
 
@@ -130,6 +133,9 @@ def run_backtest(
                 continue
             ex = exceedance_probabilities(fc, thresholds)
             realized = float(closes[t + horizon_days] / closes[t] - 1.0)
+            # Big-move signal: P(|r| > k) = P(< -k) + P(> +k) = outer two buckets.
+            big_move_prob.append(fc.buckets[0].probability + fc.buckets[-1].probability)
+            big_move_label.append(1.0 if abs(realized) > big_move_k else 0.0)
             for k, theta in enumerate(thresholds):
                 label = 1.0 if realized > theta else 0.0
                 probs_by_thresh[k].append(ex[k])
@@ -158,6 +164,11 @@ def run_backtest(
         for k in range(n_thresh)
     ]
     calibration = calibration_report(cal_p, cal_y, n_bins=n_bins)
+    big_move = (
+        threshold_metrics(big_move_label, big_move_prob, threshold=big_move_k)
+        if big_move_label
+        else None
+    )
 
     n_predictions = len(probs_by_thresh[0])
     mean_brier = float(np.mean([m.brier for m in per_threshold]))
@@ -185,6 +196,8 @@ def run_backtest(
         as_of_end=dates[max(test_idxs)],
         thresholds=per_threshold,
         calibration=calibration,
+        big_move_k=big_move_k,
+        big_move=big_move,
         mean_brier=mean_brier,
         mean_log_loss=mean_log_loss,
         folds=fold_summaries,

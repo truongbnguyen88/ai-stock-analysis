@@ -88,6 +88,11 @@ class BacktestResult(BaseModel):
     as_of_end: Date
     thresholds: list[ThresholdMetrics]
     calibration: CalibrationReport
+    # Big-move ("large move regardless of direction") prediction quality:
+    # P(|return| > big_move_k) = P(r < -k) + P(r > +k), scored vs 1[|r| > k]. This is
+    # where ML's volatility/tail skill is NOT redundant with the directional baselines.
+    big_move_k: float = 0.10
+    big_move: ThresholdMetrics | None = None
     mean_brier: float  # mean Brier across thresholds (headline scalar; lower better)
     mean_log_loss: float
     folds: list[FoldSummary]

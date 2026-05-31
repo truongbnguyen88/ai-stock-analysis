@@ -116,7 +116,7 @@ _ML_MODEL_TYPES = ("logistic", "xgboost", "lightgbm", "random_forest")
 def train(
     model: Annotated[
         str, typer.Option("--model", "-m", help=f"ML model: {list(_ML_MODEL_TYPES)}")
-    ] = "xgboost",
+    ] = "logistic",  # validated best ML model (see docs/validations_results.md)
     horizon: Annotated[
         int, typer.Option("--horizon", help="Forecast horizon in trading days")
     ] = 20,
