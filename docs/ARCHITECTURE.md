@@ -88,10 +88,10 @@ src/stock_agent/agent/
 | `get_news_sentiment(ticker, days, use_llm?)` | `features.news_features` | avg sentiment, %pos/neg, event flags (AV default; Claude opt-in) | ✅ |
 | `get_earnings_context(ticker, horizon?)` | `data.earnings` | next/last earnings, days-to-next, in-horizon flag | ✅ |
 | `run_forecast(ticker, horizon, model?)` | `pipelines.forecast` | bucket probs, E[r], VaR, CIs (any model) | ✅ |
-| `run_backtest(ticker, horizon, model?)` | `backtesting.runner` | OOS metric suite | Phase 6.5 |
-| `get_calibration(ticker, horizon, model?)` | `backtesting.calibration` | reliability curve, ECE, trust flag | Phase 6.5 |
+| `run_backtest(ticker, horizon, model?)` | `pipelines.backtest` | OOS metric suite + calibration + trust label | ✅ |
+| `get_calibration(ticker, horizon, model?)` | `pipelines.backtest` | reliability table, ECE/MCE, trust label, post-hoc recal | ✅ |
 
-Data tools surface `data_warnings` (stale/sparse) so the agent can caveat. Backtest/calibration (Phase 6.5) will let a user ask *"is your 30-day NVDA forecast well-calibrated?"* and be answered from `get_calibration`, not the model's own reasoning. Numbers in every tool result feed the grounding guard, so the agent may only state figures that came from a tool.
+Data tools surface `data_warnings` (stale/sparse) so the agent can caveat. Backtest/calibration let a user ask *"is your 30-day NVDA forecast well-calibrated?"* and be answered from `get_calibration`, not the model's own reasoning — bounded for chat cost (fast offline models only, horizon 5–60d, wall-clock timeout, per-session result cache; ML backtests stay a CLI op). Numbers in every tool result feed the grounding guard, so the agent may only state figures that came from a tool.
 
 ### Dependency rule
 

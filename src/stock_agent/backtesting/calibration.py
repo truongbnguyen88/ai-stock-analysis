@@ -87,6 +87,20 @@ def expected_calibration_error(
     return float(ece), float(mce)
 
 
+def calibration_label(ece: float) -> str:
+    """Plain-language trust label from ECE (the avg |confidence − accuracy| gap).
+
+    Conventional rule-of-thumb cutoffs, not hard guarantees — surfaced to the
+    agent/user so "is this forecast trustworthy?" gets an honest, bucketed answer
+    alongside the raw ECE number. Lower ECE = better calibrated.
+    """
+    if ece < 0.05:
+        return "well-calibrated"
+    if ece < 0.10:
+        return "moderately calibrated"
+    return "poorly calibrated"
+
+
 def fit_isotonic(p: Sequence[float] | np.ndarray, y: Sequence[float] | np.ndarray) -> Calibrator:
     """Fit a monotone (isotonic) recalibration map ``p -> P(y=1)``.
 

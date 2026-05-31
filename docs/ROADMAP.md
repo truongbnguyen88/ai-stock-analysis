@@ -84,7 +84,7 @@ Bracketed = primary deliverable.
 23. `backtesting/calibration.py` (reliability, isotonic/Platt, ECE). [trustworthiness output]
 24. `pipelines/backtest.py` + `backtest` CLI + experiment logging.
 
-### Phase 6.5 — Agent gains evaluation tools ← **V1 milestone**
+### Phase 6.5 — Agent gains evaluation tools ✅ ← **V1 milestone**
 25. `agent/tools.py` adds `run_backtest` + `get_calibration` (with timeouts / argument bounds for heavier ops); extend system prompt so the agent reports calibration/trust honestly. [agent answers calibration/backtest questions, grounded] **← V1 milestone**
 
 ### Phase 7 — Hardening
