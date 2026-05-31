@@ -659,4 +659,6 @@ distributions, never averaging quantiles).
 
 *See also:* [ARCHITECTURE.md](ARCHITECTURE.md) (system design, layering),
 [ROADMAP.md](ROADMAP.md) (build phases), [TASKS.md](TASKS.md) (decision log with
-the Option-A, pooled-training, and earnings-jump rationale).
+the Option-A, pooled-training, and earnings-jump rationale), and
+[validations_results.md](validations_results.md) (out-of-sample backtest results —
+whether a model actually beats the baseline before we ship it).
