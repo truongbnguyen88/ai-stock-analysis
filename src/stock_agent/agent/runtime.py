@@ -145,6 +145,25 @@ class AnthropicToolClient:
         )
 
 
+def _seed_grounding_from_history(grounding: NumberGrounding, history: list[dict[str, Any]]) -> None:
+    """Ground numbers from prior turns' tool results in a continuing conversation.
+
+    Grounding is otherwise reset each turn, which is correct for a single turn but
+    too strict once the chat is stateful: a figure a tool produced earlier (a news
+    stat, a prior forecast) is real and visible in the transcript, so referencing it
+    in a later turn must not be treated as fabrication. We seed only from
+    ``tool_result`` blocks — actual tool outputs, never the model's own prior text —
+    so this cannot launder a hallucinated number into being "grounded".
+    """
+    for msg in history:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_result":
+                grounding.add_from(block.get("content"))
+
+
 def run_agent(
     query: str,
     *,
@@ -159,15 +178,19 @@ def run_agent(
     """Run the tool-use loop and return a grounded final answer.
 
     Pass ``history`` (the ``messages`` field from a prior ``AgentResult``) to
-    give the agent memory of previous turns in the same conversation.
-    Grounding is reset each turn — the agent must call tools again if it needs
-    a number, rather than quoting a value from an earlier turn.
+    give the agent memory of previous turns in the same conversation. Grounding
+    starts from this turn's tool calls, plus any numbers produced by tools in
+    ``history`` (so a figure from an earlier turn can be referenced without
+    re-fetching); it never trusts the model's own prior text.
     """
     tools = tools if tools is not None else TOOL_SCHEMAS
     # Prepend prior turns, then append the new user message.
     messages: list[dict[str, Any]] = list(history) if history else []
     messages.append({"role": "user", "content": query})
     grounding = NumberGrounding()
+    if history:
+        # Stateful chat: let this turn reference figures earlier tools produced.
+        _seed_grounding_from_history(grounding, history)
     tool_calls: list[str] = []
     tool_results: list[ToolInvocation] = []
     retries_used = 0

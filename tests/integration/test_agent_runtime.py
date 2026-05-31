@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -113,6 +114,49 @@ def test_tool_results_are_surfaced_for_charting() -> None:
     inv = result.tool_results[0]
     assert inv.input == {"ticker": "NVDA", "horizon_days": 20}
     assert inv.result.get("model_name") == "historical_sim"  # the real tool result dict
+
+
+def test_history_tool_numbers_stay_grounded_next_turn() -> None:
+    # Regression: a figure a tool produced in an earlier turn (e.g. a news stat
+    # like "up 193%") must remain groundable in a later turn — otherwise the guard
+    # wrongly blocks the agent for referencing real prior-turn numbers.
+    history: list[dict[str, Any]] = [
+        {"role": "user", "content": "summarize MU news"},
+        {"role": "assistant", "content": [{"type": "text", "text": "MU news summarized."}]},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "x",
+                    "content": '{"overview": "MU is up 193% over the past year.", "bullish": []}',
+                }
+            ],
+        },
+        {"role": "assistant", "content": [{"type": "text", "text": "MU is up 193% this year."}]},
+    ]
+    # New turn restates 193% from history WITHOUT calling a tool -> must not be blocked.
+    llm = FakeToolLLM([_final("As the news noted, MU is up 193% over the past year.")])
+    result = run_agent("how much is MU up?", llm=llm, executor=_executor(), history=history)
+    assert "193%" in result.text
+
+
+def test_number_absent_from_history_still_blocked() -> None:
+    # The seeding must not over-ground: a figure NO tool ever produced is still caught.
+    history: list[dict[str, Any]] = [
+        {"role": "user", "content": "hi"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "x", "content": '{"overview": "neutral"}'}
+            ],
+        },
+    ]
+    script = [_final("There is a 77.7% chance of a rally."), _final("I cannot give that figure.")]
+    result = run_agent(
+        "will it rally?", llm=FakeToolLLM(script), executor=_executor(), history=history
+    )
+    assert "77.7%" not in result.text  # fabricated -> retried away
 
 
 def test_fabricated_number_triggers_retry_then_succeeds() -> None:
