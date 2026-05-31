@@ -34,6 +34,35 @@ class ChartSpec:
     x_sort: tuple[str, ...] | None = None  # explicit category order (Altair sorts alpha otherwise)
     y_is_percent: bool = False  # format/scale y as a percentage in the UI
 
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-safe form (for persisting a chat thread); DataFrame -> column lists."""
+        return {
+            "title": self.title,
+            "kind": self.kind,
+            "x": self.x,
+            "y": self.y,
+            "caption": self.caption,
+            "color": self.color,
+            "x_sort": list(self.x_sort) if self.x_sort is not None else None,
+            "y_is_percent": self.y_is_percent,
+            "data": self.data.to_dict(orient="list"),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ChartSpec:
+        """Inverse of :meth:`to_dict` (rebuilds the DataFrame, preserving columns)."""
+        return cls(
+            title=d["title"],
+            kind=d["kind"],
+            data=pd.DataFrame(d["data"]),
+            x=d["x"],
+            y=d["y"],
+            caption=d.get("caption", ""),
+            color=d.get("color"),
+            x_sort=tuple(d["x_sort"]) if d.get("x_sort") else None,
+            y_is_percent=bool(d.get("y_is_percent", False)),
+        )
+
 
 class _Invocation(Protocol):
     """Structural view of a tool call (matches agent.runtime.ToolInvocation)."""

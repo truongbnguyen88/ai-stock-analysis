@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     output_dir: Path = Path("outputs")
     random_seed: int = 42
 
+    # ---- Chat history (Streamlit frontend) ----
+    # Saved conversation threads (text + charts + resumable agent history). Lives
+    # under the gitignored outputs/ tree; threads older than the retention window
+    # are pruned when the app loads.
+    chat_history_dir: Path = Path("outputs/chat_history")
+    chat_history_retention_days: int = 30
+
     @property
     def earnings_priority(self) -> list[str]:
         """Ordered earnings-provider fallback chain (highest priority first)."""

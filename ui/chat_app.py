@@ -29,6 +29,13 @@ import pandas as pd
 
 from stock_agent.agent.runtime import AgentError, AgentGroundingError, AnthropicToolClient, run_agent
 from stock_agent.agent.tools import ToolExecutor
+from stock_agent.chat.history import (
+    ChatStore,
+    ChatThread,
+    derive_title,
+    new_thread_id,
+    now_iso,
+)
 from stock_agent.llm.client import AnthropicClient
 from stock_agent.settings import get_settings
 from stock_agent.viz.charts import ChartSpec, charts_for
@@ -76,13 +83,88 @@ def _render_chart(spec: ChartSpec) -> None:
 # ---- load settings once ----
 @st.cache_resource
 def load_resources():
-    """Build shared (cached) agent resources — one set per Streamlit session."""
+    """Build shared (cached) agent resources — one set per Streamlit session.
+
+    Also opens the chat-history store and prunes expired threads once per session.
+    """
     settings = get_settings()
     executor = ToolExecutor(settings, llm=AnthropicClient(settings))
     llm = AnthropicToolClient(settings)
-    return settings, executor, llm
+    store = ChatStore(
+        settings.chat_history_dir, retention_days=settings.chat_history_retention_days
+    )
+    store.prune()
+    return settings, executor, llm, store
 
-settings, executor, agent_llm = load_resources()
+settings, executor, agent_llm, store = load_resources()
+
+
+# ---- chat-thread persistence helpers ----
+def _serialize_messages(messages: list[dict]) -> list[dict]:
+    """Display messages with charts flattened to dicts (for the store)."""
+    out = []
+    for m in messages:
+        sm = {"role": m["role"], "content": m["content"]}
+        if m.get("charts"):
+            sm["charts"] = [c.to_dict() for c in m["charts"]]
+        out.append(sm)
+    return out
+
+
+def _deserialize_messages(raw: list[dict]) -> list[dict]:
+    """Inverse of _serialize_messages — rebuild ChartSpecs for rendering."""
+    out = []
+    for m in raw:
+        out.append(
+            {
+                "role": m["role"],
+                "content": m["content"],
+                "charts": [ChartSpec.from_dict(c) for c in m.get("charts", [])],
+            }
+        )
+    return out
+
+
+def _save_current_thread() -> None:
+    """Persist the active conversation (skips an empty/unstarted thread)."""
+    msgs = st.session_state.messages
+    if not msgs:
+        return
+    store.save(
+        ChatThread(
+            id=st.session_state.thread_id,
+            title=derive_title(msgs),
+            created_at=st.session_state.thread_created_at,
+            updated_at=now_iso(),
+            display_messages=_serialize_messages(msgs),
+            agent_history=st.session_state.agent_history,
+        )
+    )
+
+
+def _start_new_thread() -> None:
+    st.session_state.thread_id = new_thread_id()
+    st.session_state.thread_created_at = now_iso()
+    st.session_state.messages = []
+    st.session_state.agent_history = []
+
+
+def _open_thread(thread_id: str) -> None:
+    t = store.load(thread_id)
+    st.session_state.thread_id = t.id
+    st.session_state.thread_created_at = t.created_at
+    st.session_state.messages = _deserialize_messages(t.display_messages)
+    st.session_state.agent_history = t.agent_history
+
+
+# ---- chat state (init before the sidebar, which lists threads) ----
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = new_thread_id()
+    st.session_state.thread_created_at = now_iso()
+if "messages" not in st.session_state:
+    st.session_state.messages = []  # display history (user/assistant text + charts)
+if "agent_history" not in st.session_state:
+    st.session_state.agent_history = []  # Anthropic-format message history
 
 # ---- sidebar ----
 with st.sidebar:
@@ -104,9 +186,26 @@ with st.sidebar:
             st.session_state.pending_prompt = template.replace("{ticker}", ticker_input)
 
     st.divider()
-    if st.button("🗑️ Clear chat", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.agent_history = []  # also reset conversation memory
+    st.subheader("💬 Chats")
+    if st.button("➕ New chat", use_container_width=True):
+        _save_current_thread()  # keep the one we're leaving
+        _start_new_thread()
+        st.rerun()
+
+    for meta in store.list_threads():
+        is_current = meta.id == st.session_state.thread_id
+        row, trash = st.columns([0.82, 0.18])
+        label = ("🟢 " if is_current else "") + meta.title
+        if row.button(label, key=f"open_{meta.id}", use_container_width=True):
+            _save_current_thread()
+            _open_thread(meta.id)
+            st.rerun()
+        if trash.button("🗑️", key=f"del_{meta.id}", help="Delete this chat"):
+            store.delete(meta.id)
+            if is_current:
+                _start_new_thread()
+            st.rerun()
+    st.caption(f"Saved for {settings.chat_history_retention_days} days.")
 
     st.divider()
     st.caption(
@@ -116,12 +215,6 @@ with st.sidebar:
         + ("✅ Marketaux\n" if settings.marketaux_api_key else "⬜ Marketaux\n")
         + ("✅ Alpha Vantage" if settings.alpha_vantage_api_key else "⬜ Alpha Vantage")
     )
-
-# ---- chat state ----
-if "messages" not in st.session_state:
-    st.session_state.messages = []       # display history (user/assistant text)
-if "agent_history" not in st.session_state:
-    st.session_state.agent_history = []  # Anthropic-format message history
 
 # ---- render history ----
 st.title("Stock Research Agent")
@@ -156,7 +249,7 @@ if prompt:
     # Run the agent and stream the response.
     with st.chat_message("assistant"):
         charts: list[ChartSpec] = []
-        with st.spinner("Calling tools…"):
+        with st.spinner("Working on your request…"):
             try:
                 result = run_agent(
                     prompt,
@@ -188,3 +281,5 @@ if prompt:
 
     # Persist text + charts so the turn re-renders intact on later reruns.
     st.session_state.messages.append({"role": "assistant", "content": response, "charts": charts})
+    # Save the thread to disk so it survives restarts and shows in the sidebar.
+    _save_current_thread()
