@@ -7,7 +7,7 @@ Commands: analyze (Phase 4), forecast (Phase 5), chat (Phase 4.5).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
@@ -241,18 +241,31 @@ def chat(
     executor = ToolExecutor(settings, llm=AnthropicClient(settings))
     agent_llm = AnthropicToolClient(settings)
 
-    def answer(question: str) -> None:
+    def answer(question: str, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Run one turn; return the updated transcript to carry into the next turn.
+
+        On error the prior history is preserved so the conversation can continue.
+        """
         try:
-            result = run_agent(question, llm=agent_llm, executor=executor)
+            result = run_agent(question, llm=agent_llm, executor=executor, history=history)
             typer.echo(result.text)
+            return result.messages
         except AgentError as exc:
             typer.echo(f"[agent error] {exc}")
+            return history
 
-    if message:
-        answer(message)
+    if message:  # one-shot mode: single turn, no memory needed
+        answer(message, [])
         return
 
-    typer.echo("Research agent — ask a question ('exit' to quit). Not financial advice.")
+    typer.echo(
+        "Research agent — ask a question ('exit' to quit, 'reset' to clear context). "
+        "Not financial advice."
+    )
+    # Conversation memory: each turn's transcript feeds the next so follow-ups
+    # ("the above", "now forecast it") resolve against prior turns. Numbers are
+    # re-grounded per turn, so the agent re-calls tools (cached) to reuse figures.
+    history: list[dict[str, Any]] = []
     while True:
         try:
             question = input("> ").strip()
@@ -260,5 +273,9 @@ def chat(
             break
         if question.lower() in {"exit", "quit"}:
             break
+        if question.lower() == "reset":
+            history = []
+            typer.echo("(context cleared)")
+            continue
         if question:
-            answer(question)
+            history = answer(question, history)
