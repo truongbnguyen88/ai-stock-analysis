@@ -617,6 +617,54 @@ flowchart TD
 - **Label imbalance** at extreme thresholds (few +10% events) → `class_weight`
   / single-class skips mitigate but tails are data-starved.
 
+### 3.6 Where ML actually adds value: the big-move signal
+
+Backtesting (see [validations_results.md](validations_results.md)) found the
+pooled ML classifiers **cannot beat the baselines at predicting *direction*** — at
+every horizon the 0%-threshold AUC sits at ≈ 0.5, because 5–60-day direction is
+≈ efficient for liquid large-caps. But the same backtests exposed where ML *does*
+have a real edge: **magnitude, not direction.** It predicts *whether a large move
+happens* with genuine skill (tail AUC up to 0.81 at a 5-day horizon).
+
+That motivates a **direction-agnostic "big-move" signal** — the probability of a
+large move of either sign over the horizon — read straight off the bucket
+distribution every model already produces:
+
+$$
+P(|r| > k) \;=\; P(r < -k) + P(r > +k)
+$$
+
+i.e. the **two outer buckets**; the realized label is $\mathbb{1}[\,|r| > k\,]$.
+The threshold $k$ is sized to the horizon (~2–2.5σ): e.g. 5% at 5 days, 10% at 20.
+
+**Why ML wins here but not on direction.** Big moves are driven by *volatility*,
+and volatility **clusters** — it is conditionally predictable from the feature
+state (recent vol, drawdown, range, %B, …). The baselines are weak at this:
+historical-sim uses an *unconditional* distribution (the same tail mass every
+day), and Monte-Carlo conditions only on *recent realized* vol. The ML classifier
+conditions on the **full feature vector**, so its big-move signal carries
+information the baselines lack — **non-redundant**, unlike the directional signal.
+Live h5 (|r| > 5%): logistic big-move AUC **0.60 / 0.66 / 0.88** (NVDA / MSFT / KO)
+vs the baselines' 0.34–0.50, winning Brier + log-loss outright for the stable
+names (KO log-loss 0.155 vs 1.24).
+
+**Scope & caveats.**
+- **Short horizons only.** Vol-clustering decays, and at long horizons the
+  large-move event becomes too rare to learn or score (h60 → ~2 positives in 61
+  windows → noise). It is a near-term play (≈ 5–20 days).
+- **Calibrate for high-vol names.** The raw classifier keeps the AUC edge but goes
+  overconfident on high-vol tickers (e.g. NVDA), so a post-hoc calibration step is
+  planned before the probability is reported.
+- **A separate output, not a replacement.** The directional scenario forecast
+  stays baseline-driven (the well-calibrated MC / historical distribution); the
+  big-move probability is surfaced *alongside* it as "probability of a large move
+  (±k)".
+
+**Measured by** `BacktestResult.big_move` (a `ThresholdMetrics` for $P(|r|>k)$ with
+a configurable `big_move_k`) — every backtest computes it, so any model's big-move
+skill is directly comparable. (The product `prob_large_move` output is the planned
+next step.)
+
 ---
 
 ## 4. Side-by-side comparison
