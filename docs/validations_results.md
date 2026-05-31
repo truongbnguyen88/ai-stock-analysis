@@ -25,6 +25,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | Date | Experiment | Verdict | Decision |
 |---|---|---|---|
 | 2026-05-30 | Pooled xgboost vs baselines (h20, 3 tickers) | ❌ xgboost worse on Brier **and** ECE on all 3 | Keep baselines primary; **do not** expand ML training or surface ML |
+| 2026-05-30 | ML improvement campaign — model class / calibration / features (h20) | ⚠️ plain logistic ≫ xgboost (ties baselines on 2/3, real tail AUC) but still no clear win | **Adopt plain scaled logistic** as the ML model; baselines stay primary |
 
 ---
 
@@ -84,4 +85,47 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 python -m stock_agent backtest --ticker NVDA --model xgboost
 python -m stock_agent backtest --ticker NVDA            # historical_sim + monte_carlo_*
 # repeat for MSFT, KO. Artifacts land in outputs/experiments/<run_id>/.
+```
+
+---
+
+## 2026-05-30 — ML improvement campaign (model class · calibration · features), h20
+
+**Question.** After the initial xgboost lost to the baselines, can the pooled ML model be *improved* to beat them? Explored — in order — model class, regularization, post-hoc calibration, and feature engineering, each validated on the same 3-ticker (NVDA/MSFT/KO) h20 walk-forward harness (62 OOS / 11 folds).
+
+**The decisive diagnostic (Exp 1).** Reading the AUC *by threshold* exposed where the (little) signal lives:
+
+> The **±5% / ±10% thresholds have real discrimination** (AUC up to 0.77), but the **0% threshold — pure direction — sits at ≈ 0.5 for every model.** So the models can predict *whether a big move happens* (volatility clusters → forecastable) but **not which way** (20-day direction ≈ efficient for liquid large-caps). All ML resolution here is *tail/volatility*, not directional.
+
+**Experiments & findings.**
+
+| Exp | What | Key result |
+|---|---|---|
+| 1 | Model-class sweep (logistic / lightgbm / xgboost) | lightgbm ≈ xgboost exactly → *not* booster-specific. `logistic` (balanced) had the strongest tail AUC (0.77) but catastrophic calibration (ECE up to 0.29). |
+| 2 | Linear variants + regularized booster | **Dropping `class_weight="balanced"` is a big win** (NVDA Brier 0.340→0.231, ECE 0.291→0.119, tail AUC kept). Plain logistic **ties baselines on MSFT/KO** with *better* calibration (MSFT ECE 0.039). Regularizing xgboost helped calibration but it still found no tail signal (AUC ≈0.5). *Also fixed a latent bug: pooled logistic was unscaled.* |
+| 3 | Post-hoc calibration of plain logistic (`CalibratedClassifierCV` isotonic / Platt) | Platt helped the overconfident high-vol case (NVDA ECE 0.119→0.093) and marginally beat the baseline on MSFT, but ~neutral overall / slightly worse on KO. Isotonic barely moved NVDA — its overconfidence is an **OOS regime shift**, which *training-data* CV calibration can't see (needs a temporal holdout). |
+| 4 | Feature engineering (+`mom_12_1`, `volume_ratio`, `skew_60`, `high_252_ratio` → 20 features) | **Did not help; slightly hurt** (NVDA logistic 0.231→0.243 — overfit). The 0%-direction AUC stayed ≈0.5 → momentum added *no* directional signal at 20d. **Reverted.** |
+
+**Outcome — what changed.**
+
+- ✅ **ADOPTED: plain scaled logistic** as the pooled ML model (`StandardScaler` → `LogisticRegression`, **no** `class_weight="balanced"`). A real, validated upgrade over the original xgboost:
+
+  | | avg Brier | avg ECE | tail resolution |
+  |---|---|---|---|
+  | original xgboost | 0.173 | 0.099 | AUC ≈ 0.5 (none) |
+  | **plain logistic** | **0.161** | **0.076** | AUC 0.65–0.76 (real) |
+  | baselines | 0.151 | 0.046 | AUC ≈ 0.5 |
+
+  It **ties the baselines on MSFT/KO** and adds genuine tail/volatility discrimination they lack; only high-vol **NVDA** still lags (residual OOS overconfidence).
+
+- ❌ **NOT adopted:** post-hoc calibration (marginal gain, added complexity), the 4 new features (no 20-day signal — reverted), the boosters (logistic dominates them here).
+
+**Bottom line.** ML is now a competitive, well-calibrated model with real tail resolution — but it still does **not clearly beat the baselines at 20d**, because the only forecastable piece (tail magnitude / vol) is already captured by the vol-conditioned Monte-Carlo baseline, and 20-day **direction is ~efficient** (0% AUC ≈ 0.5 for everything tried). **Baselines remain primary.**
+
+**Future leads (deferred, ranked).** (1) Different **horizon** — 5-day may hold more short-term-reversal signal; the whole campaign was h20-only. (2) **Vol-scaled targets** (thresholds in σ units) to de-muddle the cross-sectional pooling. (3) **Temporal-holdout** calibration for high-vol OOS shift. (4) **ML + baseline ensemble** (baseline calibration + ML tail resolution). Direction at 20d is likely a dead end regardless.
+
+**Reproduce.** Variant experiments used a `_make_classifier` monkeypatch (see the campaign scripts); the adopted config is now the default `_make_classifier("logistic")`. Re-check with:
+```bash
+python -m stock_agent backtest --ticker NVDA --model logistic   # plain scaled logistic
+python -m stock_agent backtest --ticker NVDA                    # baselines, same folds
 ```

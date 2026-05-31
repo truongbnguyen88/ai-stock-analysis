@@ -39,8 +39,22 @@ def _make_classifier(model_type: ModelType) -> Any:
     """Construct an unfitted classifier of the requested type."""
     if model_type == "logistic":
         from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import StandardScaler
 
-        return LogisticRegression(max_iter=1000, class_weight="balanced")
+        # Standardize first: features span very different scales (RSI 0–100 vs
+        # daily returns ~0.01), and unscaled logistic regression is ill-conditioned
+        # and slow to converge. Trees are scale-invariant, so only the linear model
+        # needs this. The upstream median imputer guarantees no NaNs reach the scaler.
+        #
+        # NOTE: NO class_weight="balanced". Backtesting (see validations_results.md)
+        # showed balancing inflates rare-tail discrimination (AUC) but badly destroys
+        # calibration (ECE up to 0.29) → far worse Brier. Plain logistic keeps the
+        # tail signal AND stays well-calibrated, and beat every booster here.
+        return make_pipeline(
+            StandardScaler(),
+            LogisticRegression(max_iter=2000),
+        )
     if model_type == "xgboost":
         from xgboost import XGBClassifier
 
