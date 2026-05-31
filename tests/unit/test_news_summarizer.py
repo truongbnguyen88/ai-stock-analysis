@@ -75,3 +75,33 @@ def test_lenient_json_parsing_tolerates_surrounding_prose() -> None:
     raw = "Here is the JSON:\n" + _payload("Clean overview.", []) + "\nThanks!"
     summary = summarize_news(_bundle(), FakeLLM([raw]))
     assert summary.overview == "Clean overview."
+
+
+def test_reflection_refines_draft() -> None:
+    """One reflection pass: second LLM round replaces the draft with the revision."""
+    draft = _payload("Thin draft.", ["https://real.com/a"])
+    improved = _payload("Deeper synthesis after review.", ["https://real.com/a"])
+    llm = FakeLLM([draft, improved])
+    summary = summarize_news(_bundle(), llm, reflection_iterations=1)
+    assert llm.calls == 2  # draft + one reflection round
+    assert summary.overview == "Deeper synthesis after review."
+
+
+def test_reflection_output_is_guarded() -> None:
+    """A forecast smuggled into the reflection pass is still caught + retried."""
+    draft = _payload("Clean draft.", ["https://real.com/a"])
+    bad_reflection = _payload("Now there is an 80% chance of a rally.", ["https://real.com/a"])
+    good_reflection = _payload("Clean revision.", ["https://real.com/a"])
+    llm = FakeLLM([draft, bad_reflection, good_reflection])
+    summary = summarize_news(_bundle(), llm, reflection_iterations=1)
+    assert llm.calls == 3  # draft + reflection (violation) + reflection retry
+    assert summary.overview == "Clean revision."
+
+
+def test_reflection_skipped_when_no_articles() -> None:
+    """No articles -> nothing to review; reflection does not fire an extra call."""
+    empty = NewsBundle(ticker="ACME", articles=[])
+    llm = FakeLLM([_payload("Sparse coverage.", [])])
+    summary = summarize_news(empty, llm, reflection_iterations=1)
+    assert llm.calls == 1  # draft only; reflection short-circuited
+    assert summary.overview == "Sparse coverage."

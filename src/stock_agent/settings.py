@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     llm_model: str = "claude-sonnet-4-6"
     llm_max_tokens: int = 4096
+    # Self-critique passes for the news summarizer (Role A): after the first
+    # draft, the model reviews its own summary for completeness/balance/evidence
+    # and revises. 0 disables; 1 is the default (one reflection iteration).
+    news_reflection_iterations: int = 1
 
     # ---- Market / news providers ----
     alpha_vantage_api_key: str | None = None

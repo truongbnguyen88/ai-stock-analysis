@@ -383,7 +383,12 @@ class ToolExecutor:
         ticker = str(args["ticker"]).upper()
         days = int(args.get("days", 14))
         bundle = NewsFetcher(self._registry).fetch(ticker, lookback_days=days, top_n=25)
-        return summarize_news(bundle, self._llm).model_dump(mode="json")
+        # Reflection (self-critique) depth is config-driven; default 1 pass.
+        return summarize_news(
+            bundle,
+            self._llm,
+            reflection_iterations=self._settings.news_reflection_iterations,
+        ).model_dump(mode="json")
 
     def _tool_get_news_sentiment(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()

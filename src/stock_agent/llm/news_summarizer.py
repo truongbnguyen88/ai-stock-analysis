@@ -17,7 +17,7 @@ from stock_agent.llm.guards import (
     find_forecast_violations,
     sanitize_citations,
 )
-from stock_agent.llm.prompts.news_summary import SYSTEM, build_user
+from stock_agent.llm.prompts.news_summary import SYSTEM, build_reflection, build_user
 from stock_agent.logging_config import get_logger
 from stock_agent.news.clean import canonical_url
 from stock_agent.schemas.news import NewsBundle
@@ -47,19 +47,19 @@ def _parse(raw: str) -> NewsSummary:
     return NewsSummary.model_validate(_loads_lenient(raw))
 
 
-def summarize_news(
-    bundle: NewsBundle, llm: TextLLM, *, max_articles: int = 15, max_tokens: int = 4096
+def _guarded(
+    llm: TextLLM, user: str, allowed: set[str], *, ticker: str, max_tokens: int
 ) -> NewsSummary:
-    """Summarize the top articles of ``bundle`` into a guarded ``NewsSummary``."""
-    articles = bundle.articles[:max_articles]
-    allowed = {canonical_url(str(a.url)) for a in articles}
-    user = build_user(bundle.ticker, articles)
+    """One LLM round: parse -> anti-forecast guard (1 corrective retry) -> strip citations.
 
+    Shared by the first-draft pass and each reflection pass so both are held to
+    the same numbers-vs-narrative and citation invariants.
+    """
     summary = _parse(llm.complete_json(system=SYSTEM, user=user, max_tokens=max_tokens))
 
     violations = find_forecast_violations(summary)
     if violations:
-        log.warning("llm.forecast_violation", ticker=bundle.ticker, n=len(violations))
+        log.warning("llm.forecast_violation", ticker=ticker, n=len(violations))
         correction = (
             user + "\n\nIMPORTANT: your previous answer contained forbidden forecast/probability "
             "language (e.g.: "
@@ -76,3 +76,48 @@ def summarize_news(
 
     # Drop any fabricated citations (keep the point text).
     return sanitize_citations(summary, allowed)
+
+
+def summarize_news(
+    bundle: NewsBundle,
+    llm: TextLLM,
+    *,
+    max_articles: int = 15,
+    max_tokens: int = 4096,
+    reflection_iterations: int = 0,
+) -> NewsSummary:
+    """Summarize the top articles of ``bundle`` into a guarded ``NewsSummary``.
+
+    With ``reflection_iterations > 0``, the model self-critiques its draft (one
+    extra LLM round per iteration) for completeness/balance/evidence and revises;
+    each revision passes the same guards. Reflection is skipped when there are no
+    articles. Library default is 0 (pure); the agent tool enables it via settings.
+    """
+    articles = bundle.articles[:max_articles]
+    allowed = {canonical_url(str(a.url)) for a in articles}
+
+    summary = _guarded(
+        llm,
+        build_user(bundle.ticker, articles),
+        allowed,
+        ticker=bundle.ticker,
+        max_tokens=max_tokens,
+    )
+
+    # Self-critique passes. Feed the draft back and let the model deepen it; the
+    # revised output is re-guarded, so reflection cannot introduce a forecast or
+    # a fabricated citation.
+    for _ in range(max(0, reflection_iterations)):
+        if not articles:
+            break
+        draft_json = summary.model_dump_json()
+        reflected = _guarded(
+            llm,
+            build_reflection(bundle.ticker, articles, draft_json),
+            allowed,
+            ticker=bundle.ticker,
+            max_tokens=max_tokens,
+        )
+        summary = reflected
+
+    return summary

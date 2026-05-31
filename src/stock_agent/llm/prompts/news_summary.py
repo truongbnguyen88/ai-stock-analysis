@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from stock_agent.schemas.news import Article
 
-VERSION = "news_summary.v2"
+VERSION = "news_summary.v3"
 
 # Static instructions — cached. Encodes the numbers-vs-narrative invariant and
 # the exact JSON contract (mirrors stock_agent.llm.guards.NewsSummary).
@@ -56,3 +56,37 @@ def build_user(ticker: str, articles: list[Article]) -> str:
         lines.append("")
     lines.append("Synthesize these into the required JSON object, citing only the URLs above.")
     return "\n".join(lines)
+
+
+# Critique rubric for the reflection pass. The model re-reads the articles and
+# its own draft, then revises. The goal is depth without padding — never invent
+# points, citations, or forecasts to make the summary look fuller.
+_REFLECTION_RUBRIC = """\
+This is a SELF-REVIEW pass. Below are the same articles and your own DRAFT summary. \
+Critique the draft and return an IMPROVED JSON object in the identical shape. Check:
+- Completeness: did you miss a material theme, driver, risk, or catalyst the articles support?
+- Balance: are bullish AND bearish AND risks represented WHEN the articles support them \
+(do not force a side that the news does not back)?
+- Evidence: does every point cite at least one of the provided URLs? Drop or merge any \
+point that no article supports.
+- Specificity: prefer concrete facts (named products, figures stated IN the articles, \
+dates) over vague phrasing; merge redundant points.
+- Hard rules (unchanged): no probabilities, odds, likelihoods, your own price targets, or \
+numeric forecasts of future returns; cite ONLY the provided URLs.
+If the draft is already strong, return it lightly refined — do NOT pad, invent, or \
+speculate to make it longer. Return ONLY the JSON object."""
+
+
+def build_reflection(ticker: str, articles: list[Article], draft_json: str) -> str:
+    """Render the reflection user message: articles + the draft + the critique rubric.
+
+    Reuses the same SYSTEM contract (so prompt caching still hits); only the user
+    text differs from the first pass.
+    """
+    return (
+        build_user(ticker, articles)
+        + "\n\n=== YOUR DRAFT SUMMARY (to review and improve) ===\n"
+        + draft_json
+        + "\n\n"
+        + _REFLECTION_RUBRIC
+    )
