@@ -24,10 +24,54 @@ st.set_page_config(
     layout="wide",
 )
 
+import altair as alt
+import pandas as pd
+
 from stock_agent.agent.runtime import AgentError, AgentGroundingError, AnthropicToolClient, run_agent
 from stock_agent.agent.tools import ToolExecutor
 from stock_agent.llm.client import AnthropicClient
 from stock_agent.settings import get_settings
+from stock_agent.viz.charts import ChartSpec, charts_for
+
+
+def _render_chart(spec: ChartSpec) -> None:
+    """Render one ChartSpec as an Altair chart alongside the agent's text."""
+    st.markdown(f"**{spec.title}**")
+    y_axis = alt.Axis(format="%") if spec.y_is_percent else alt.Axis()
+    y_enc = alt.Y(f"{spec.y}:Q", axis=y_axis, title=None)
+    x_sort = list(spec.x_sort) if spec.x_sort else "ascending"
+
+    if spec.kind == "reliability":
+        # Predicted vs realized, with the y=x ideal as a dashed reference.
+        base = alt.Chart(spec.data)
+        pts = base.mark_circle(size=90, color="#4c78a8").encode(
+            x=alt.X("predicted:Q", scale=alt.Scale(domain=[0, 1]), title="Predicted"),
+            y=alt.Y("realized:Q", scale=alt.Scale(domain=[0, 1]), title="Realized"),
+        )
+        ideal = (
+            alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]}))
+            .mark_line(strokeDash=[5, 5], color="gray")
+            .encode(x="x:Q", y="y:Q")
+        )
+        chart: alt.Chart = (ideal + pts)
+    elif spec.kind == "grouped_bar":
+        chart = alt.Chart(spec.data).mark_bar().encode(
+            x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
+            y=y_enc,
+            color=alt.Color(f"{spec.color}:N", title=None),
+            xOffset=f"{spec.color}:N",
+            tooltip=list(spec.data.columns),
+        )
+    else:  # "bar"
+        chart = alt.Chart(spec.data).mark_bar(color="#4c78a8").encode(
+            x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
+            y=y_enc,
+            tooltip=list(spec.data.columns),
+        )
+
+    st.altair_chart(chart.properties(height=260), use_container_width=True)
+    if spec.caption:
+        st.caption(spec.caption)
 
 # ---- load settings once ----
 @st.cache_resource
@@ -86,6 +130,9 @@ st.caption("Ask about any ticker — the agent calls tools for prices, indicator
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
+        # Re-render any charts captured with this turn (survives Streamlit reruns).
+        for spec in msg.get("charts", []):
+            _render_chart(spec)
 
 # ---- handle quick-starter injection ----
 if "pending_prompt" in st.session_state:
@@ -108,6 +155,7 @@ if prompt:
 
     # Run the agent and stream the response.
     with st.chat_message("assistant"):
+        charts: list[ChartSpec] = []
         with st.spinner("Calling tools…"):
             try:
                 result = run_agent(
@@ -119,6 +167,9 @@ if prompt:
                 response = result.text
                 # Persist the full message history for the next turn.
                 st.session_state.agent_history = result.messages
+                # Charts derived from the tool results (numbers the tools produced,
+                # never the LLM) — rendered alongside the text below, not replacing it.
+                charts = charts_for(result.tool_results)
                 # Show which tools were used as a subtle annotation.
                 if result.tool_calls:
                     unique = list(dict.fromkeys(result.tool_calls))  # preserve order
@@ -132,5 +183,8 @@ if prompt:
             except AgentError as exc:
                 response = f"⚠️ Agent error: {exc}"
         st.markdown(response)
+        for spec in charts:
+            _render_chart(spec)
 
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    # Persist text + charts so the turn re-renders intact on later reruns.
+    st.session_state.messages.append({"role": "assistant", "content": response, "charts": charts})

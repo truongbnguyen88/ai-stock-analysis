@@ -54,6 +54,20 @@ class ToolResponse:
 
 
 @dataclass
+class ToolInvocation:
+    """A single tool call made during a turn, with its structured result.
+
+    Surfaced so a presentation layer (e.g. the Streamlit UI) can render charts
+    from the numbers the tools already produced — without the LLM generating any
+    chart data (the numbers-vs-narrative invariant).
+    """
+
+    name: str
+    input: dict[str, Any]
+    result: dict[str, Any]
+
+
+@dataclass
 class AgentResult:
     text: str
     tool_calls: list[str] = field(default_factory=list)
@@ -62,6 +76,9 @@ class AgentResult:
     # calls + final answer). Pass as ``history`` on the next turn to give the
     # agent memory of prior conversation.
     messages: list[dict[str, Any]] = field(default_factory=list)
+    # Structured tool results from THIS turn (not history), in call order — for
+    # charting/inspection in the presentation layer.
+    tool_results: list[ToolInvocation] = field(default_factory=list)
 
 
 class ToolLLM(Protocol):
@@ -152,6 +169,7 @@ def run_agent(
     messages.append({"role": "user", "content": query})
     grounding = NumberGrounding()
     tool_calls: list[str] = []
+    tool_results: list[ToolInvocation] = []
     retries_used = 0
 
     for iteration in range(1, max_iterations + 1):
@@ -164,6 +182,7 @@ def run_agent(
                 tool_calls.append(tu.name)
                 result = executor.execute(tu.name, tu.input)
                 grounding.add_from(result)
+                tool_results.append(ToolInvocation(name=tu.name, input=tu.input, result=result))
                 results.append(
                     {
                         "type": "tool_result",
@@ -201,6 +220,7 @@ def run_agent(
             tool_calls=tool_calls,
             iterations=iteration,
             messages=messages,
+            tool_results=tool_results,
         )
 
     raise AgentError(f"agent did not finish within {max_iterations} iterations")

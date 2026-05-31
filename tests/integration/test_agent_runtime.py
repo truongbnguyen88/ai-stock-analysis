@@ -94,6 +94,27 @@ def test_stateful_history_is_threaded() -> None:
     assert len(llm2._last_messages) > 2  # history + new user message
 
 
+def test_tool_results_are_surfaced_for_charting() -> None:
+    # The structured result of each tool call this turn is exposed on AgentResult
+    # (for the UI to chart), in call order, with name + input + result.
+    script = [
+        ToolResponse(
+            text="",
+            tool_uses=[
+                ToolUse(id="1", name="run_forecast", input={"ticker": "NVDA", "horizon_days": 20})
+            ],
+            stop_reason="tool_use",
+            assistant_content=[],
+        ),
+        _final("Forecast done for NVDA over twenty trading days."),  # no decimals
+    ]
+    result = run_agent("forecast NVDA", llm=FakeToolLLM(script), executor=_executor())
+    assert [inv.name for inv in result.tool_results] == ["run_forecast"]
+    inv = result.tool_results[0]
+    assert inv.input == {"ticker": "NVDA", "horizon_days": 20}
+    assert inv.result.get("model_name") == "historical_sim"  # the real tool result dict
+
+
 def test_fabricated_number_triggers_retry_then_succeeds() -> None:
     script = [
         _final("There is a 92.5% chance of a rally."),  # ungrounded (no tools called)
