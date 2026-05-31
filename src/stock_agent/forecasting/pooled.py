@@ -135,6 +135,7 @@ def train_pooled_from_series(
     min_rows_per_ticker: int = 60,
     min_total_rows: int = 500,
     earnings_by_ticker: dict[str, list[Date]] | None = None,
+    vix: pd.Series | None = None,
 ) -> PooledModel:
     """Train a pooled model from in-memory price series (pure; offline-testable).
 
@@ -155,6 +156,7 @@ def train_pooled_from_series(
                 horizon_days,
                 min_rows=min_rows_per_ticker,
                 earnings_dates=earnings_by_ticker.get(series.ticker.upper()),
+                vix=vix,
             )
         except ValueError as exc:
             log.debug("pooled.skip_ticker", ticker=series.ticker, reason=str(exc))

@@ -435,7 +435,7 @@ construction.
 
 ```mermaid
 flowchart TD
-    X["Feature vector x<br/>16 scale-free features"] --> C0["clf θ = −10%"]
+    X["Feature vector x<br/>18 scale-free features"] --> C0["clf θ = −10%"]
     X --> C1["clf θ = −5%"]
     X --> C2["clf θ = 0%"]
     X --> C3["clf θ = +5%"]
@@ -473,7 +473,7 @@ $$
 \text{upside} = 0.17+0.18+0.20 = 0.55\ (= m_2)
 $$
 
-### 3.2 The 16 features (all scale-free)
+### 3.2 The 18 features (all scale-free)
 
 The feature vector $\mathbf{x}$ is **price-derived and scale-free** — ratios and
 bounded indicators, never raw price levels. Scale-freeness is what makes pooling
@@ -496,7 +496,9 @@ space). Defined in
 | 13 | `atr_pct` | ATR(14, Wilder) $/\,P_t$ (normalized daily range) |
 | 14 | `drawdown` | $P_t/\max_{s\le t}P_s - 1\ (\le 0)$ |
 | 15 | `B_perc` | Bollinger %B: $(P_t - \text{lower})/(\text{upper}-\text{lower})$, bands = $\mathrm{SMA}_{20}\pm2\sigma$ |
-| 16 | `days_to_next_earnings` | Leakage-safe earnings-proximity estimate (below) |
+| 16 | `vix_level` | VIX / 100 — market-wide annualized vol (real-time, leakage-safe); mainly sharpens the big-move/vol signal |
+| 17 | `vix_rel` | VIX / its own 20-day average (>1 = market vol rising) |
+| 18 | `days_to_next_earnings` | Leakage-safe earnings-proximity estimate (below) |
 
 Missing values (e.g. `ma50_to_ma200` before 200 bars exist, or `vol_ratio` going
 inf on a degenerate window → replaced by NaN) are handled per model type
@@ -536,7 +538,7 @@ from XOM live in the same space.
    its earnings dates.
 2. Build the point-in-time $(X, y)$ matrix
    ([assembler.py](../src/stock_agent/features/assembler.py)):
-   - $X$ = the 16 features at each date $t$ (data up to and including $t$).
+   - $X$ = the 18 features at each date $t$ (data up to and including $t$).
    - $y$ = five binary columns, $\mathbb{1}[\,r_{t \to t+h} > \theta_k\,]$,
      where the target uses `close.shift(-horizon)` — **strictly future**.
    - A leakage assertion checks the feature index equals the price-date index
@@ -551,7 +553,7 @@ from XOM live in the same space.
 ```mermaid
 flowchart TD
     U["Universe ~50-100 tickers<br/>configs/universe.txt"] --> FE["Per ticker: fetch ~6y prices<br/>+ earnings dates"]
-    FE --> PIT["Point-in-time matrix per ticker:<br/>X = 16 features at t (data ≤ t)<br/>y_k = 1 if future h-day return above θ_k"]
+    FE --> PIT["Point-in-time matrix per ticker:<br/>X = 18 features at t (data ≤ t)<br/>y_k = 1 if future h-day return above θ_k"]
     PIT --> ST["Stack all tickers → pooled rows<br/>replace ±inf with NaN"]
     ST --> FIT["For each threshold θ_k:<br/>fit one binary classifier"]
     FIT --> ART["PooledModel artifact<br/>5 classifiers + imputer + metadata<br/>→ joblib (gitignored)"]
@@ -679,7 +681,7 @@ AUC/calibration shown inline as a trust badge) is the next enhancement.
 | | Historical Sim | Monte Carlo (GBM/bootstrap/jump) | ML (pooled) |
 |---|---|---|---|
 | **Type** | Empirical, unconditional | Parametric / semi-parametric simulation | Conditional supervised |
-| **Conditions on today's state?** | No | Only via recent $\mu,\sigma$ (+ earnings for jump) | **Yes** (16 features) |
+| **Conditions on today's state?** | No | Only via recent $\mu,\sigma$ (+ earnings for jump) | **Yes** (18 features) |
 | **Distributional assumption** | None | GBM: Normal log-returns; bootstrap: none; jump: + empirical jump | None on returns; learned mapping |
 | **Data needed** | This ticker's prices | This ticker's prices (+ earnings for jump) | Universe history + a trained artifact |
 | **Captures fat tails?** | Yes (empirically) | GBM no; bootstrap/jump yes | Via thresholds; tails data-starved |

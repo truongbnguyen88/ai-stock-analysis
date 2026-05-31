@@ -43,13 +43,20 @@ def _frame_to_series(ticker: str, frame: pd.DataFrame) -> PriceSeries:
         # Yahoo occasionally emits NaN rows (e.g. halted days); skip them.
         if pd.isna(row["Open"]) or pd.isna(row["Close"]):
             continue
+        op, cl = float(row["Open"]), float(row["Close"])
+        hi_raw, lo_raw = float(row["High"]), float(row["Low"])
+        # Split/dividend adjustment occasionally rounds open/close a cent outside the
+        # reported [low, high] (real, harmless artifact). Widen the band to bound them
+        # so the bar is internally consistent (PriceBar requires low <= open,close <= high).
+        high = max(op, cl, hi_raw, lo_raw)
+        low = min(op, cl, hi_raw, lo_raw)
         bars.append(
             PriceBar(
                 date=bar_date,
-                open=float(row["Open"]),
-                high=float(row["High"]),
-                low=float(row["Low"]),
-                close=float(row["Close"]),
+                open=op,
+                high=high,
+                low=low,
+                close=cl,
                 adj_close=float(row["Adj Close"]) if has_adj else None,
                 volume=int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
             )

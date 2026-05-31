@@ -66,6 +66,7 @@ def _pooled_builder(
     training cutoff and fits a fresh pooled model, so the backtest never trains
     on data at/after the test fold (leakage-safe pooled walk-forward).
     """
+    from stock_agent.data.market_context import fetch_vix
     from stock_agent.forecasting.ml import MLForecaster
     from stock_agent.forecasting.pooled import ModelType, train_pooled_from_series
     from stock_agent.forecasting.train_pooled import (
@@ -78,6 +79,11 @@ def _pooled_builder(
     universe = fetch_universe_series(tickers, registry)
     earnings = fetch_universe_earnings([s.ticker for s in universe], registry)
     mt: ModelType = model_type  # type: ignore[assignment]
+    # VIX fetched once over the universe span; build_price_feature_matrix reindexes it
+    # to each fold's sliced (<= train_end) dates, so only past VIX is ever used.
+    _span = [d for s in universe for d in (s.dates[0], s.dates[-1])]
+    _vix = fetch_vix(registry, start=min(_span), end=max(_span)) if _span else None
+    vix = _vix if (_vix is not None and not _vix.empty) else None
 
     def build(train_end: Date) -> ForecastModel:
         sliced = [
@@ -86,7 +92,7 @@ def _pooled_builder(
         ]
         sliced = [s for s in sliced if len(s) >= 60]  # drop too-short slices
         pooled = train_pooled_from_series(
-            sliced, horizon_days=horizon_days, model_type=mt, earnings_by_ticker=earnings
+            sliced, horizon_days=horizon_days, model_type=mt, earnings_by_ticker=earnings, vix=vix
         )
         return MLForecaster(mt, model=pooled, registry=registry)
 

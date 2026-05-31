@@ -27,6 +27,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-05-30 | Pooled xgboost vs baselines (h20, 3 tickers) | ❌ xgboost worse on Brier **and** ECE on all 3 | Keep baselines primary; **do not** expand ML training or surface ML |
 | 2026-05-30 | ML improvement campaign — model / calibration / features / **horizon sweep** (h5–60) | ⚠️ plain logistic ≫ xgboost & ties MC at short h, but **no horizon where it beats the baselines** | **Adopt plain scaled logistic**; baselines stay primary at all horizons |
 | 2026-05-31 | **Big-move reframe** — P(\|r\|>k) magnitude target (h5/h20) | ✅ **First genuine ML win** — logistic beats baselines on big-move AUC everywhere + Brier at h5 (MSFT/KO) | Build a `prob_large_move` signal (logistic, calibrated); ML's real niche |
+| 2026-05-31 | **VIX feature A/B** + universe → 110 tickers (big-move, h5) | ➖ neutral-to-positive (Brier flat, +AUC; KO AUC 0.84→0.93) | **Keep** VIX (sound, leakage-safe, optionality in high-vol regimes); expand universe |
 
 ---
 
@@ -174,3 +175,24 @@ python -m stock_agent backtest --ticker NVDA                    # baselines, sam
 **Follow-up — model sweep + which model powers it.** Unlike *direction* (where trees were stuck at AUC ≈ 0.5), on **big-move the trees are competitive** — it has non-linear vol structure they capture. h5 |r|>5% AUC: xgboost/lightgbm 0.63–0.72 vs logistic 0.60–0.66. Key result: **regularizing lightgbm (shallow, `min_child_samples=200`, subsampling, L1+L2) fixes the high-vol overconfidence** — NVDA h20 log-loss **1.31 → 0.72**, Brier 0.281 → 0.259, AUC up. Verdict is **split**: **regularized lightgbm wins high-vol names (NVDA); logistic wins stable names (KO AUC 0.878 vs 0.807; MSFT h20 Brier 0.093 vs 0.102).** Neither dominates.
 
 **Built (2026-05-31).** `forecasting/large_move.py` (`large_move_breakdown` → `LargeMoveBreakdown`) + agent **`get_large_move`** tool (system prompt v3). Model-agnostic; **defaults to logistic**, with regularized lightgbm a documented high-vol swap. Live NVDA 20d k=10%: P(|r|>10%)=18% (up 11% / down 7%, lean up). Next enhancement: a precomputed per-ticker skill scorecard (inline AUC/calibration trust badge).
+
+---
+
+## 2026-05-31 — VIX macro feature + universe expansion
+
+**Question.** Macro features are *market-wide* (one value per date) so they add ~nothing to *direction* (constant across tickers, pooling doesn't raise effective N — same issue as calendar seasonality). But **VIX *is* forward-looking volatility**, so it should help the *big-move / volatility* target. Does adding VIX (`vix_level` = VIX/100, `vix_rel` = VIX vs its 20-day average — both real-time, leakage-safe) improve big-move? (Employment/CPI deferred — publication lags need vintage alignment to avoid leakage.)
+
+**Setup.** A/B on the **same expanded 110-ticker universe** (semis / AI-infra / AI-energy / AI-memory / ETFs added): logistic, **VIX-on vs VIX-off** (fetch monkeypatched to empty), big-move at h5 (|r|>5%), 3 tickers. VIX plumbed through training + inference + per-fold backtest, reindexed `≤` each point-in-time date.
+
+**Results** (big-move, h5, VIX off → on):
+
+| ticker | Brier | log loss | AUC |
+|---|---|---|---|
+| NVDA | 0.3518 → 0.3521 | 1.108 → 1.135 | 0.607 → 0.591 |
+| MSFT | 0.1348 → 0.1348 | 0.520 → 0.527 | 0.657 → 0.669 |
+| KO | 0.0342 → **0.0338** | 0.146 → **0.138** | 0.838 → **0.928** |
+| **avg** | **0.1736 → 0.1736** | 0.591 → 0.600 | 0.701 → **0.729** |
+
+**Finding — neutral-to-slightly-positive.** Brier exactly flat; **AUC up (+0.028 avg)**, driven by a real KO gain (0.84 → 0.93); log loss a hair worse (+0.008, all NVDA — within noise). Helps KO, neutral MSFT, slightly hurts NVDA → no consistent harm, a genuine discrimination gain. **Caveat:** the test window's recent years are *calm* (VIX ~15); VIX earns its keep in *high-vol* regimes (2020/2022), so its value here is likely **understated**.
+
+**Decision.** **Keep VIX** (16 → 18 features). It's a sound, leakage-safe, economically-motivated feature that doesn't worsen results and adds high-vol-regime optionality. Also kept: the **110-ticker universe** and two robustness fixes the bigger universe surfaced — provider **OHLC sanitization** (clamp split-adjustment artifacts) and a **resilient universe fetch** (skip any bad/short-history ticker instead of aborting). **Deferred:** employment/CPI (vintage alignment); re-tuning regularized lightgbm *with* VIX on the bigger universe.

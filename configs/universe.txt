@@ -1,29 +1,83 @@
 # Training universe for pooled ML forecasting (one ticker per line; # = comment).
-# ~60 liquid US large/mega-caps across sectors. Diversity helps the pooled model
-# generalize; all features are scale-free so cross-ticker pooling is valid.
+# ~110 liquid US names across sectors, weighted toward the semiconductor / AI
+# infrastructure / AI-power / memory complex, plus broad + sector ETFs. Diversity
+# helps the pooled model generalize; all features are scale-free so cross-ticker
+# pooling is valid. Recent IPOs (ARM, GEV, TLN, …) have short history and simply
+# contribute fewer rows — training skips anything under ~200 bars.
 # Edit freely — `python -m stock_agent train` reads this file.
 
-# --- Mega-cap tech ---
+# --- Mega-cap tech / platforms ---
 AAPL
 MSFT
-NVDA
 GOOGL
 AMZN
 META
-AVGO
 TSLA
-ORCL
+NFLX
 ADBE
 CRM
-AMD
-INTC
-CSCO
-QCOM
-TXN
+ORCL
 IBM
 NOW
 INTU
+UBER
+SHOP
+
+# --- Semiconductors & chips ---
+NVDA
+AVGO
+AMD
+INTC
+QCOM
+TXN
 AMAT
+MU
+MRVL
+LRCX
+KLAC
+ADI
+NXPI
+MCHP
+ON
+MPWR
+SWKS
+TER
+ASML
+TSM
+ARM
+STM
+QRVO
+
+# --- AI infrastructure (servers / networking / storage / security / data) ---
+SMCI
+DELL
+ANET
+HPE
+PSTG
+NTAP
+CIEN
+PLTR
+PANW
+CRWD
+SNOW
+DDOG
+NET
+
+# --- AI energy / power (data-center power & cooling) ---
+VRT
+ETN
+GEV
+CEG
+VST
+NRG
+PWR
+NEE
+TLN
+POWL
+
+# --- AI memory / storage ---
+WDC
+STX
 
 # --- Financials ---
 JPM
@@ -36,6 +90,8 @@ C
 AXP
 SCHW
 SPGI
+V
+MA
 
 # --- Healthcare ---
 UNH
@@ -48,6 +104,8 @@ TMO
 ABT
 DHR
 AMGN
+ISRG
+VRTX
 
 # --- Consumer ---
 WMT
@@ -60,8 +118,9 @@ NKE
 HD
 LOW
 SBUX
+DIS
 
-# --- Industrials / Energy / Other ---
+# --- Industrials / energy / materials ---
 CAT
 BA
 HON
@@ -70,6 +129,13 @@ UPS
 XOM
 CVX
 LIN
-DIS
-V
-MA
+DE
+RTX
+
+# --- ETFs (broad-market + sector benchmarks; great anchors for the vol/big-move target) ---
+SPY
+QQQ
+VGT
+SOXX
+SMH
+IWM

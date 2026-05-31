@@ -43,12 +43,18 @@ PRICE_FEATURE_COLS: list[str] = [
     "atr_pct",
     "drawdown",
     "B_perc",  # Bollinger %B: position within the 20-day volatility band
+    # Market-wide volatility regime (VIX) — sharpens the big-move/vol signal:
+    "vix_level",  # VIX / 100 (annualized vol fraction; NaN if unavailable)
+    "vix_rel",  # VIX vs its own 20-day average (>1 = market vol rising)
     "days_to_next_earnings",  # leakage-safe cadence estimate (NaN if no earnings data)
 ]
 
 
 def build_price_feature_matrix(
-    series: PriceSeries, *, earnings_dates: list[Date] | None = None
+    series: PriceSeries,
+    *,
+    earnings_dates: list[Date] | None = None,
+    vix: pd.Series | None = None,
 ) -> pd.DataFrame:
     """Return a date-indexed DataFrame of model features (one row per bar).
 
@@ -93,6 +99,19 @@ def build_price_feature_matrix(
 
     # Bollinger %B: where price sits within its 20-day volatility band (mean-reversion).
     df["B_perc"] = bollinger_percent_b(close, window=20)
+
+    # Market-wide volatility regime (VIX). Same for every ticker on a date, so it mainly
+    # sharpens the volatility / big-move signal. Point-in-time safe: VIX[t] is known at t;
+    # vix_rel uses a backward rolling window. NaN when VIX is unavailable (handled like any
+    # missing feature). Aligned to the price dates by ffill (uses VIX at-or-before each date).
+    if vix is not None and not vix.empty:
+        vix_level = vix / 100.0  # annualized vol fraction, comparable to hist_vol_*
+        vix_rel = vix / vix.rolling(window=20, min_periods=20).mean()
+        df["vix_level"] = vix_level.reindex(df.index, method="ffill")
+        df["vix_rel"] = vix_rel.reindex(df.index, method="ffill")
+    else:
+        df["vix_level"] = float("nan")
+        df["vix_rel"] = float("nan")
 
     # Earnings proximity (leakage-safe cadence estimate; same calc at train & infer).
     feat_dates = [pd.Timestamp(idx).date() for idx in df.index]

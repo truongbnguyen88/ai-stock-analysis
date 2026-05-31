@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import date as Date
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from stock_agent.data.loader import PriceLoader
 from stock_agent.forecasting.pooled import ModelType, PooledModel, train_pooled_from_series
 from stock_agent.logging_config import get_logger
@@ -44,7 +46,9 @@ def fetch_universe_series(
     for ticker in tickers:
         try:
             out.append(loader.load_recent(ticker, lookback_days, min_bars=200).series)
-        except ProviderError as exc:
+        except (ProviderError, ValueError, ValidationError) as exc:
+            # Skip any ticker that fails: provider error, too-few bars (recent IPOs),
+            # or a bad bar that survives normalization. One bad name never aborts training.
             log.warning("train.fetch_failed", ticker=ticker, error=str(exc))
     return out
 
@@ -84,11 +88,18 @@ def train_pooled(
     # Earnings dates per ticker for the days_to_next_earnings feature (best-effort).
     earnings_by_ticker = fetch_universe_earnings([s.ticker for s in series_list], registry)
 
+    # Market-wide VIX over the universe's date span (one fetch; shared by all tickers).
+    from stock_agent.data.market_context import fetch_vix
+
+    span = [d for s in series_list for d in (s.dates[0], s.dates[-1])]
+    vix = fetch_vix(registry, start=min(span), end=max(span))
+
     model = train_pooled_from_series(
         series_list,
         horizon_days=horizon_days,
         model_type=model_type,
         earnings_by_ticker=earnings_by_ticker,
+        vix=vix if not vix.empty else None,
     )
 
     path = default_model_path(Path(settings.output_dir) / "models", model_type, horizon_days)

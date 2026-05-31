@@ -43,6 +43,7 @@ def build_training_matrix(
     *,
     min_rows: int = 30,
     earnings_dates: list[Date] | None = None,
+    vix: pd.Series | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build (X, y) for training ML models on a single stock's price history.
 
@@ -53,7 +54,7 @@ def build_training_matrix(
     Raises:
         ValueError: if fewer than ``min_rows`` valid training rows exist.
     """
-    features = build_price_feature_matrix(series, earnings_dates=earnings_dates)
+    features = build_price_feature_matrix(series, earnings_dates=earnings_dates, vix=vix)
 
     close = pd.Series(series.closes, index=features.index)
     # Forward h-day simple return at each date t: P_{t+h}/P_t - 1.
@@ -92,8 +93,11 @@ def build_training_matrix(
 
 
 def current_features_vector(
-    series: PriceSeries, *, earnings_dates: list[Date] | None = None
+    series: PriceSeries,
+    *,
+    earnings_dates: list[Date] | None = None,
+    vix: pd.Series | None = None,
 ) -> pd.Series:
     """Return the most recent feature row for live inference."""
-    df = build_price_feature_matrix(series, earnings_dates=earnings_dates)
+    df = build_price_feature_matrix(series, earnings_dates=earnings_dates, vix=vix)
     return df.iloc[-1][PRICE_FEATURE_COLS]

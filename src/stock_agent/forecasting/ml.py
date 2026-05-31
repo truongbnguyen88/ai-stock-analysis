@@ -107,6 +107,19 @@ class MLForecaster:
         except ProviderError:
             return None
 
+    def _vix(self, series: PriceSeries) -> pd.Series | None:
+        """VIX over the price window for the market-vol feature (point-in-time safe).
+
+        ``series`` ends at the as-of bar, so VIX is fetched only up to that date.
+        None when no registry / VIX is unavailable (the feature becomes NaN).
+        """
+        if self._registry is None or not series.bars:
+            return None
+        from stock_agent.data.market_context import fetch_vix
+
+        v = fetch_vix(self._registry, start=series.dates[0], end=series.dates[-1])
+        return v if not v.empty else None
+
     def _resolve_model(self, horizon_days: int) -> PooledModel | None:
         """Return a pooled model for this horizon (cached, then disk), or None."""
         if self._model is not None and self._model.horizon_days == horizon_days:
@@ -145,7 +158,9 @@ class MLForecaster:
 
         # Inference: current features (incl. earnings) → per-threshold exceedance → buckets.
         earnings_dates = self._earnings_dates(series.ticker)
-        x_df = pd.DataFrame([current_features_vector(series, earnings_dates=earnings_dates)])
+        x_df = pd.DataFrame(
+            [current_features_vector(series, earnings_dates=earnings_dates, vix=self._vix(series))]
+        )
         probs_raw = model.predict_exceedance(x_df)
         probs_gt = [
             p if p is not None else self._base_rate(series, horizon_days, thresh)
