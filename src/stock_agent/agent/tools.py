@@ -283,6 +283,15 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "default": 10,
                     "description": "How big is 'big' — a 5% or 10% move (a bucket edge).",
                 },
+                "model": {
+                    "type": "string",
+                    "enum": ["logistic", "lightgbm"],
+                    "default": "logistic",
+                    "description": (
+                        "Big-move model: 'logistic' (default, best for stable names) or "
+                        "'lightgbm' (regularized, better for VOLATILE names). Call both to compare."
+                    ),
+                },
             },
             "required": ["ticker"],
         },
@@ -427,9 +436,12 @@ class ToolExecutor:
         threshold_pct = int(args.get("threshold_pct", 10))
         if threshold_pct not in (5, 10):
             return {"error": "threshold_pct must be 5 or 10 (the model's bucket boundaries)"}
-        # Logistic is the validated big-move model; it falls back to the baseline
+        # The two validated big-move models: logistic (default; best for stable names) and
+        # regularized lightgbm (better for volatile names). Both fall back to the baseline
         # (with a note) at horizons without a trained artifact.
         model = str(args.get("model", "logistic"))
+        if model not in ("logistic", "lightgbm"):
+            return {"error": "model must be 'logistic' or 'lightgbm' for the big-move signal"}
         forecast = run_forecast(
             ticker, horizon, model_name=model, settings=self._settings, registry=self._registry
         )

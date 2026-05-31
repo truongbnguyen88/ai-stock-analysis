@@ -148,10 +148,11 @@ class _Scripted:
 
 # ---- get_large_move tool (the big-move build) ---------------------------------
 def test_get_large_move_tool_shape() -> None:
-    # model=historical_sim keeps it hermetic (no artifact); the tool is model-agnostic.
+    # Default model=logistic; falls back to the baseline if no artifact, so the shape
+    # assertions hold either way (the breakdown is a pure reading of the bucket distribution).
     out = _executor().execute(
         "get_large_move",
-        {"ticker": "TST", "horizon_days": 20, "threshold_pct": 10, "model": "historical_sim"},
+        {"ticker": "TST", "horizon_days": 20, "threshold_pct": 10},
     )
     assert "error" not in out
     assert 0.0 <= out["prob_large_move"] <= 1.0
@@ -165,3 +166,9 @@ def test_get_large_move_tool_shape() -> None:
 def test_get_large_move_rejects_bad_threshold() -> None:
     out = _executor().execute("get_large_move", {"ticker": "TST", "threshold_pct": 7})
     assert "error" in out and "5 or 10" in out["error"]
+
+
+def test_get_large_move_rejects_non_ml_model() -> None:
+    # Only the two validated big-move ML models are allowed (logistic / lightgbm).
+    out = _executor().execute("get_large_move", {"ticker": "TST", "model": "xgboost"})
+    assert "error" in out and "logistic" in out["error"] and "lightgbm" in out["error"]
