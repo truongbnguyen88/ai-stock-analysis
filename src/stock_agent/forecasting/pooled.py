@@ -70,8 +70,23 @@ def _make_classifier(model_type: ModelType) -> Any:
     if model_type == "lightgbm":
         from lightgbm import LGBMClassifier
 
+        # Regularized config (validated on big-move, see docs/validations_results.md):
+        # the un-regularized default overfit → overconfident. With subsampling + L1/L2 +
+        # min_child_samples it's the best big-move model for HIGH-VOL names (beats logistic
+        # and the baseline on NVDA), while logistic stays best for stable names.
         return LGBMClassifier(
-            n_estimators=300, max_depth=4, learning_rate=0.05, n_jobs=-1, verbose=-1
+            n_estimators=300,
+            max_depth=4,
+            num_leaves=15,
+            learning_rate=0.03,
+            min_child_samples=300,
+            subsample=0.8,
+            subsample_freq=1,
+            colsample_bytree=0.7,
+            reg_lambda=8.0,
+            reg_alpha=1.0,
+            n_jobs=-1,
+            verbose=-1,
         )
     if model_type == "random_forest":
         from sklearn.ensemble import RandomForestClassifier
