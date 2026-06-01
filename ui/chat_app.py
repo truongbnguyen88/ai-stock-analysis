@@ -38,6 +38,7 @@ from stock_agent.chat.history import (
 )
 from stock_agent.llm.client import AnthropicClient
 from stock_agent.settings import get_settings
+from stock_agent.reports.export import EXPORT_META, export_summary
 from stock_agent.viz.charts import ChartSpec, charts_for
 
 
@@ -79,6 +80,29 @@ def _render_chart(spec: ChartSpec) -> None:
     st.altair_chart(chart.properties(height=260), use_container_width=True)
     if spec.caption:
         st.caption(spec.caption)
+
+
+@st.cache_data(show_spinner=False)
+def _export_bytes(text: str, fmt: str) -> bytes:
+    """Render an answer to document bytes (cached per text+format across reruns)."""
+    return export_summary(text, fmt)
+
+
+def _render_export(text: str, idx: int) -> None:
+    """PDF / Word / Markdown download buttons for an assistant answer."""
+    with st.expander("📄 Export this summary"):
+        cols = st.columns(3)
+        labels = {"pdf": "PDF", "docx": "Word", "md": "Markdown"}
+        for col, fmt in zip(cols, ["pdf", "docx", "md"]):
+            mime, ext = EXPORT_META[fmt]
+            col.download_button(
+                labels[fmt],
+                data=_export_bytes(text, fmt),
+                file_name=f"stock_summary.{ext}",
+                mime=mime,
+                key=f"dl_{idx}_{fmt}",
+                use_container_width=True,
+            )
 
 # ---- load settings once ----
 @st.cache_resource
@@ -220,12 +244,14 @@ with st.sidebar:
 st.title("Stock Research Agent")
 st.caption("Ask about any ticker — the agent calls tools for prices, indicators, news, and forecasts.")
 
-for msg in st.session_state.messages:
+for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         # Re-render any charts captured with this turn (survives Streamlit reruns).
         for spec in msg.get("charts", []):
             _render_chart(spec)
+        if msg["role"] == "assistant":
+            _render_export(msg["content"], idx)
 
 # ---- handle quick-starter injection ----
 if "pending_prompt" in st.session_state:
@@ -285,6 +311,8 @@ if prompt:
         st.markdown(response)
         for spec in charts:
             _render_chart(spec)
+        # Export buttons for this answer (idx = the index it gets once appended below).
+        _render_export(response, len(st.session_state.messages))
 
     # Persist text + charts so the turn re-renders intact on later reruns.
     st.session_state.messages.append({"role": "assistant", "content": response, "charts": charts})

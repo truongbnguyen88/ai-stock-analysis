@@ -33,6 +33,9 @@ dependencies = [
     "lightgbm>=4.0",     # faster gradient boosting
     # UI
     "streamlit>=1.35",   # browser-based chat frontend
+    # Export (chat summary -> document)
+    "fpdf2>=2.7",        # pure-Python PDF (no cairo/pango/LaTeX system deps)
+    "python-docx>=1.1",  # pure-Python DOCX
 ]
 
 [project.optional-dependencies]
