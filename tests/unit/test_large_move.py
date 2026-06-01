@@ -62,3 +62,25 @@ def test_invalid_threshold_raises() -> None:
     fc = _forecast([0.1, 0.1, 0.1, 0.3, 0.2, 0.2])
     with pytest.raises(ValueError, match="threshold must be"):
         large_move_breakdown(fc, threshold=0.07)
+
+
+def test_horizon_scaled_buckets_accept_their_own_k() -> None:
+    # h60 buckets are ±15/±30, so k=0.15 is valid and k=0.10 is not.
+    from stock_agent.forecasting.buckets import buckets_for_horizon
+
+    fc = ScenarioForecast(
+        ticker="TST",
+        as_of=date(2025, 1, 31),
+        horizon_days=60,
+        model_name="ml_lightgbm",
+        buckets=make_prob_buckets([0.1, 0.1, 0.1, 0.3, 0.2, 0.2], buckets_for_horizon(60)),
+        expected_return=0.0,
+        upside_prob=0.7,
+        downside_prob=0.3,
+    )
+    b = large_move_breakdown(fc, threshold=0.15)  # +15% is a boundary at h60
+    assert b.prob_big_up == pytest.approx(0.4)  # +15..+30 (0.2) + >+30 (0.2)
+    assert b.prob_big_down == pytest.approx(0.2)  # <-30 (0.1) + -30..-15 (0.1)
+    assert b.threshold == 0.15
+    with pytest.raises(ValueError, match="bucket boundary"):
+        large_move_breakdown(fc, threshold=0.10)  # not a boundary in the h60 scheme

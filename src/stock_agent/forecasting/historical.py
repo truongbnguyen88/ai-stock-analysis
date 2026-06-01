@@ -17,7 +17,11 @@ from datetime import date as Date
 
 import numpy as np
 
-from stock_agent.forecasting.buckets import bucket_probabilities, make_prob_buckets
+from stock_agent.forecasting.buckets import (
+    bucket_probabilities,
+    buckets_for_horizon,
+    make_prob_buckets,
+)
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.market import PriceSeries
 
@@ -59,7 +63,10 @@ def sample_to_forecast(
         as_of=as_of,
         horizon_days=horizon_days,
         model_name=model_name,
-        buckets=make_prob_buckets(bucket_probabilities(sample)),
+        buckets=make_prob_buckets(
+            bucket_probabilities(sample, buckets_for_horizon(horizon_days)),
+            buckets_for_horizon(horizon_days),
+        ),
         expected_return=float(sample.mean()),
         upside_prob=float((sample > 0).mean()),
         downside_prob=float((sample < 0).mean()),

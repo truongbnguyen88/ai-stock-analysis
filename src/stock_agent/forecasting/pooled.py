@@ -24,8 +24,9 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from stock_agent.features.assembler import THRESHOLDS, _target_col, build_training_matrix
+from stock_agent.features.assembler import _target_col, build_training_matrix
 from stock_agent.features.price_features import PRICE_FEATURE_COLS
+from stock_agent.forecasting.buckets import thresholds_for_horizon
 from stock_agent.logging_config import get_logger
 from stock_agent.schemas.market import PriceSeries
 
@@ -110,6 +111,17 @@ class PooledModel:
     n_tickers: int
     trained_at: str
     notes: list[str] = field(default_factory=list)
+    # Return cut-points this model was trained on (horizon-scaled). Empty on
+    # artifacts trained before horizon-scaling -> derived from the horizon on use.
+    thresholds: list[float] = field(default_factory=list)
+
+    def effective_thresholds(self) -> list[float]:
+        """The model's thresholds, deriving from horizon for pre-scaling artifacts.
+
+        ``getattr`` (not ``self.thresholds``) so artifacts pickled before the field
+        existed — which lack the attribute entirely — fall back to the horizon.
+        """
+        return getattr(self, "thresholds", None) or thresholds_for_horizon(self.horizon_days)
 
     def predict_exceedance(self, x_row: pd.DataFrame) -> list[float | None]:
         """P(return > threshold) for each threshold; None where a clf is absent."""
@@ -117,7 +129,7 @@ class PooledModel:
         if self.imputer is not None:
             X = pd.DataFrame(self.imputer.transform(X), columns=self.feature_cols, index=X.index)
         out: list[float | None] = []
-        for thresh in THRESHOLDS:
+        for thresh in self.effective_thresholds():
             clf = self.classifiers.get(thresh)
             out.append(float(clf.predict_proba(X)[0, 1]) if clf is not None else None)
         return out
@@ -161,6 +173,7 @@ def train_pooled_from_series(
     ``days_to_next_earnings`` feature (NaN where absent).
     """
     earnings_by_ticker = earnings_by_ticker or {}
+    thresholds = thresholds_for_horizon(horizon_days)  # horizon-scaled cut-points
     frames_x: list[pd.DataFrame] = []
     frames_y: list[pd.DataFrame] = []
     used = 0
@@ -172,6 +185,7 @@ def train_pooled_from_series(
                 min_rows=min_rows_per_ticker,
                 earnings_dates=earnings_by_ticker.get(series.ticker.upper()),
                 vix=vix,
+                thresholds=thresholds,
             )
         except ValueError as exc:
             log.debug("pooled.skip_ticker", ticker=series.ticker, reason=str(exc))
@@ -209,7 +223,7 @@ def train_pooled_from_series(
 
     classifiers: dict[float, Any] = {}
     notes: list[str] = []
-    for thresh in THRESHOLDS:
+    for thresh in thresholds:
         labels = y_all[_target_col(thresh)]
         if labels.nunique() < 2:
             notes.append(f"threshold {thresh:+.2f} skipped (single class)")
@@ -239,4 +253,5 @@ def train_pooled_from_series(
         n_tickers=used,
         trained_at=datetime.now(UTC).isoformat(),
         notes=notes,
+        thresholds=list(thresholds),
     )

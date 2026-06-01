@@ -17,8 +17,15 @@ from typing import Literal
 from stock_agent.schemas.forecast import LargeMoveBreakdown, ScenarioForecast
 
 _TOL = 1e-9
-# k must align with a bucket boundary so the tails are exact sums of outer buckets.
-_ALLOWED_THRESHOLDS = (0.05, 0.10)
+
+
+def _positive_boundaries(forecast: ScenarioForecast) -> list[float]:
+    """The positive bucket boundaries of a forecast (the valid ``k`` values).
+
+    Derived from the forecast's own buckets, so it adapts to horizon-scaled schemes
+    (h20 -> {0.05, 0.10}; h60 -> {0.15, 0.30}) without a hardcoded list.
+    """
+    return sorted({b.lower for b in forecast.buckets if b.lower is not None and b.lower > 0})
 
 
 def large_move_breakdown(
@@ -28,7 +35,8 @@ def large_move_breakdown(
 
     Args:
         forecast: any model's bucketed forecast.
-        threshold: ``k`` (fractional); must be a bucket boundary (0.05 or 0.10).
+        threshold: ``k`` (fractional); must be one of the forecast's positive bucket
+            boundaries so the tails are exact sums of outer buckets.
         lean_ratio: a tail is the "lean" only if it carries at least this multiple
             of the other tail's mass; otherwise "balanced".
 
@@ -36,8 +44,9 @@ def large_move_breakdown(
     at/below ``-k``; ``P(|r|>k)`` their sum. ``lean`` is a plain-language summary
     of which tail dominates — NOT a directional call on the median.
     """
-    if not any(abs(threshold - t) < _TOL for t in _ALLOWED_THRESHOLDS):
-        raise ValueError(f"threshold must be one of {_ALLOWED_THRESHOLDS} (got {threshold})")
+    allowed = _positive_boundaries(forecast)
+    if not any(abs(threshold - t) < _TOL for t in allowed):
+        raise ValueError(f"threshold must be a bucket boundary {allowed} (got {threshold})")
 
     up = float(
         sum(

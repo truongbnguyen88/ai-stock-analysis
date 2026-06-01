@@ -35,6 +35,19 @@ def test_bucket_probabilities_sum_to_one() -> None:
     assert probs[DEFAULT_BUCKETS.index(("> +10%", 0.10, None))] == pytest.approx(2 / 3)
 
 
+def test_buckets_scale_with_horizon() -> None:
+    from stock_agent.forecasting.buckets import buckets_for_horizon, thresholds_for_horizon
+
+    assert thresholds_for_horizon(20) == [-0.10, -0.05, 0.0, 0.05, 0.10]
+    assert thresholds_for_horizon(30) == [-0.20, -0.10, 0.0, 0.10, 0.20]
+    assert thresholds_for_horizon(60) == [-0.30, -0.15, 0.0, 0.15, 0.30]
+    # labels reflect the scaled band
+    assert buckets_for_horizon(60)[-1][0] == "> +30%"
+    assert buckets_for_horizon(30)[0][0] == "< -20%"
+    # an unlisted horizon snaps to the nearest configured one
+    assert thresholds_for_horizon(50) == thresholds_for_horizon(60)
+
+
 def test_historical_forecast_known_values() -> None:
     fc = historical_forecast(
         [100.0, 110.0, 121.0, 108.9], horizon_days=1, ticker="X", as_of=date(2025, 1, 4)

@@ -44,6 +44,7 @@ def build_training_matrix(
     min_rows: int = 30,
     earnings_dates: list[Date] | None = None,
     vix: pd.Series | None = None,
+    thresholds: list[float] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build (X, y) for training ML models on a single stock's price history.
 
@@ -51,9 +52,14 @@ def build_training_matrix(
         X: feature DataFrame (rows = valid training dates)
         y: target DataFrame with binary columns for each threshold
 
+    ``thresholds`` are the return cut-points to build targets for; defaults to the
+    20-day scheme. Callers with a known horizon pass that horizon's thresholds
+    (``buckets.thresholds_for_horizon``) so the targets scale with horizon.
+
     Raises:
         ValueError: if fewer than ``min_rows`` valid training rows exist.
     """
+    thresholds = thresholds if thresholds is not None else THRESHOLDS
     features = build_price_feature_matrix(series, earnings_dates=earnings_dates, vix=vix)
 
     close = pd.Series(series.closes, index=features.index)
@@ -69,9 +75,9 @@ def build_training_matrix(
     # shifted series (structural check: feature index ≡ bar dates).
     assert list(features.index) == list(close.index), "feature index must match price dates"
 
-    # Build binary target columns.
+    # Build binary target columns (one per threshold, scaled to the horizon).
     targets = pd.DataFrame(index=features.index)
-    for thresh in THRESHOLDS:
+    for thresh in thresholds:
         col = _target_col(thresh)
         targets[col] = (fwd_return > thresh).astype(float)
 

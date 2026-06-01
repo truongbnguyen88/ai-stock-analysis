@@ -25,7 +25,8 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from stock_agent.features.assembler import THRESHOLDS, current_features_vector
+from stock_agent.features.assembler import current_features_vector
+from stock_agent.forecasting.buckets import BucketDef, buckets_for_horizon, make_prob_buckets
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.forecasting.pooled import PooledModel, default_model_path
 from stock_agent.logging_config import get_logger
@@ -40,27 +41,26 @@ log = get_logger(__name__)
 ModelType = Literal["logistic", "xgboost", "lightgbm", "random_forest"]
 
 
-def _exceedance_to_buckets(probs_gt: list[float]) -> list[ProbBucket]:
+def _exceedance_to_buckets(probs_gt: list[float], buckets: list[BucketDef]) -> list[ProbBucket]:
     """Convert P(return > θ) for each threshold into the six bucket probabilities.
 
     The thresholds partition the return space, so bucket probs are differences of
-    consecutive exceedance probs. Isotonicity is enforced first (P(return > θ)
-    must decrease as θ increases).
+    consecutive exceedance probs (structure is constant — 5 thresholds → 6 buckets —
+    regardless of the horizon-scaled boundary values). Isotonicity is enforced first
+    (P(return > θ) must decrease as θ increases).
     """
-    from stock_agent.forecasting.buckets import DEFAULT_BUCKETS
-
     # Enforce monotone-decreasing exceedance (higher threshold → lower prob).
     monotone = list(probs_gt)
     for i in range(1, len(monotone)):
         monotone[i] = min(monotone[i], monotone[i - 1])
 
     bucket_probs = [
-        1.0 - monotone[0],  # P(< -10%)
-        monotone[0] - monotone[1],  # P(-10% to -5%)
-        monotone[1] - monotone[2],  # P(-5% to 0%)
-        monotone[2] - monotone[3],  # P(0% to +5%)
-        monotone[3] - monotone[4],  # P(+5% to +10%)
-        monotone[4],  # P(> +10%)
+        1.0 - monotone[0],  # P(< -outer)
+        monotone[0] - monotone[1],  # P(-outer to -inner)
+        monotone[1] - monotone[2],  # P(-inner to 0)
+        monotone[2] - monotone[3],  # P(0 to +inner)
+        monotone[3] - monotone[4],  # P(+inner to +outer)
+        monotone[4],  # P(> +outer)
     ]
     # Clip and renormalize (isotonic clipping / float noise may drift off 1).
     bucket_probs = [max(0.0, p) for p in bucket_probs]
@@ -68,17 +68,20 @@ def _exceedance_to_buckets(probs_gt: list[float]) -> list[ProbBucket]:
     if total > 0:
         bucket_probs = [p / total for p in bucket_probs]
 
-    return [
-        ProbBucket(label=label, lower=lo, upper=hi, probability=p)
-        for (label, lo, hi), p in zip(DEFAULT_BUCKETS, bucket_probs, strict=True)
-    ]
+    return make_prob_buckets(bucket_probs, buckets)
 
 
 def _bucket_midpoint(b: ProbBucket) -> float:
-    """A representative return for a bucket (midpoint, with tail floors/caps)."""
-    lo = b.lower if b.lower is not None else -0.20
-    hi = b.upper if b.upper is not None else 0.20
-    return (lo + hi) / 2.0
+    """A representative return for a bucket; open tails use 1.5× the finite bound.
+
+    Scales with the bucket scheme (e.g. the ``> +10%`` tail → 0.15, the ``> +30%``
+    tail → 0.45) so expected-return estimates stay sensible at long horizons.
+    """
+    if b.lower is None:  # open bottom tail (< -outer)
+        return float(b.upper) * 1.5 if b.upper is not None else -0.20
+    if b.upper is None:  # open top tail (> +outer)
+        return float(b.lower) * 1.5
+    return (b.lower + b.upper) / 2.0
 
 
 class MLForecaster:
@@ -161,13 +164,14 @@ class MLForecaster:
         x_df = pd.DataFrame(
             [current_features_vector(series, earnings_dates=earnings_dates, vix=self._vix(series))]
         )
+        thresholds = model.effective_thresholds()
         probs_raw = model.predict_exceedance(x_df)
         probs_gt = [
             p if p is not None else self._base_rate(series, horizon_days, thresh)
-            for thresh, p in zip(THRESHOLDS, probs_raw, strict=True)
+            for thresh, p in zip(thresholds, probs_raw, strict=True)
         ]
 
-        buckets = _exceedance_to_buckets(probs_gt)
+        buckets = _exceedance_to_buckets(probs_gt, buckets_for_horizon(horizon_days))
         expected_return = sum(_bucket_midpoint(b) * b.probability for b in buckets)
         note = f"Pooled {self._model_type}: {model.n_tickers} tickers, {model.n_train_rows} rows."
 
