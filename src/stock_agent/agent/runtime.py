@@ -107,7 +107,11 @@ class AnthropicToolClient:
             import anthropic
 
             key = self._settings.require("anthropic_api_key", capability="agent chat")
-            self._client = anthropic.Anthropic(api_key=key)
+            self._client = anthropic.Anthropic(
+                api_key=key,
+                timeout=self._settings.llm_timeout_seconds,
+                max_retries=self._settings.llm_max_retries,
+            )
         return self._client
 
     def create(

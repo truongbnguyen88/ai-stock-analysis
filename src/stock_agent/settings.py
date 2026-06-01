@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     llm_model: str = "claude-sonnet-4-6"
     llm_max_tokens: int = 4096
+    # Per-request timeout (s) and auto-retry count for the Anthropic clients. A
+    # shorter timeout with several retries recovers better from transient stalls
+    # (e.g. a dropped/slow connection) than one long hang — the SDK retries
+    # timeouts/connection errors with exponential backoff.
+    llm_timeout_seconds: float = 120.0
+    llm_max_retries: int = 4
     # Self-critique passes for the news summarizer (Role A): after the first
     # draft, the model reviews its own summary for completeness/balance/evidence
     # and revises. 0 disables; 1 is the default (one reflection iteration).

@@ -53,3 +53,23 @@ def test_sdk_errors_wrapped_in_llm_error() -> None:
     fake = _FakeAnthropic(exc=RuntimeError("boom"))
     with pytest.raises(LLMError):
         _client(fake).complete_json(system="s", user="u")
+
+
+def test_client_constructed_with_timeout_and_retries(monkeypatch: Any) -> None:
+    # When no client is injected, the wrapper builds anthropic.Anthropic with the
+    # configured timeout/retries (resilience against transient stalls/drops).
+    import anthropic
+
+    captured: dict[str, Any] = {}
+
+    def fake_ctor(**kwargs: Any) -> _FakeAnthropic:
+        captured.update(kwargs)
+        return _FakeAnthropic("{}")
+
+    monkeypatch.setattr(anthropic, "Anthropic", fake_ctor)
+    settings = Settings(
+        _env_file=None, anthropic_api_key="k", llm_timeout_seconds=42.0, llm_max_retries=7
+    )
+    AnthropicClient(settings).complete_json(system="s", user="u")  # client=None -> constructs
+    assert captured["timeout"] == 42.0
+    assert captured["max_retries"] == 7

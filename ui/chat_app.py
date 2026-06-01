@@ -274,7 +274,14 @@ if prompt:
                     "Please rephrase your question or ask the agent to call a specific tool."
                 )
             except AgentError as exc:
-                response = f"⚠️ Agent error: {exc}"
+                low = str(exc).lower()
+                if "tim" in low or "connection" in low or "interrupt" in low:
+                    response = (
+                        "⚠️ The request timed out (often a temporary network hiccup or heavy "
+                        "background load). Please try again — your conversation is preserved."
+                    )
+                else:
+                    response = f"⚠️ Agent error: {exc}"
         st.markdown(response)
         for spec in charts:
             _render_chart(spec)
