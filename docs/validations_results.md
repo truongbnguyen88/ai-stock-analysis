@@ -28,6 +28,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-05-30 | ML improvement campaign — model / calibration / features / **horizon sweep** (h5–60) | ⚠️ plain logistic ≫ xgboost & ties MC at short h, but **no horizon where it beats the baselines** | **Adopt plain scaled logistic**; baselines stay primary at all horizons |
 | 2026-05-31 | **Big-move reframe** — P(\|r\|>k) magnitude target (h5/h20) | ✅ **First genuine ML win** — logistic beats baselines on big-move AUC everywhere + Brier at h5 (MSFT/KO) | Build a `prob_large_move` signal (logistic, calibrated); ML's real niche |
 | 2026-05-31 | **VIX feature A/B** + universe → 110 tickers (big-move, h5) | ➖ neutral-to-positive (Brier flat, +AUC; KO AUC 0.84→0.93) | **Keep** VIX (sound, leakage-safe, optionality in high-vol regimes); expand universe |
+| 2026-05-31 | **RF tuning + basket test** — tuned RandomForest vs logistic/lightgbm/baselines, 9-ticker vol spectrum (big-move, h20) | ✅ routing confirmed: `corr(vol, log−tree AUC gap) = -0.913`; RF only **ties** lightgbm | **Do NOT promote RF** (cost ≫ benefit); toolkit stays logistic + lightgbm |
 
 ---
 
@@ -198,3 +199,38 @@ python -m stock_agent backtest --ticker NVDA                    # baselines, sam
 **Finding — neutral-to-slightly-positive.** Brier exactly flat; **AUC up (+0.028 avg)**, driven by a real KO gain (0.84 → 0.93); log loss a hair worse (+0.008, all NVDA — within noise). Helps KO, neutral MSFT, slightly hurts NVDA → no consistent harm, a genuine discrimination gain. **Caveat:** the test window's recent years are *calm* (VIX ~15); VIX earns its keep in *high-vol* regimes (2020/2022), so its value here is likely **understated**.
 
 **Decision.** **Keep VIX** (16 → 18 features). It's a sound, leakage-safe, economically-motivated feature that doesn't worsen results and adds high-vol-regime optionality. Also kept: the **110-ticker universe** and two robustness fixes the bigger universe surfaced — provider **OHLC sanitization** (clamp split-adjustment artifacts) and a **resilient universe fetch** (skip any bad/short-history ticker instead of aborting). **Deferred:** employment/CPI (vintage alignment); re-tuning regularized lightgbm *with* VIX on the bigger universe.
+
+---
+
+## 2026-05-31 — RandomForest: tuning sweep + basket test (big-move, h20)
+
+**Question.** Two things the 3-ticker tests (NVDA/MSFT/KO) couldn't settle: (1) Does a *tuned* RandomForest beat the shipped trees enough to earn a place in the toolkit — or replace lightgbm? (2) Is the "trees on volatile, logistic on stable" split a **real** effect, or a base-rate artifact (stable names have few big moves → sparse positives starve the trees)?
+
+**Setup.**
+- **`class_weight="balanced"` was disqualified first** (basic RF probe): it wrecks calibration — NVDA big-move log-loss **3.93** vs ~1.0 for everything else, worst Brier on all 3 probe tickers. Same lesson as logistic; the production RF default (which still carried `balanced`) is a confirmed latent bug. All RF work below is **unbalanced**.
+- **Tuning sweep** (h20, 8 configs × {NVDA, KO}): best all-round config **`d12_l50_sqrt`** (`n_estimators=300, max_depth=12, min_samples_leaf=50, max_features="sqrt"`). Depth 12–16 / leaf 50–100 is the sweet spot; heavy regularization (`leaf=200`, `max_depth=None`) and `n=500` add nothing.
+- **Basket test** — that RF config vs logistic + regularized lightgbm + baselines on identical walk-forward folds. Big-move h20, |r|>5%, 11 folds, ~61 OOS/ticker. **Stable** {KO, PG, JNJ, WMT} vs **volatile** {NVDA, AMD, MRVL, SMCI, PLTR}. Per-ticker realized vol + big-move base rate recorded to test the base-rate confound.
+
+**Results** — big-move AUC (↑; 0.5 = no skill). `gap = logistic − max(lightgbm, RF)`.
+
+| ticker | vol | base % | logistic | lightgbm | RF `d12_l50` | gap |
+|---|---|---|---|---|---|---|
+| KO | low | 19.7 | **0.685** | 0.578 | 0.587 | +0.099 |
+| PG | 0.17 | 24.6 | **0.642** | 0.564 | 0.588 | +0.054 |
+| JNJ | 0.17 | 26.2 | **0.549** | 0.487 | 0.493 | +0.056 |
+| WMT | 0.22 | 36.1 | **0.650** | 0.613 | 0.607 | +0.037 |
+| NVDA | 0.47 | 65.6 | 0.636 | 0.650 | **0.675** | -0.039 |
+| AMD | 0.55 | 80.3 | 0.536 | 0.519 | 0.527 | +0.009 |
+| MRVL | 0.59 | 75.4 | 0.520 | 0.461 | **0.536** | -0.016 |
+| SMCI | 0.97 | 73.8 | 0.715 | **0.781** | 0.703 | -0.065 |
+| PLTR | 0.63 | 77.2 | 0.420 | 0.456 | 0.418 | -0.037 |
+
+**Headline:** `corr(realized vol, logistic−best-tree AUC gap) = -0.913` — a strong negative correlation: trees gain over logistic precisely as volatility rises.
+
+**Findings.**
+- **Routing confirmed at n=9.** Logistic wins **all 4 stable** names (AUC 0.55–0.69 vs trees 0.49–0.61); trees win **4 of 5 volatile** names. The −0.913 correlation upgrades the prior n=3 anecdote to a cross-sectional result.
+- **RF vs lightgbm = a wash.** RF wins more names (6/9 on AUC) and has lower Brier on most volatile names, **but** lightgbm wins the *most-volatile* name decisively (SMCI AUC 0.781 vs RF 0.703) — exactly the regime a tree model exists for. No uniform winner.
+- **Base-rate confound is real but doesn't overturn the routing.** Vol and big-move base rate are correlated (stable 20–36% positives vs volatile 66–80%), so the mechanism is partly "enough positives to learn nonlinearity," not purely a linear-vs-nonlinear boundary. Either way the routing (logistic for stable/sparse, trees for volatile/dense) holds.
+- **Weak absolute skill on several names.** AMD/MRVL/PLTR AUC ≈ 0.5 (PLTR < 0.5); the big-move edge is strong on NVDA/SMCI, marginal elsewhere. With ~61 OOS/ticker the per-ticker AUC CIs are wide (±~0.1) — trust the aggregate, not ±0.03 individual rankings.
+
+**Decision.** **Do NOT promote RandomForest.** It only *ties* lightgbm overall while costing ~10–50× more at inference (300 deep trees over ~100k+ rows vs histogram boosting) and losing the most-volatile name. A heavy model that merely ties a cheap, validated one doesn't earn the swap. **Production toolkit stands: logistic (stable names) + regularized lightgbm (volatile names);** RF is documented as competitive-but-not-cost-justified. Sequence / deep models stay parked. **Next:** post-hoc calibration scoped to the *shipped* toolkit (logistic + lightgbm) — measure OOS ECE, calibrate where ECE > ~0.05 (lightgbm the prime candidate; logistic likely already well-calibrated).
