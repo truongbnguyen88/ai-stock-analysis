@@ -91,6 +91,14 @@ Bracketed = primary deliverable.
 26. Forecast report section with CIs / VaR / calibration status.
 27. Coverage pass; finalize `docs/` (`ARCHITECTURE.md`, `MODELING.md`) + `README.md`.
 
+## Active ML work queue (post-V1 ML track)
+
+Sequenced pipeline beyond the original phases — the ML-quality + MLOps track. Status as of **2026-05-31**. Empirical results land in [validations_results.md](validations_results.md).
+
+1. **[IN PROGRESS] Large-scale lightgbm hyperparameter tuning.** Random search (~100 configs, ~13-D space) on the big-move target (h20, |r|>5%), objective = ROC AUC (calibration-invariant — calibration is fixed separately in step 2). **Ticker-level meta-validation against selection bias:** tune on a volatile validation basket, report the winner *once* on a **disjoint held-out basket** {AVGO, MU, ARM, TSLA, VRT}. Funnel: screen ~100 → validate top-12 → held-out test (+h5 spot-check). **Adopt the tuned config only if it beats the incumbent on held-out**; then retrain artifacts. Incumbent included as config #0.
+2. **[NEXT] Post-hoc calibration — logistic + tuned lightgbm.** Measure OOS ECE first; calibrate only where ECE > ~0.05 (lightgbm the prime candidate; logistic likely already fine). **Per-threshold isotonic + monotone-envelope** across the 5 bucket boundaries (prevents negative buckets) + **nested-holdout** fit inside each walk-forward fold (leakage-safe). Validate calibrated-vs-uncalibrated ECE / Brier / log-loss in-loop — **AUC must not move** (the invariant check). Baselines are already empirical-frequency-calibrated (out of scope); RF not in scope (not promoted).
+3. **[PLANNED] Scheduled monthly retraining + validate-then-promote.** A single `train --all` entrypoint (`{logistic, lightgbm} × {h5, h20, h60}`) + a `launchd`/cron monthly schedule. Job: **refresh data → retrain ML artifacts → refit calibrators → re-backtest everything (incl. baselines) → promote only if not worse → log.** Baselines are stateless → *re-validated, not retrained*. Versioned artifacts (training `as_of` in metadata) for rollback; the promote gate guards against shipping a degraded model from a bad data month. Realizes the **MLOps (drift monitoring, automated calibration re-checks)** + **Serving (scheduled refresh)** Future items above.
+
 ## CLI / chat surface
 
 ```bash
