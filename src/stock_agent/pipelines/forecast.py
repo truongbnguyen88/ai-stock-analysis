@@ -13,7 +13,7 @@ from stock_agent.settings import Settings
 
 _PRICE_LOOKBACK_DAYS = 420
 
-_ML_TYPES = ("logistic", "xgboost", "lightgbm", "random_forest")
+_ML_TYPES = ("logistic", "lightgbm")
 
 # Available forecaster names (used for the CLI/agent enum). ML models are built
 # per call so they can fetch earnings dates via the registry at inference.

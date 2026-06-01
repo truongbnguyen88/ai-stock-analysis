@@ -45,7 +45,7 @@ def test_train_pooled_produces_model() -> None:
     assert model.classifiers  # at least one threshold trained
 
 
-@pytest.mark.parametrize("model_type", ["logistic", "xgboost", "lightgbm", "random_forest"])
+@pytest.mark.parametrize("model_type", ["logistic", "lightgbm"])
 def test_pooled_forecast_buckets_valid(model_type: str) -> None:
     model = train_pooled_from_series(
         _universe(),
@@ -68,9 +68,9 @@ def test_pooled_forecast_buckets_valid(model_type: str) -> None:
 
 def test_pooled_save_load_roundtrip(tmp_path: Path) -> None:
     model = train_pooled_from_series(
-        _universe(), horizon_days=20, model_type="xgboost", min_total_rows=100
+        _universe(), horizon_days=20, model_type="lightgbm", min_total_rows=100
     )
-    path = tmp_path / "pooled_xgboost_h20.joblib"
+    path = tmp_path / "pooled_lightgbm_h20.joblib"
     model.save(path)
     assert path.exists()
 
@@ -78,28 +78,30 @@ def test_pooled_save_load_roundtrip(tmp_path: Path) -> None:
     assert loaded.n_train_rows == model.n_train_rows
     assert loaded.feature_cols == model.feature_cols
 
-    fc = MLForecaster("xgboost", model=loaded).forecast(_noisy_series("X", seed=5), horizon_days=20)
+    fc = MLForecaster("lightgbm", model=loaded).forecast(
+        _noisy_series("X", seed=5), horizon_days=20
+    )
     assert sum(b.probability for b in fc.buckets) == pytest.approx(1.0, abs=1e-6)
 
 
 def test_ml_falls_back_to_historical_sim_without_artifact(tmp_path: Path) -> None:
     # Empty models_dir → no artifact → graceful fallback with an explanatory note.
-    fc = MLForecaster("xgboost", models_dir=tmp_path).forecast(
+    fc = MLForecaster("lightgbm", models_dir=tmp_path).forecast(
         _noisy_series("X", seed=1), horizon_days=20
     )
-    assert "ml_xgboost" in fc.model_name
+    assert "ml_lightgbm" in fc.model_name
     assert fc.notes is not None and "historical_sim" in fc.notes
 
 
 def test_ml_loads_artifact_from_disk(tmp_path: Path) -> None:
     # Train + persist at the canonical path, then a fresh forecaster loads it.
     model = train_pooled_from_series(
-        _universe(), horizon_days=15, model_type="xgboost", min_total_rows=100
+        _universe(), horizon_days=15, model_type="lightgbm", min_total_rows=100
     )
-    (tmp_path / "pooled_xgboost_h15.joblib").parent.mkdir(parents=True, exist_ok=True)
-    model.save(tmp_path / "pooled_xgboost_h15.joblib")
+    (tmp_path / "pooled_lightgbm_h15.joblib").parent.mkdir(parents=True, exist_ok=True)
+    model.save(tmp_path / "pooled_lightgbm_h15.joblib")
 
-    fc = MLForecaster("xgboost", models_dir=tmp_path).forecast(
+    fc = MLForecaster("lightgbm", models_dir=tmp_path).forecast(
         _noisy_series("NVDA", seed=42), horizon_days=15
     )
     assert fc.notes is not None and "Pooled" in fc.notes  # used the artifact, not fallback

@@ -13,6 +13,7 @@ import typer
 
 if TYPE_CHECKING:
     from stock_agent.schemas.backtest import BacktestResult
+    from stock_agent.settings import Settings
 
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
@@ -109,7 +110,11 @@ def forecast(
             typer.echo(f"\n  ⚠  {fc.notes}")
 
 
-_ML_MODEL_TYPES = ("logistic", "xgboost", "lightgbm", "random_forest")
+_ML_MODEL_TYPES = ("logistic", "lightgbm")
+# Production toolkit (see docs/validations_results.md): logistic (stable names) +
+# tuned lightgbm (volatile names), at the swing-trade horizons. h5 is dropped.
+_PROD_MODELS: tuple[str, ...] = ("logistic", "lightgbm")
+_PROD_HORIZONS: tuple[int, ...] = (20, 30, 60)
 
 
 @app.command()
@@ -123,17 +128,33 @@ def train(
     universe: Annotated[
         Path, typer.Option("--universe", help="Universe file (one ticker per line)")
     ] = Path("configs/universe.txt"),
+    train_all: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Train every production artifact (logistic + lightgbm at 20/30/60) and drop h5.",
+        ),
+    ] = False,
 ) -> None:
-    """Train a pooled ML model over the universe and persist the artifact."""
-    if model not in _ML_MODEL_TYPES:
-        typer.echo(f"--model must be one of {list(_ML_MODEL_TYPES)}")
-        raise typer.Exit(code=1)
+    """Train a pooled ML model over the universe and persist the artifact.
+
+    With ``--all``, retrains the whole production toolkit (logistic + lightgbm at the
+    20/30/60-day horizons) and removes the stale h5 artifacts.
+    """
     if not universe.exists():
         typer.echo(f"Universe file not found: {universe}")
         raise typer.Exit(code=1)
 
     settings = get_settings()
     configure_logging(settings)
+
+    if train_all:
+        _train_all(universe, settings)
+        return
+
+    if model not in _ML_MODEL_TYPES:
+        typer.echo(f"--model must be one of {list(_ML_MODEL_TYPES)}")
+        raise typer.Exit(code=1)
 
     from stock_agent.forecasting.pooled import ModelType
     from stock_agent.forecasting.train_pooled import train_pooled
@@ -148,6 +169,38 @@ def train(
     if trained.notes:
         for note in trained.notes:
             typer.echo(f"  note: {note}")
+
+
+def _train_all(universe: Path, settings: Settings) -> None:
+    """Retrain the production toolkit (model × horizon) and drop stale h5 artifacts."""
+    from stock_agent.forecasting.pooled import ModelType, default_model_path
+    from stock_agent.forecasting.train_pooled import train_pooled
+
+    typer.echo(
+        f"Training {list(_PROD_MODELS)} × horizons {list(_PROD_HORIZONS)} over {universe} …\n"
+    )
+    for model in _PROD_MODELS:
+        model_type: ModelType = model  # type: ignore[assignment]
+        for h in _PROD_HORIZONS:
+            typer.echo(f"→ {model} h{h} …")
+            trained, path = train_pooled(universe, settings, model_type=model_type, horizon_days=h)
+            typer.echo(
+                f"  {trained.n_tickers} tickers, {trained.n_train_rows:,} rows, "
+                f"{len(trained.classifiers)} thresholds → {path}"
+            )
+
+    # Drop stale h5 artifacts — h5 is too short-term for the swing-trade horizons,
+    # so a forecast at h5 should fall back to the baseline, not a stale model.
+    models_dir = Path(settings.output_dir) / "models"
+    removed = []
+    for model in _PROD_MODELS:
+        p = default_model_path(models_dir, model, 5)
+        if p.exists():
+            p.unlink()
+            removed.append(p.name)
+    if removed:
+        typer.echo(f"\nDropped stale h5 artifacts: {', '.join(removed)}")
+    typer.echo("\nDone — production toolkit retrained.")
 
 
 def _print_backtest(result: BacktestResult) -> None:

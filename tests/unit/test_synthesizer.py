@@ -38,7 +38,7 @@ def _forecast() -> ScenarioForecast:
         ticker="NVDA",
         as_of=date(2025, 1, 31),
         horizon_days=20,
-        model_name="ml_xgboost",
+        model_name="ml_lightgbm",
         buckets=buckets,
         expected_return=0.045,
         upside_prob=0.68,

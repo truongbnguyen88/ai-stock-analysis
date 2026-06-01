@@ -12,7 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "truongbnguyen88" }]
 
 # Core runtime deps only. Heavier deps (pandas, numpy, yfinance, anthropic,
-# scikit-learn, xgboost, lightgbm, typer, httpx, ...) are added in the phase that
+# scikit-learn, lightgbm, typer, httpx, ...) are added in the phase that
 # first needs them — keeps installs light and the dependency surface honest.
 dependencies = [
     "pydantic>=2.6",
@@ -28,9 +28,8 @@ dependencies = [
     # Phase 4 — CLI
     "typer>=0.12",       # CLI framework (analyze/forecast/backtest commands)
     # Phase 5 — ML models
-    "scikit-learn>=1.4", # logistic regression, random forest, imputation
-    "xgboost>=2.0",      # gradient-boosted classifier
-    "lightgbm>=4.0",     # faster gradient boosting
+    "scikit-learn>=1.4", # logistic regression, imputation, isotonic calibration
+    "lightgbm>=4.0",     # gradient-boosted classifier (tuned big-move model)
     # UI
     "streamlit>=1.35",   # browser-based chat frontend
     # Export (chat summary -> document)
@@ -74,7 +73,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "xgboost.*", "lightgbm.*", "joblib.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -96,7 +96,8 @@ def test_horizon_out_of_bounds_is_rejected() -> None:
 
 
 def test_ml_model_is_rejected_with_cli_hint() -> None:
-    out = _executor().execute("get_calibration", {"ticker": "TST", "model": "xgboost"})
+    # ML models need an offline per-fold retrain → rejected by the chat backtest tools.
+    out = _executor().execute("get_calibration", {"ticker": "TST", "model": "lightgbm"})
     assert "error" in out
     assert "offline" in out["error"].lower() or "cli" in out["error"].lower()
 
@@ -164,11 +165,21 @@ def test_get_large_move_tool_shape() -> None:
 
 
 def test_get_large_move_rejects_bad_threshold() -> None:
+    # At h20 the valid edges are 5 and 10; 7 is not a boundary.
     out = _executor().execute("get_large_move", {"ticker": "TST", "threshold_pct": 7})
-    assert "error" in out and "5 or 10" in out["error"]
+    assert "error" in out and "[5, 10]" in out["error"]
+
+
+def test_get_large_move_default_k_scales_with_horizon() -> None:
+    # Omitting threshold_pct uses the horizon's inner boundary: 5 at h20, 15 at h60.
+    ex = _executor()
+    out20 = ex.execute("get_large_move", {"ticker": "TST", "horizon_days": 20})
+    assert out20.get("threshold_pct") == 5
+    out60 = ex.execute("get_large_move", {"ticker": "TST", "horizon_days": 60})
+    assert out60.get("threshold_pct") == 15
 
 
 def test_get_large_move_rejects_non_ml_model() -> None:
     # Only the two validated big-move ML models are allowed (logistic / lightgbm).
-    out = _executor().execute("get_large_move", {"ticker": "TST", "model": "xgboost"})
+    out = _executor().execute("get_large_move", {"ticker": "TST", "model": "historical_sim"})
     assert "error" in out and "logistic" in out["error"] and "lightgbm" in out["error"]

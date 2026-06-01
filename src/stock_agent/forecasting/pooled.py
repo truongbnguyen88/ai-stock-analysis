@@ -32,8 +32,8 @@ from stock_agent.schemas.market import PriceSeries
 
 log = get_logger(__name__)
 
-ModelType = Literal["logistic", "xgboost", "lightgbm", "random_forest"]
-_IMPUTED_MODELS = ("logistic", "random_forest")  # tree boosters handle NaN natively
+ModelType = Literal["logistic", "lightgbm"]
+_IMPUTED_MODELS = ("logistic",)  # lightgbm handles NaN natively
 
 
 def _make_classifier(model_type: ModelType) -> Any:
@@ -56,44 +56,34 @@ def _make_classifier(model_type: ModelType) -> Any:
             StandardScaler(),
             LogisticRegression(max_iter=2000),
         )
-    if model_type == "xgboost":
-        from xgboost import XGBClassifier
-
-        return XGBClassifier(
-            n_estimators=300,
-            max_depth=4,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            eval_metric="logloss",
-            n_jobs=-1,
-        )
     if model_type == "lightgbm":
         from lightgbm import LGBMClassifier
 
-        # Regularized config (validated on big-move, see docs/validations_results.md):
-        # the un-regularized default overfit → overconfident. With subsampling + L1/L2 +
-        # min_child_samples it's the best big-move model for HIGH-VOL names (beats logistic
-        # and the baseline on NVDA), while logistic stays best for stable names.
+        # Large-scale tuning winner (config #38; see docs/validations_results.md):
+        # random search over ~13 hyperparameters with ticker-level meta-validation
+        # (tuned on a volatile basket, confirmed on a DISJOINT held-out basket so the
+        # +AUC edge over the prior config isn't selection bias). It regularizes via
+        # strong L2 + aggressive column subsampling + path-smoothing rather than heavy
+        # leaf-size capping. Best big-move model for HIGH-VOL names; logistic still wins
+        # stable ones.
         return LGBMClassifier(
-            n_estimators=300,
-            max_depth=4,
-            num_leaves=15,
-            learning_rate=0.03,
-            min_child_samples=300,
-            subsample=0.8,
+            n_estimators=400,
+            max_depth=-1,
+            num_leaves=47,
+            learning_rate=0.0238,
+            min_child_samples=50,
+            subsample=0.98,
             subsample_freq=1,
-            colsample_bytree=0.7,
-            reg_lambda=8.0,
-            reg_alpha=1.0,
+            colsample_bytree=0.56,
+            reg_lambda=9.041,
+            reg_alpha=0.023,
+            min_split_gain=0.1,
+            min_child_weight=0.2254,
+            max_bin=127,
+            path_smooth=1.0,
             n_jobs=-1,
             verbose=-1,
-        )
-    if model_type == "random_forest":
-        from sklearn.ensemble import RandomForestClassifier
-
-        return RandomForestClassifier(
-            n_estimators=300, max_depth=8, class_weight="balanced", n_jobs=-1
+            random_state=42,
         )
     raise ValueError(f"unknown model_type: {model_type}")
 
@@ -106,7 +96,7 @@ class PooledModel:
     horizon_days: int
     feature_cols: list[str]
     classifiers: dict[float, Any]
-    imputer: Any | None  # fitted SimpleImputer for logistic/RF; None for boosters
+    imputer: Any | None  # fitted SimpleImputer for logistic; None for lightgbm
     n_train_rows: int
     n_tickers: int
     trained_at: str
@@ -158,7 +148,7 @@ def train_pooled_from_series(
     series_list: Sequence[PriceSeries],
     *,
     horizon_days: int,
-    model_type: ModelType = "xgboost",
+    model_type: ModelType = "logistic",
     min_rows_per_ticker: int = 60,
     min_total_rows: int = 500,
     earnings_by_ticker: dict[str, list[Date]] | None = None,

@@ -190,8 +190,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "description": (
                         "Forecast model: 'historical_sim' (empirical baseline, default), "
                         "'monte_carlo_gbm'/'monte_carlo_bootstrap' (simulation), or ML "
-                        "('xgboost'/'lightgbm'/'logistic'/'random_forest' — need a trained "
-                        "artifact, else fall back to the baseline with a note)."
+                        "('logistic'/'lightgbm' — need a trained artifact, else fall back "
+                        "to the baseline with a note)."
                     ),
                 },
             },
@@ -265,8 +265,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "This is where the ML model has genuine, backtested skill — predicting big moves / "
             "volatility — unlike plain direction, which is ~a coin flip. Use for 'chance of a big "
             "move', 'how volatile / could it spike or crash', 'is a large swing likely'. Defaults "
-            "to the logistic model; k is 5% or 10%. The large-move total is the most reliable "
-            "part; the up/down split shows which tail leans but is less certain."
+            "to the logistic model; k scales with horizon (default 5%/10%/15% at 20/30/60d) — omit "
+            "threshold_pct for that default. The large-move total is the most reliable part; the "
+            "up/down split shows which tail leans but is less certain."
         ),
         "input_schema": {
             "type": "object",
@@ -279,9 +280,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
                 "threshold_pct": {
                     "type": "integer",
-                    "enum": [5, 10],
-                    "default": 10,
-                    "description": "How big is 'big' — a 5% or 10% move (a bucket edge).",
+                    "description": (
+                        "How big is 'big' — a percent move that must be a bucket edge for the "
+                        "horizon (20d: 5 or 10; 30d: 10 or 20; 60d: 15 or 30). OMIT to use the "
+                        "horizon's default inner edge (5/10/15 at 20/30/60d)."
+                    ),
                 },
                 "model": {
                     "type": "string",
@@ -438,9 +441,6 @@ class ToolExecutor:
     def _tool_get_large_move(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()
         horizon = int(args.get("horizon_days", 20))
-        threshold_pct = int(args.get("threshold_pct", 10))
-        if threshold_pct not in (5, 10):
-            return {"error": "threshold_pct must be 5 or 10 (the model's bucket boundaries)"}
         # The two validated big-move models: logistic (default; best for stable names) and
         # regularized lightgbm (better for volatile names). Both fall back to the baseline
         # (with a note) at horizons without a trained artifact.
@@ -450,6 +450,20 @@ class ToolExecutor:
         forecast = run_forecast(
             ticker, horizon, model_name=model, settings=self._settings, registry=self._registry
         )
+        # Valid thresholds are the forecast's positive bucket boundaries, which scale
+        # with horizon (h20 -> 5/10, h30 -> 10/20, h60 -> 15/30). Default to the inner
+        # boundary for the horizon so "big" stays informative as the horizon grows.
+        valid_pcts = sorted(
+            {round(b.lower * 100) for b in forecast.buckets if b.lower is not None and b.lower > 0}
+        )
+        threshold_pct = int(args.get("threshold_pct", valid_pcts[0] if valid_pcts else 10))
+        if threshold_pct not in valid_pcts:
+            return {
+                "error": (
+                    f"threshold_pct must be one of {valid_pcts} at horizon {horizon} "
+                    "(bucket boundaries scale with horizon)."
+                )
+            }
         breakdown = large_move_breakdown(forecast, threshold=threshold_pct / 100.0)
         result = breakdown.model_dump(mode="json")
         result["threshold_pct"] = threshold_pct
@@ -457,8 +471,9 @@ class ToolExecutor:
         # (backtested AUC/calibration) is the planned next step.
         result["reliability"] = (
             "The large-move total P(|r|>k) is the model's most reliable signal in backtesting; "
-            "the up/down split shows which tail leans but is rarer and noisier. Strongest at "
-            "short horizons (<= 20 days). A magnitude signal, not a directional call on the median."
+            "the up/down split shows which tail leans but is rarer and noisier. The threshold k "
+            "scales with horizon (5% at 20d, 10% at 30d, 15% at 60d) so it stays informative. "
+            "A magnitude signal, not a directional call on the median."
         )
         if forecast.notes:
             result["model_note"] = forecast.notes

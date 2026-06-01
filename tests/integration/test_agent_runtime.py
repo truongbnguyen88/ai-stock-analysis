@@ -188,9 +188,9 @@ def test_run_forecast_tool_routes_model_selection() -> None:
     assert "error" not in mc
     assert mc.get("model_name") == "monte_carlo_gbm"
     # ML without a trained artifact falls back to the baseline but keeps its name.
-    ml = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "xgboost"})
+    ml = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "lightgbm"})
     assert "error" not in ml
-    assert ml.get("model_name") == "ml_xgboost"
+    assert ml.get("model_name") == "ml_lightgbm"
 
 
 def _executor_with_news() -> ToolExecutor:

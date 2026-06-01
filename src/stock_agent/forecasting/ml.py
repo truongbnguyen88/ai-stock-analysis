@@ -13,7 +13,7 @@ Design:
   - Fallback: if no trained artifact exists for the (model_type, horizon), falls
     back to the historical-simulation baseline with a note telling you to train.
 
-Train an artifact with:  python -m stock_agent train --model xgboost --horizon 20
+Train an artifact with:  python -m stock_agent train --model lightgbm --horizon 20
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from stock_agent.settings import get_settings
 
 log = get_logger(__name__)
 
-ModelType = Literal["logistic", "xgboost", "lightgbm", "random_forest"]
+ModelType = Literal["logistic", "lightgbm"]
 
 
 def _exceedance_to_buckets(probs_gt: list[float], buckets: list[BucketDef]) -> list[ProbBucket]:
@@ -89,7 +89,7 @@ class MLForecaster:
 
     def __init__(
         self,
-        model_type: ModelType = "xgboost",
+        model_type: ModelType = "logistic",
         *,
         models_dir: Path | None = None,
         model: PooledModel | None = None,

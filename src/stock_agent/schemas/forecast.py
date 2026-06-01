@@ -37,7 +37,7 @@ class ScenarioForecast(BaseModel):
     ticker: str
     as_of: Date
     horizon_days: int = Field(gt=0)  # trading days
-    model_name: str  # e.g. "historical_sim", "monte_carlo_gbm", "xgboost"
+    model_name: str  # e.g. "historical_sim", "monte_carlo_gbm", "ml_lightgbm"
     buckets: list[ProbBucket]
     expected_return: float  # fractional
 

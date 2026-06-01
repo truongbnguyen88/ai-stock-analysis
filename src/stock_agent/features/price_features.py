@@ -61,7 +61,7 @@ def build_price_feature_matrix(
     Mostly price-derived; ``days_to_next_earnings`` is an earnings-cadence feature
     that is NaN unless ``earnings_dates`` is supplied. NaN is correct for rows
     where a lookback window is not yet full (e.g. MA200 on a 100-bar series).
-    XGBoost handles NaN natively; scikit-learn models receive imputed values.
+    LightGBM handles NaN natively; scikit-learn models (logistic) receive imputed values.
     """
     frame = to_ohlcv_frame(series)
     close = adjusted_close(frame)

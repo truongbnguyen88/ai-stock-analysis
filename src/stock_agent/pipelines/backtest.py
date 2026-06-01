@@ -37,7 +37,7 @@ STATELESS_MODELS: tuple[str, ...] = (
     "monte_carlo_gbm",
     "monte_carlo_bootstrap",
 )
-_ML_MODELS: tuple[str, ...] = ("logistic", "xgboost", "lightgbm", "random_forest")
+_ML_MODELS: tuple[str, ...] = ("logistic", "lightgbm")
 _BACKTEST_LOOKBACK_DAYS = 2200  # ~6y: warmup + enough OOS folds
 _MC_PATHS = 5000  # fewer paths than live (snappier; bucket probs stable enough)
 

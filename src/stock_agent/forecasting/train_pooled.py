@@ -70,7 +70,7 @@ def train_pooled(
     universe_path: Path,
     settings: Settings,
     *,
-    model_type: ModelType = "xgboost",
+    model_type: ModelType = "logistic",
     horizon_days: int = 20,
     registry: ProviderRegistry | None = None,
 ) -> tuple[PooledModel, Path]:
