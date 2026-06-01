@@ -9,6 +9,7 @@ This is NOT financial advice.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -24,9 +25,6 @@ st.set_page_config(
     layout="wide",
 )
 
-import altair as alt
-import pandas as pd
-
 from stock_agent.agent.runtime import AgentError, AgentGroundingError, AnthropicToolClient, run_agent
 from stock_agent.agent.tools import ToolExecutor
 from stock_agent.chat.history import (
@@ -40,56 +38,35 @@ from stock_agent.llm.client import AnthropicClient
 from stock_agent.settings import get_settings
 from stock_agent.reports.export import EXPORT_META, export_summary
 from stock_agent.viz.charts import ChartSpec, charts_for
+from stock_agent.viz.render import to_altair, to_png
 
 
 def _render_chart(spec: ChartSpec) -> None:
     """Render one ChartSpec as an Altair chart alongside the agent's text."""
-    st.markdown(f"**{spec.title}**")
-    y_axis = alt.Axis(format="%") if spec.y_is_percent else alt.Axis()
-    y_enc = alt.Y(f"{spec.y}:Q", axis=y_axis, title=None)
-    x_sort = list(spec.x_sort) if spec.x_sort else "ascending"
-
-    if spec.kind == "reliability":
-        # Predicted vs realized, with the y=x ideal as a dashed reference.
-        base = alt.Chart(spec.data)
-        pts = base.mark_circle(size=90, color="#4c78a8").encode(
-            x=alt.X("predicted:Q", scale=alt.Scale(domain=[0, 1]), title="Predicted"),
-            y=alt.Y("realized:Q", scale=alt.Scale(domain=[0, 1]), title="Realized"),
-        )
-        ideal = (
-            alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]}))
-            .mark_line(strokeDash=[5, 5], color="gray")
-            .encode(x="x:Q", y="y:Q")
-        )
-        chart: alt.Chart = (ideal + pts)
-    elif spec.kind == "grouped_bar":
-        chart = alt.Chart(spec.data).mark_bar().encode(
-            x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
-            y=y_enc,
-            color=alt.Color(f"{spec.color}:N", title=None),
-            xOffset=f"{spec.color}:N",
-            tooltip=list(spec.data.columns),
-        )
-    else:  # "bar"
-        chart = alt.Chart(spec.data).mark_bar(color="#4c78a8").encode(
-            x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
-            y=y_enc,
-            tooltip=list(spec.data.columns),
-        )
-
-    st.altair_chart(chart.properties(height=260), use_container_width=True)
+    st.altair_chart(to_altair(spec).properties(height=260), use_container_width=True)
     if spec.caption:
         st.caption(spec.caption)
 
 
 @st.cache_data(show_spinner=False)
-def _export_bytes(text: str, fmt: str) -> bytes:
-    """Render an answer to document bytes (cached per text+format across reruns)."""
-    return export_summary(text, fmt)
+def _chart_pngs(charts_json: str) -> list[bytes]:
+    """Render a turn's charts to PNG bytes (cached per chart set; vl-convert)."""
+    if not charts_json or charts_json == "[]":
+        return []
+    specs = [ChartSpec.from_dict(d) for d in json.loads(charts_json)]
+    return [to_png(s) for s in specs]
 
 
-def _render_export(text: str, idx: int) -> None:
-    """PDF / Word / Markdown download buttons for an assistant answer."""
+@st.cache_data(show_spinner=False)
+def _export_bytes(text: str, fmt: str, charts_json: str) -> bytes:
+    """Render an answer (text + chart figures) to document bytes; cached across reruns."""
+    images = _chart_pngs(charts_json) if fmt in ("pdf", "docx") else None
+    return export_summary(text, fmt, images=images)
+
+
+def _render_export(text: str, charts: list[ChartSpec], idx: int) -> None:
+    """PDF / Word / Markdown download buttons for an assistant answer (with figures)."""
+    charts_json = json.dumps([c.to_dict() for c in charts])
     with st.expander("📄 Export this summary"):
         cols = st.columns(3)
         labels = {"pdf": "PDF", "docx": "Word", "md": "Markdown"}
@@ -97,7 +74,7 @@ def _render_export(text: str, idx: int) -> None:
             mime, ext = EXPORT_META[fmt]
             col.download_button(
                 labels[fmt],
-                data=_export_bytes(text, fmt),
+                data=_export_bytes(text, fmt, charts_json),
                 file_name=f"stock_summary.{ext}",
                 mime=mime,
                 key=f"dl_{idx}_{fmt}",
@@ -251,7 +228,7 @@ for idx, msg in enumerate(st.session_state.messages):
         for spec in msg.get("charts", []):
             _render_chart(spec)
         if msg["role"] == "assistant":
-            _render_export(msg["content"], idx)
+            _render_export(msg["content"], msg.get("charts", []), idx)
 
 # ---- handle quick-starter injection ----
 if "pending_prompt" in st.session_state:
@@ -312,7 +289,7 @@ if prompt:
         for spec in charts:
             _render_chart(spec)
         # Export buttons for this answer (idx = the index it gets once appended below).
-        _render_export(response, len(st.session_state.messages))
+        _render_export(response, charts, len(st.session_state.messages))
 
     # Persist text + charts so the turn re-renders intact on later reruns.
     st.session_state.messages.append({"role": "assistant", "content": response, "charts": charts})

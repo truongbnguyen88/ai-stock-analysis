@@ -36,6 +36,7 @@ dependencies = [
     # Export (chat summary -> document)
     "fpdf2>=2.7",        # pure-Python PDF (no cairo/pango/LaTeX system deps)
     "python-docx>=1.1",  # pure-Python DOCX
+    "vl-convert-python>=1.0",  # Vega-Lite -> PNG for chart images in exports (no browser)
 ]
 
 [project.optional-dependencies]
