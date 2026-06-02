@@ -31,6 +31,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-05-31 | **RF tuning + basket test** — tuned RandomForest vs logistic/lightgbm/baselines, 9-ticker vol spectrum (big-move, h20) | ✅ routing confirmed: `corr(vol, log−tree AUC gap) = -0.913`; RF only **ties** lightgbm | **Do NOT promote RF** (cost ≫ benefit); toolkit stays logistic + lightgbm |
 | 2026-06-01 | **Large-scale lightgbm tuning** (~100 configs, ticker-level meta-validation) + **horizon-scaled buckets** | ✅ config #38 wins held-out h20 (+0.023 AUC); scaling balances the target for volatile names | Adopt #38; ship scaled buckets (h20 ±5/10, h30 ±10/20, h60 ±15/30); drop h5; drop xgboost/RF |
 | 2026-06-01 | **Re-validation on scaled buckets** (volatile NVDA/SMCI/TSLA; h20/30/60 at inner k) | ✅ ML skill at h20/h30 (AUC 0.59–0.67 > baselines); ⚠️ both models **miscalibrated** (ECE 0.10–0.32); h60 unmeasurable (n=19) | **Calibrate logistic AND lightgbm** (Step 3); flag h60 big-move low-confidence |
+| 2026-06-02 | **Calibration A/B** — prefit-isotonic vs `CalibratedClassifierCV(cv=3)` (volatile, h20/h30) | prefit helped logistic but **hurt lightgbm**; **cv=3 improves Brier in all cells** + fixes lightgbm ECE | Ship calibration (cv=3) for **both** models; default `calibrate_ml=True` |
 
 ---
 
@@ -273,3 +274,27 @@ python -m stock_agent backtest --ticker NVDA                    # baselines, sam
 - **Both models are miscalibrated** (ECE 0.10 → 0.18 → 0.32, worsening with horizon), while baselines are well-calibrated (0.06–0.15). Tellingly, **ML Brier does not beat the baselines despite higher AUC** (h20: lgb 0.291 vs baseline 0.245) — real resolution wasted by overconfidence. (Earlier guess that logistic was "probably fine" was **wrong** — it's miscalibrated too.)
 
 **Decision.** **Calibrate BOTH logistic and lightgbm** (Step 3: per-threshold isotonic + monotone-envelope + nested holdout). Priority h20 + h30 (skill + miscalibrated → calibration recovers Brier without touching AUC). h60: apply for honesty but flag the big-move signal as low-confidence. Baselines: already calibrated, left alone.
+
+---
+
+## 2026-06-02 — Calibration A/B: prefit-isotonic vs CalibratedClassifierCV(cv=3)
+
+**Question.** Does post-hoc calibration of the pooled ML models actually cut OOS ECE/Brier without destroying discrimination? And which calibration strategy? Walk-forward backtest, `calibrate=False` vs `True`, on the volatile basket (NVDA/SMCI) at h20/h30 (where ML has skill), each horizon at its inner `k`.
+
+**Round 1 — manual prefit isotonic (fit classifier on 80%, isotonic on the held-out 20%).** Mixed → **net negative**: it helped logistic but **hurt lightgbm** (means, raw→cal): lightgbm h20 ECE **0.117→0.176**, Brier 0.233→0.261; h30 ECE 0.162→0.239. Diagnosis: (1) the 80/20 split costs the booster 20% of its training data, and (2) isotonic (non-parametric, high-variance) **overfits the thin per-fold holdout**. Logistic's smooth outputs + lower variance tolerated it; lightgbm did not.
+
+**Round 2 — `CalibratedClassifierCV(cv=3, method="isotonic")`.** Refits the base on k-1 folds, fits isotonic on the held fold, repeats, averages → uses **all** data (no holdout loss) and the **averaged** calibrator is robust on small folds. Means over the basket, raw→calibrated:
+
+| model | h | ECE | AUC | Brier |
+|---|---|---|---|---|
+| logistic | 20 | 0.086 → 0.085 | 0.694 → 0.655 | 0.231 → **0.224** |
+| lightgbm | 20 | 0.129 → **0.100** | 0.690 → 0.659 | 0.233 → **0.227** |
+| logistic | 30 | 0.197 → **0.173** | 0.667 → 0.678 | 0.272 → **0.250** |
+| lightgbm | 30 | 0.155 → 0.157 | 0.581 → 0.615 | 0.264 → **0.258** |
+
+**Findings.**
+- **Brier improves in all four cells** — the decisive proper-score result (Brier = calibration + resolution), so net forecast quality went up everywhere.
+- **ECE improves where it was bad, holds where it was fine** — lightgbm h20 **0.129→0.100** (the fix; prefit had *worsened* this to 0.176), logistic h30 0.197→0.173; logistic h20 / lightgbm h30 already-fine → flat, no harm.
+- **AUC is *not strictly* invariant** (dips ~0.03 at h20, rises at h30 → ≈flat on average). Expected: `cv=3` replaces the single classifier with an **ensemble of 3** (each on ⅔ the data), so base scores shift slightly. Within n=61 noise, and Brier (which subsumes resolution) improved regardless. Strict AUC-invariance only holds for single-classifier `cv="prefit"` — which is what hurt lightgbm.
+
+**Decision.** **Ship calibration for both models via `CalibratedClassifierCV(cv=3, isotonic)`** (default `settings.calibrate_ml=True`); retrain the 6 served artifacts calibrated. The cross-threshold **monotone envelope** stays enforced downstream (`ml._exceedance_to_buckets`). `cv=3` chosen over 5 to bound the k× training cost. h60 still served **low-confidence** (unmeasurable, n≈19).

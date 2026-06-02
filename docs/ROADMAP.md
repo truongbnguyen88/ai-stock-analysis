@@ -28,9 +28,9 @@ Out of MVP: ML models, Monte Carlo, walk-forward backtesting, calibration, ensem
 - `backtest` CLI + experiment logging.
 - **Agent gains `run_backtest` + `get_calibration` tools** (e.g. "is the 30-day NVDA forecast well-calibrated?").
 
-### Future
+### Future (after Phase 7)
 
-- Sequence/regime models (TFT/LSTM with temporal CV; HMM/changepoint).
+- **Sequence / regime models (PARKED — revisit after Phase 7).** TFT/LSTM with temporal CV; HMM/changepoint. Explicitly deferred during the post-V1 ML track: every validation found **direction is ~efficient** and only **magnitude/volatility** is predictable, which logistic + tuned lightgbm already capture — so the bar for a heavier, fundamentally different (temporal-structure) paradigm is high. Worth a *bounded experiment* only after the toolkit is operationalized (calibration + scheduled retraining + Phase 7 report surfacing), and judged on the same held-out / calibration discipline.
 - Probabilistic depth: quantile regression, conformal prediction CIs, GARCH, copula multi-horizon joints.
 - **Temporal features:** ~~earnings proximity~~ **DONE** — `days_to_next_earnings` is now a model feature (leakage-safe cadence estimate; yfinance earnings dates) + `get_earnings_context` for display. Still validate its OOS lift via Phase 6. (Pure calendar seasonality remains deferred — pooling doesn't raise effective N for shared-calendar effects.)
 - **News-as-model-feature (Option B):** only once point-in-time historical sentiment exists (buy data or log snapshots forward); then backtest whether it beats price-only.
