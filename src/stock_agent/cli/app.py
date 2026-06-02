@@ -203,6 +203,30 @@ def _train_all(universe: Path, settings: Settings) -> None:
     typer.echo("\nDone — production toolkit retrained.")
 
 
+@app.command(name="verify-models")
+def verify_models() -> None:
+    """Sanity-check the trained artifacts (the scheduled-retrain promote gate).
+
+    Network-free structural check; exits non-zero if any artifact is missing,
+    mis-shaped, or can't produce valid probabilities — so CI won't publish a bad
+    model release.
+    """
+    from stock_agent.forecasting.verify import verify_artifacts
+
+    settings = get_settings()
+    models_dir = Path(settings.output_dir) / "models"
+    problems = verify_artifacts(
+        models_dir, models=list(_PROD_MODELS), horizons=list(_PROD_HORIZONS)
+    )
+    if problems:
+        typer.echo("✗ artifact verification FAILED:")
+        for p in problems:
+            typer.echo(f"  - {p}")
+        raise typer.Exit(code=1)
+    n = len(_PROD_MODELS) * len(_PROD_HORIZONS)
+    typer.echo(f"✓ verified {n} artifacts in {models_dir}")
+
+
 def _print_backtest(result: BacktestResult) -> None:
     """Render a backtest result as a compact, scannable summary."""
     c = result.calibration

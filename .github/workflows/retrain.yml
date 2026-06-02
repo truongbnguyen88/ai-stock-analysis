@@ -1,0 +1,58 @@
+name: Monthly model retrain
+
+# Retrains the production toolkit (logistic + tuned lightgbm × 20/30/60, calibrated)
+# in CI and publishes the artifacts to a rolling GitHub Release. Pull them locally
+# with `make pull-models` — the app serves from outputs/models/ (gitignored), so the
+# repo never carries the ~100MB of binaries.
+
+on:
+  schedule:
+    - cron: "0 6 1 * *" # 1st of each month, 06:00 UTC
+  workflow_dispatch: {} # allow manual runs (Actions tab → Run workflow)
+
+permissions:
+  contents: write # publish the model release
+
+concurrency:
+  group: retrain
+  cancel-in-progress: false
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300 # cv=3 lightgbm over the universe is slow on 2-core runners
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install package
+        run: pip install -e . # training needs no API keys (yfinance is keyless)
+
+      - name: Train calibrated toolkit
+        run: python -m stock_agent train --all
+
+      - name: Verify artifacts (promote gate)
+        run: python -m stock_agent verify-models
+
+      - name: Package models
+        run: |
+          cd outputs/models
+          tar -czf "$GITHUB_WORKSPACE/models.tar.gz" *.joblib
+          ls -lh "$GITHUB_WORKSPACE/models.tar.gz"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DATE=$(date -u +%Y-%m-%d)
+          SHA=$(git rev-parse --short HEAD)
+          NOTES="Calibrated pooled models (logistic + tuned lightgbm × 20/30/60), trained ${DATE} from ${SHA}. Pull with: make pull-models"
+          # Rolling 'models-latest' (what `make pull-models` fetches) — recreate it.
+          gh release delete models-latest --yes --cleanup-tag || true
+          gh release create models-latest models.tar.gz --title "models-latest (${DATE})" --notes "${NOTES}"
+          # Dated snapshot for history / rollback (best-effort).
+          gh release create "models-${DATE}" models.tar.gz --title "models ${DATE}" --notes "${NOTES}" || true
