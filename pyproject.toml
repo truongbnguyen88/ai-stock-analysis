@@ -27,9 +27,14 @@ dependencies = [
     "anthropic>=0.40",   # Claude API client (news summarization; prompt caching)
     # Phase 4 — CLI
     "typer>=0.12",       # CLI framework (analyze/forecast/backtest commands)
-    # Phase 5 — ML models
-    "scikit-learn>=1.4", # logistic regression, imputation, isotonic calibration
-    "lightgbm>=4.0",     # gradient-boosted classifier (tuned big-move model)
+    # Phase 5 — ML models.
+    # Pinned to a single minor band: models are trained in CI and pickled, then
+    # `make pull-models` deserializes them locally. A minor-version skew between
+    # CI and local makes sklearn emit InconsistentVersionWarning and risks silently
+    # wrong loads, so the serialization-sensitive deps must match on both sides.
+    "scikit-learn>=1.9,<1.10", # logistic regression, imputation, isotonic calibration
+    "lightgbm>=4.6,<5",        # gradient-boosted classifier (tuned big-move model)
+    "joblib>=1.5,<2",          # the pickler for the trained artifacts (train/serve parity)
     # UI
     "streamlit>=1.35",   # browser-based chat frontend
     # Export (chat summary -> document)
