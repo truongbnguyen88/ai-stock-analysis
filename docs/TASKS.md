@@ -67,9 +67,9 @@ Status legend: `[ ]` todo · `[~]` in progress · `[x]` done (tests green)
 ## Phase 6.5 — Agent evaluation tools ✅ ← V1 milestone
 - [x] 25. `agent/tools.py` adds `run_backtest` + `get_calibration` (bounded; system prompt v2)
 
-## Phase 7 — Hardening
-- [ ] 26. Forecast report section (CIs / VaR / calibration status)
-- [ ] 27. Coverage pass + finalize docs + README
+## Phase 7 — Hardening ✅
+- [x] 26. Forecast report section (CIs / VaR / calibration status + horizon-scaled big-move + horizon-trust; calibrated-ML overlay)
+- [x] 27. Coverage pass (86%, 253 pytest) + finalize docs + README
 
 ---
 
