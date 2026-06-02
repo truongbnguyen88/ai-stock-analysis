@@ -67,3 +67,9 @@ def test_verify_flags_degraded_data(tmp_path: Path) -> None:
     assert any("rows" in p and "degraded" in p for p in problems)
     # Without the floor (defaults 0) the same artifact passes — gate is opt-in.
     assert verify_artifacts(models_dir, models=["logistic"], horizons=[20]) == []
+    # Row floor fires independently of the ticker floor.
+    rows_only = verify_artifacts(
+        models_dir, models=["logistic"], horizons=[20], min_tickers=0, min_rows=100_000
+    )
+    assert any("rows" in p for p in rows_only)
+    assert not any("tickers" in p for p in rows_only)

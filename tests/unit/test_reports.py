@@ -150,3 +150,13 @@ def test_forecast_block_long_horizon_low_confidence_trust() -> None:
     fc = historical_forecast(closes, 60, ticker="NVDA", as_of=date(2025, 1, 31))
     block = "\n".join(_forecast_block(fc))
     assert "low-confidence" in block  # h60 → long-horizon caveat
+
+
+def test_forecast_block_mid_horizon_has_no_trust_note() -> None:
+    from stock_agent.reports.render_md import _forecast_block
+
+    # 31–59 trading days is between the measurable-skill and low-confidence bands →
+    # no trust claim is rendered (avoids over-stating confidence).
+    closes = [100.0 * (1.005**i) for i in range(160)]
+    fc = historical_forecast(closes, 45, ticker="NVDA", as_of=date(2025, 1, 31))
+    assert "Trust:" not in "\n".join(_forecast_block(fc))

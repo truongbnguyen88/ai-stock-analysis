@@ -43,7 +43,7 @@ makes the models directly comparable in reports and backtests. Its key fields:
 | `upside_prob` / `downside_prob` | $P(r>0)$ / $P(r<0)$ |
 | `var_95`, `var_99` | Value-at-Risk: the 5th / 1st percentile of return (typically negative) |
 | `ci_low`, `ci_high` | 90% predictive interval (5th–95th percentile) |
-| `calibration_status` | `unknown` until Phase 6 validates the probabilities |
+| `calibration_status` | `calibrated` for the served ML artifacts (isotonic CV baked in), `unknown` for the unconditional baselines |
 | `notes` | Model caveats (e.g. fallback, sparse data, jump applied) |
 
 ### The six buckets
@@ -61,9 +61,11 @@ each bucket is **half-open `[lower, upper)`** — lower inclusive, upper exclusi
 | 4 | `+5% to +10%` | $[0.05, 0.10)$ |
 | 5 | `> +10%` | $[0.10, +\infty)$ |
 
-The internal boundaries $\{-0.10, -0.05, 0, +0.05, +0.10\}$ are reused by the ML
-models as classifier thresholds (Section 3) — the buckets and the ML targets are
-the *same* partition by design.
+The boundaries shown are the **h20** band; they are **horizon-scaled**
+(h20 ±5/±10, h30 ±10/±20, h60 ±15/±30 — see `buckets_for_horizon`) so the tail
+event stays meaningful at longer horizons. Whatever the horizon, the internal
+boundaries are reused by the ML models as classifier thresholds (Section 3) — the
+buckets and the ML targets are the *same* partition by design.
 
 *All three models converge on the identical output object — which is exactly what lets reports and backtests compare them directly:*
 
@@ -388,7 +390,9 @@ $\sigma_J^2 / \big[(h-1)\sigma^2 + \sigma_J^2\big]$:
 [forecasting/pooled.py](../src/stock_agent/forecasting/pooled.py) (artifact +
 training), [forecasting/train_pooled.py](../src/stock_agent/forecasting/train_pooled.py)
 (orchestration), [features/](../src/stock_agent/features/) (feature matrix)
-· **Model names:** `ml_logistic`, `ml_xgboost`, `ml_lightgbm`, `ml_random_forest`
+· **Model names:** `ml_logistic`, `ml_lightgbm` (the shipped toolkit; `xgboost` and
+`random_forest` were evaluated and dropped — neither was promoted, see
+[validations_results.md](validations_results.md))
 
 Unlike the previous two (which are unconditional or path-simulated), the ML
 models are **conditional**: they map *today's* feature vector to a forward-return
@@ -397,10 +401,10 @@ distribution, learned from labeled history across many stocks.
 ### 3.1 The threshold-classifier construction
 
 We do **not** regress the return directly. Instead we discretize using the same
-five bucket boundaries as thresholds
-($\Theta = \{-0.10, -0.05, 0, +0.05, +0.10\}$, `THRESHOLDS` in
-[assembler.py](../src/stock_agent/features/assembler.py)) and train **one binary
-classifier per threshold** predicting the survival probability:
+five bucket boundaries as thresholds (the **h20** band
+$\Theta = \{-0.10, -0.05, 0, +0.05, +0.10\}$, horizon-scaled via
+`thresholds_for_horizon`; the model persists its own cut-points) and train **one
+binary classifier per threshold** predicting the survival probability:
 
 $$
 m_k(\mathbf{x}) = P\big(r > \theta_k \mid \mathbf{x}\big), \qquad k = 0, \dots, 4
@@ -559,26 +563,30 @@ flowchart TD
     FIT --> ART["PooledModel artifact<br/>5 classifiers + imputer + metadata<br/>→ joblib (gitignored)"]
 ```
 
-**Missing-value handling.** Tree boosters (XGBoost, LightGBM) handle NaN
-natively. Logistic regression and random forest get a `SimpleImputer(median)`
-that is **fit on the pooled training data and persisted in the artifact**, so
-inference uses the identical fill values (no per-row imputation leak).
-`keep_empty_features=True` keeps an all-NaN column (e.g.
-`days_to_next_earnings` when no earnings data) at constant width instead of
+**Missing-value handling.** LightGBM handles NaN natively. Logistic regression
+gets a `SimpleImputer(median)` that is **fit on the pooled training data and
+persisted in the artifact**, so inference uses the identical fill values (no
+per-row imputation leak). `keep_empty_features=True` keeps an all-NaN column
+(e.g. `days_to_next_earnings` when no earnings data) at constant width instead of
 dropping it.
 
-**Model types & hyperparameters** (`_make_classifier`):
+**Model types & hyperparameters** (`_make_classifier`). The shipped toolkit is
+**logistic** (a strong, well-calibrated baseline that wins on stable names) plus a
+**tuned lightgbm** (config #38 from the large-scale random search — its niche is
+the big-move tails on volatile names):
 
 | Type | Configuration |
 |---|---|
-| `logistic` | `LogisticRegression(max_iter=1000, class_weight="balanced")` + imputer |
-| `xgboost` | `XGBClassifier(n_estimators=300, max_depth=4, lr=0.05, subsample=0.8, colsample_bytree=0.8)` |
-| `lightgbm` | `LGBMClassifier(n_estimators=300, max_depth=4, lr=0.05)` |
-| `random_forest` | `RandomForestClassifier(n_estimators=300, max_depth=8, class_weight="balanced")` + imputer |
+| `logistic` | `LogisticRegression(max_iter=1000)` + `StandardScaler` + imputer. *No* `class_weight="balanced"` — it was a latent calibration bug (over-predicts the rare class); dropping it materially improved Brier/ECE. |
+| `lightgbm` | Tuned `LGBMClassifier` (#38): `n_estimators=400, num_leaves=47, learning_rate≈0.024, min_child_samples=50, subsample≈0.98, colsample_bytree≈0.56, reg_lambda≈9.0`, … (full config in `pooled._make_classifier`). |
 
-The fitted classifiers + imputer + metadata are bundled into a `PooledModel`
-and persisted with joblib at
-`outputs/models/pooled_{type}_h{horizon}.joblib` (gitignored).
+Each per-threshold classifier is then wrapped in `CalibratedClassifierCV(cv=3,
+method="isotonic")` when calibration is enabled (default) — see §3.5. The fitted
+classifiers + (optional) imputer + metadata are bundled into a `PooledModel` and
+persisted with joblib at `outputs/models/pooled_{type}_h{horizon}.joblib`
+(gitignored). Dropped models: **xgboost** and **random_forest** (found no tail
+signal beyond lightgbm; RF's `class_weight="balanced"` was the same calibration
+bug).
 
 ### 3.5 Inference
 
@@ -610,14 +618,18 @@ flowchart TD
 - **Stationarity of the learned mapping** $\mathbf{x}\mapsto P(r>\theta)$ across
   time and across the universe (cross-sectional pooling assumes a *shared*
   relationship; a feature may behave differently for a utility vs a chip maker).
-- **Calibration is not guaranteed** by training — predicted probabilities must be
-  validated against realized frequencies (Phase 6). Until then
-  `calibration_status = "unknown"` — treat the probabilities as ordinal.
+- **Calibration** is now applied at train time via `CalibratedClassifierCV(cv=3,
+  isotonic)` baked into each threshold-classifier, so the served artifacts report
+  `calibration_status = "calibrated"` and the forecast surfaces it. Validated OOS
+  (Brier improved in every model×horizon cell); long horizons (h60) are still
+  served **low-confidence** because there are too few independent windows to score.
 - **Price-only (Option A):** news/sentiment are deliberately *not* model inputs
   (no point-in-time historical news to train on), only display context. So the
   model cannot react to a headline, only to price/vol/earnings-cadence state.
-- **Label imbalance** at extreme thresholds (few +10% events) → `class_weight`
-  / single-class skips mitigate but tails are data-starved.
+- **Label imbalance** at extreme thresholds (few big-move events) → single-class
+  threshold-skips + the historical-base-rate fallback mitigate, but the tails stay
+  data-starved (especially at h60). Note we do **not** use `class_weight="balanced"`
+  — it traded calibration for recall and hurt Brier.
 
 ### 3.6 Where ML actually adds value: the big-move signal
 
@@ -637,7 +649,10 @@ P(|r| > k) \;=\; P(r < -k) + P(r > +k)
 $$
 
 i.e. the **two outer buckets**; the realized label is $\mathbb{1}[\,|r| > k\,]$.
-The threshold $k$ is sized to the horizon (~2–2.5σ): e.g. 5% at 5 days, 10% at 20.
+The threshold $k$ is **sized to the horizon** so the event isn't degenerate (at h60
+a fixed 5% band is exceeded ~90% of the time): the shipped buckets are
+**h20 ±5/±10, h30 ±10/±20, h60 ±15/±30**, and the default big-move `k` is the inner
+boundary (5/10/15%). See `buckets_for_horizon` / `thresholds_for_horizon`.
 
 **Why ML wins here but not on direction.** Big moves are driven by *volatility*,
 and volatility **clusters** — it is conditionally predictable from the feature
@@ -646,17 +661,21 @@ historical-sim uses an *unconditional* distribution (the same tail mass every
 day), and Monte-Carlo conditions only on *recent realized* vol. The ML classifier
 conditions on the **full feature vector**, so its big-move signal carries
 information the baselines lack — **non-redundant**, unlike the directional signal.
-Live h5 (|r| > 5%): logistic big-move AUC **0.60 / 0.66 / 0.88** (NVDA / MSFT / KO)
-vs the baselines' 0.34–0.50, winning Brier + log-loss outright for the stable
-names (KO log-loss 0.155 vs 1.24).
+Illustratively (an early h5 study, since retired): logistic big-move AUC
+**0.60 / 0.66 / 0.88** (NVDA / MSFT / KO) vs the baselines' 0.34–0.50, winning
+Brier + log-loss outright for the stable names. The shipped horizons are
+**20 / 30 / 60**; with the horizon-scaled buckets, ML keeps a measurable edge at
+**h20/h30** while h60 stays unmeasurable (too few independent windows).
 
 **Scope & caveats.**
-- **Short horizons only.** Vol-clustering decays, and at long horizons the
-  large-move event becomes too rare to learn or score (h60 → ~2 positives in 61
-  windows → noise). It is a near-term play (≈ 5–20 days).
-- **Calibrate for high-vol names.** The raw classifier keeps the AUC edge but goes
-  overconfident on high-vol tickers (e.g. NVDA), so a post-hoc calibration step is
-  planned before the probability is reported.
+- **Near-to-mid horizons.** Vol-clustering decays, and at long horizons the
+  large-move event has too few *independent* windows to score (h60 → ~19 OOS
+  points → noise). The signal is strongest at **h20/h30**; h60 is served
+  low-confidence.
+- **Calibrated for high-vol names.** The raw classifier keeps the AUC edge but goes
+  overconfident on high-vol tickers (e.g. NVDA); the shipped
+  `CalibratedClassifierCV(cv=3, isotonic)` step now corrects this before the
+  probability is reported (lightgbm ECE 0.129 → 0.100).
 - **A separate output, not a replacement.** The directional scenario forecast
   stays baseline-driven (the well-calibrated MC / historical distribution); the
   big-move probability is surfaced *alongside* it as "probability of a large move
@@ -708,9 +727,12 @@ distributions, never averaging quantiles).
 - **No buy/sell recommendation.** The schema has no recommendation field by
   construction. These models characterize a *distribution of outcomes*, not an
   action.
-- **No claim of calibration yet.** `calibration_status = "unknown"` until Phase 6
-  validates predicted probabilities against realized frequencies. Until then,
-  trust the *ordering* of probabilities more than their absolute levels.
+- **Calibration is scoped, not assumed.** The served ML artifacts are
+  isotonic-calibrated (`calibration_status = "calibrated"`) and validated OOS
+  (Brier improved in every model×horizon cell); the unconditional baselines stay
+  `"unknown"`. At **h60** there are too few independent windows to validate, so it
+  is served **low-confidence** regardless — there, trust the *ordering* of
+  probabilities more than their absolute levels.
 
 ---
 

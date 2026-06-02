@@ -89,7 +89,7 @@ Bracketed = primary deliverable.
 
 ### Phase 7 — Hardening
 26. **[DONE]** Forecast report surfaces CIs / VaR / **real calibration status** / **horizon-scaled big-move** / horizon-trust. The deterministic report now overlays the **calibrated ML forecast** (lightgbm) alongside the historical baseline per horizon (graceful skip where no artifact); `calibration_status` is sourced from the artifact (`PooledModel.is_calibrated`) instead of a hardcoded `"unknown"`; each block renders the horizon's inner-`k` big-move reading (`large_move_breakdown`) and a horizon-confidence caveat (h≤30 measurable / h60 low-confidence).
-27. Coverage pass; finalize `docs/` (`ARCHITECTURE.md`, `MODELING.md`) + `README.md`.
+27. **[DONE]** Coverage pass (86% overall; added `load_universe` + verify/render-branch tests) and docs finalized — authored the top-level `README.md` and refreshed `docs/models_explanation.md` to the shipped toolkit (logistic + tuned lightgbm only, horizon-scaled buckets, calibration shipped; xgboost/RF/h5 removed). `models_explanation.md` is the modeling reference (no separate `MODELING.md`).
 
 ## Active ML work queue (post-V1 ML track)
 
