@@ -18,13 +18,27 @@ from stock_agent.forecasting.buckets import thresholds_for_horizon
 from stock_agent.forecasting.pooled import PooledModel, default_model_path
 
 
-def verify_artifacts(models_dir: Path, *, models: list[str], horizons: list[int]) -> list[str]:
+def verify_artifacts(
+    models_dir: Path,
+    *,
+    models: list[str],
+    horizons: list[int],
+    min_tickers: int = 0,
+    min_rows: int = 0,
+) -> list[str]:
     """Return a list of problems with the trained artifacts (empty == all OK).
 
     Per (model, horizon): the file exists and loads; its thresholds match the
     horizon's scaled cut-points; at least n-1 of n threshold-classifiers trained
     (one may be skipped as single-class); and a dummy-feature ``predict_exceedance``
     returns probabilities in [0, 1]. No network or market data required.
+
+    ``min_tickers`` / ``min_rows`` add a **data-quality gate**: an artifact that
+    trained on too small a slice of the universe is rejected even if structurally
+    valid. This catches a degraded data month (e.g. yfinance rate-limited from the
+    CI runner returns a handful of tickers) — a near-empty model still satisfies the
+    structural checks, so without this it would silently publish. Defaults of 0
+    disable the gate (used by structural-only unit tests).
     """
     problems: list[str] = []
     dummy = pd.DataFrame([{c: 0.0 for c in PRICE_FEATURE_COLS}])
@@ -47,6 +61,16 @@ def verify_artifacts(models_dir: Path, *, models: list[str], horizons: list[int]
             if len(m.classifiers) < len(expected) - 1:
                 problems.append(
                     f"{tag}: only {len(m.classifiers)}/{len(expected)} threshold-classifiers"
+                )
+            if m.n_tickers < min_tickers:
+                problems.append(
+                    f"{tag}: trained on {m.n_tickers} tickers (need >= {min_tickers}) "
+                    "— degraded data month?"
+                )
+            if m.n_train_rows < min_rows:
+                problems.append(
+                    f"{tag}: trained on {m.n_train_rows:,} rows (need >= {min_rows:,}) "
+                    "— degraded data month?"
                 )
             try:
                 probs = m.predict_exceedance(dummy)

@@ -204,19 +204,37 @@ def _train_all(universe: Path, settings: Settings) -> None:
 
 
 @app.command(name="verify-models")
-def verify_models() -> None:
+def verify_models(
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file used to size the data-quality floor")
+    ] = Path("configs/universe.txt"),
+) -> None:
     """Sanity-check the trained artifacts (the scheduled-retrain promote gate).
 
-    Network-free structural check; exits non-zero if any artifact is missing,
-    mis-shaped, or can't produce valid probabilities — so CI won't publish a bad
-    model release.
+    Network-free; exits non-zero if any artifact is missing, mis-shaped, can't
+    produce valid probabilities, OR was trained on too little of the universe — so
+    CI won't publish a degraded model release (e.g. from a yfinance-rate-limited
+    data month). The ticker floor is ``verify_min_ticker_fraction`` of the universe.
     """
+    import math
+
+    from stock_agent.forecasting.train_pooled import load_universe
     from stock_agent.forecasting.verify import verify_artifacts
 
     settings = get_settings()
     models_dir = Path(settings.output_dir) / "models"
+
+    # Data-quality floor sized from the configured universe (auto-adapts as it grows);
+    # falls back to row-only if the universe file is absent.
+    min_tickers = 0
+    if universe.exists():
+        min_tickers = math.ceil(len(load_universe(universe)) * settings.verify_min_ticker_fraction)
     problems = verify_artifacts(
-        models_dir, models=list(_PROD_MODELS), horizons=list(_PROD_HORIZONS)
+        models_dir,
+        models=list(_PROD_MODELS),
+        horizons=list(_PROD_HORIZONS),
+        min_tickers=min_tickers,
+        min_rows=settings.verify_min_rows,
     )
     if problems:
         typer.echo("✗ artifact verification FAILED:")
@@ -224,7 +242,10 @@ def verify_models() -> None:
             typer.echo(f"  - {p}")
         raise typer.Exit(code=1)
     n = len(_PROD_MODELS) * len(_PROD_HORIZONS)
-    typer.echo(f"✓ verified {n} artifacts in {models_dir}")
+    typer.echo(
+        f"✓ verified {n} artifacts in {models_dir} "
+        f"(data-quality floor: >= {min_tickers} tickers, >= {settings.verify_min_rows:,} rows)"
+    )
 
 
 def _print_backtest(result: BacktestResult) -> None:

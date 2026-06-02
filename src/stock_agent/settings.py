@@ -95,6 +95,16 @@ class Settings(BaseSettings):
     # it (e.g. to A/B calibrated vs raw in a backtest).
     calibrate_ml: bool = True
 
+    # ---- Promote gate (scheduled-retrain data-quality guard) ----
+    # The CI retrain publishes an artifact only if `verify-models` passes. Beyond the
+    # structural checks, require each artifact to have trained on enough of the universe
+    # so a degraded data month (e.g. yfinance returns few tickers from the runner IP)
+    # can't ship near-empty models that still pass the structural checks. The ticker
+    # floor is a fraction of the configured universe (auto-adapts as it grows); the row
+    # floor is an absolute backstop against a short-history universe.
+    verify_min_ticker_fraction: float = 0.8
+    verify_min_rows: int = 80_000
+
     # ---- Chat history (Streamlit frontend) ----
     # Saved conversation threads (text + charts + resumable agent history). Lives
     # under the gitignored outputs/ tree; threads older than the retention window

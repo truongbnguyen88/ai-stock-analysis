@@ -53,3 +53,17 @@ def test_verify_flags_missing_artifact(tmp_path: Path) -> None:
     _train_and_save(models_dir, "logistic", 20)  # lightgbm intentionally not trained
     problems = verify_artifacts(models_dir, models=["logistic", "lightgbm"], horizons=[20])
     assert any("lightgbm h20" in p and "missing" in p for p in problems)
+
+
+def test_verify_flags_degraded_data(tmp_path: Path) -> None:
+    # A structurally-valid artifact trained on too few tickers/rows (the degraded
+    # data-month failure mode) must be rejected by the data-quality floor.
+    models_dir = tmp_path / "models"
+    _train_and_save(models_dir, "logistic", 20)  # 6 synthetic tickers, small row count
+    problems = verify_artifacts(
+        models_dir, models=["logistic"], horizons=[20], min_tickers=50, min_rows=100_000
+    )
+    assert any("tickers" in p and "degraded" in p for p in problems)
+    assert any("rows" in p and "degraded" in p for p in problems)
+    # Without the floor (defaults 0) the same artifact passes — gate is opt-in.
+    assert verify_artifacts(models_dir, models=["logistic"], horizons=[20]) == []
