@@ -126,3 +126,27 @@ def test_render_markdown_has_all_sections_and_disclaimer() -> None:
         assert header in md
     assert "> +10%" in md  # a scenario bucket label
     assert "Expected return" in md
+
+
+def test_forecast_block_surfaces_big_move_calibration_and_trust() -> None:
+    from stock_agent.reports.render_md import _forecast_block
+
+    # A calibrated ML forecast at h20 (±5/±10 buckets). Render must surface the
+    # horizon-scaled big-move reading, the real calibration status, and a trust note.
+    closes = [100.0 * (1.01**i) for i in range(80)]
+    base = historical_forecast(closes, 20, ticker="NVDA", as_of=date(2025, 1, 31))
+    fc = base.model_copy(update={"model_name": "ml_lightgbm", "calibration_status": "calibrated"})
+    block = "\n".join(_forecast_block(fc))
+    assert "Big move (|r| > 5%):" in block  # inner k for h20
+    assert "leans" in block
+    assert "Calibration: calibrated" in block
+    assert "Trust:" in block  # h20 → measurable-skill note
+
+
+def test_forecast_block_long_horizon_low_confidence_trust() -> None:
+    from stock_agent.reports.render_md import _forecast_block
+
+    closes = [100.0 * (1.004**i) for i in range(200)]
+    fc = historical_forecast(closes, 60, ticker="NVDA", as_of=date(2025, 1, 31))
+    block = "\n".join(_forecast_block(fc))
+    assert "low-confidence" in block  # h60 → long-horizon caveat

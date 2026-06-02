@@ -7,6 +7,7 @@ table. Numeric fields are formatted for readability; nothing is invented here.
 
 from __future__ import annotations
 
+from stock_agent.forecasting.large_move import large_move_breakdown
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.report import ResearchReport
 
@@ -43,6 +44,45 @@ def _bullets(items: list[str]) -> list[str]:
     return [f"- {item}" for item in items] if items else ["- _None._"]
 
 
+def _horizon_trust(horizon_days: int) -> str | None:
+    """Honest, horizon-dependent confidence caveat (from OOS backtest findings).
+
+    Long horizons have few *independent* (non-overlapping) windows, so OOS skill is
+    unmeasurable there regardless of model; short/medium horizons are where the
+    big-move probabilities backtest with real skill. Qualitative, no invented numbers.
+    """
+    if horizon_days >= 60:
+        return (
+            "long horizon — few independent windows make out-of-sample validation weak; "
+            "treat these probabilities as low-confidence"
+        )
+    if horizon_days <= 30:
+        return (
+            "horizon with measurable out-of-sample skill in backtests; the big-move "
+            "(magnitude) probabilities are the most reliable read"
+        )
+    return None
+
+
+def _big_move_line(fc: ScenarioForecast) -> str | None:
+    """Horizon-scaled big-move reading at the forecast's inner threshold (ML's niche).
+
+    Derived from the bucket distribution via ``large_move_breakdown`` — no new numbers
+    are invented here. ``None`` when the buckets lack a positive boundary to read.
+    """
+    inner_k = sorted({b.lower for b in fc.buckets if b.lower is not None and b.lower > 0.0})
+    if not inner_k:
+        return None
+    try:
+        lm = large_move_breakdown(fc, threshold=inner_k[0])
+    except ValueError:
+        return None
+    return (
+        f"- Big move (|r| > {lm.threshold:.0%}): **{lm.prob_large_move:.0%}** "
+        f"(up {lm.prob_big_up:.0%} / down {lm.prob_big_down:.0%}, leans {lm.lean})"
+    )
+
+
 def _forecast_block(fc: ScenarioForecast) -> list[str]:
     lines = [f"#### Horizon: {fc.horizon_days} trading days (`{fc.model_name}`)", ""]
     lines.append("| Scenario | Probability |")
@@ -52,11 +92,17 @@ def _forecast_block(fc: ScenarioForecast) -> list[str]:
     lines.append("")
     lines.append(f"- Expected return: **{fc.expected_return:+.2%}**")
     lines.append(f"- P(up): {fc.upside_prob:.0%} · P(down): {fc.downside_prob:.0%}")
+    big_move = _big_move_line(fc)
+    if big_move is not None:
+        lines.append(big_move)
     if fc.var_95 is not None and fc.var_99 is not None:
         lines.append(f"- VaR: 95% **{fc.var_95:.2%}**, 99% **{fc.var_99:.2%}**")
     if fc.ci_low is not None and fc.ci_high is not None and fc.ci_level is not None:
         lines.append(f"- {fc.ci_level:.0%} interval: [{fc.ci_low:.2%}, {fc.ci_high:.2%}]")
     lines.append(f"- Calibration: {fc.calibration_status}")
+    trust = _horizon_trust(fc.horizon_days)
+    if trust is not None:
+        lines.append(f"- _Trust: {trust}._")
     if fc.notes:
         lines.append(f"- Note: {fc.notes}")
     lines.append("")
@@ -112,7 +158,10 @@ def render_markdown(report: ResearchReport) -> str:
     # Probabilistic scenarios
     out += ["## Probabilistic Scenarios", ""]
     if report.forecasts:
-        out.append("_Model-generated from historical simulation; the LLM does not produce these._")
+        out.append(
+            "_Model-generated (statistical baseline + calibrated ML where available); "
+            "the LLM does not produce these numbers._"
+        )
         out.append("")
         for fc in report.forecasts:
             out += _forecast_block(fc)

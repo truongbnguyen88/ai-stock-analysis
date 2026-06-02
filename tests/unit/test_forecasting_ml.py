@@ -120,6 +120,9 @@ def test_calibration_wraps_classifier_when_enabled_else_not() -> None:
     # calibrate=True stores CalibratedClassifierCV per threshold; calibrate=False the raw model.
     assert any(isinstance(c, CalibratedClassifierCV) for c in cal.classifiers.values())
     assert not any(isinstance(c, CalibratedClassifierCV) for c in raw.classifiers.values())
+    # The is_calibrated property reflects this (drives the forecast's calibration_status).
+    assert cal.is_calibrated
+    assert not raw.is_calibrated
 
 
 def test_calibrated_model_yields_valid_distribution() -> None:
@@ -131,3 +134,13 @@ def test_calibrated_model_yields_valid_distribution() -> None:
     fc = MLForecaster("lightgbm", model=m).forecast(_noisy_series("Z", seed=3), horizon_days=20)
     assert sum(b.probability for b in fc.buckets) == pytest.approx(1.0, abs=1e-6)
     assert all(0.0 <= b.probability <= 1.0 for b in fc.buckets)
+    # A calibrated artifact reports an honest, backtest-free calibration status.
+    assert fc.calibration_status == "calibrated"
+
+
+def test_uncalibrated_model_reports_status() -> None:
+    m = train_pooled_from_series(
+        _universe(), horizon_days=20, model_type="lightgbm", min_total_rows=100, calibrate=False
+    )
+    fc = MLForecaster("lightgbm", model=m).forecast(_noisy_series("Z", seed=3), horizon_days=20)
+    assert fc.calibration_status == "uncalibrated"

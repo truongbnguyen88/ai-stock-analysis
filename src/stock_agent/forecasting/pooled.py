@@ -114,6 +114,18 @@ class PooledModel:
         """
         return getattr(self, "thresholds", None) or thresholds_for_horizon(self.horizon_days)
 
+    @property
+    def is_calibrated(self) -> bool:
+        """True if the threshold-classifiers carry a baked-in post-hoc calibrator.
+
+        Lets the forecaster report an honest ``calibration_status`` without re-running
+        a backtest: a ``CalibratedClassifierCV`` wrapper means ``predict_proba`` is
+        isotonic-calibrated (cross-validated). Imported lazily to keep load light.
+        """
+        from sklearn.calibration import CalibratedClassifierCV
+
+        return any(isinstance(c, CalibratedClassifierCV) for c in self.classifiers.values())
+
     def predict_exceedance(self, x_row: pd.DataFrame) -> list[float | None]:
         """P(return > threshold) for each threshold; None where a clf is absent.
 

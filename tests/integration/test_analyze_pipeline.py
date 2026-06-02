@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from stock_agent.pipelines.analyze import run_analyze
 from stock_agent.providers.fake import FakeProvider
@@ -60,17 +61,19 @@ def _summary_json() -> str:
     )
 
 
-def test_run_analyze_end_to_end() -> None:
+def test_run_analyze_end_to_end(tmp_path: Path) -> None:
     fake = FakeProvider("fake", prices=_series(), news=_news())
     registry = ProviderRegistry(
         [fake],
         Settings(_env_file=None, provider_price_priority="fake", provider_news_priority="fake"),
     )
 
+    # Isolate output_dir so the ML overlay (which loads artifacts from
+    # outputs/models/) is deterministically absent → baselines-only.
     report = run_analyze(
         "nvda",
         days=30,
-        settings=Settings(_env_file=None),
+        settings=Settings(_env_file=None, output_dir=tmp_path),
         registry=registry,
         llm=FakeLLM(_summary_json()),
         horizons=(5, 20),
@@ -87,14 +90,18 @@ def test_run_analyze_end_to_end() -> None:
     assert "## Probabilistic Scenarios" in md
 
 
-def test_run_analyze_without_llm() -> None:
+def test_run_analyze_without_llm(tmp_path: Path) -> None:
     fake = FakeProvider("fake", prices=_series(), news=_news())
     registry = ProviderRegistry(
         [fake],
         Settings(_env_file=None, provider_price_priority="fake", provider_news_priority="fake"),
     )
     report = run_analyze(
-        "NVDA", days=30, settings=Settings(_env_file=None), registry=registry, use_llm=False
+        "NVDA",
+        days=30,
+        settings=Settings(_env_file=None, output_dir=tmp_path),
+        registry=registry,
+        use_llm=False,
     )
     # No summary -> raw headline used; baseline forecasts still present.
     assert report.news_analysis.recent_developments == ["NVDA launches new chip"]

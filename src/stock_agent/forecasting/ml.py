@@ -173,7 +173,11 @@ class MLForecaster:
 
         buckets = _exceedance_to_buckets(probs_gt, buckets_for_horizon(horizon_days))
         expected_return = sum(_bucket_midpoint(b) * b.probability for b in buckets)
-        note = f"Pooled {self._model_type}: {model.n_tickers} tickers, {model.n_train_rows} rows."
+        calibrated = model.is_calibrated
+        note = (
+            f"Pooled {self._model_type}: {model.n_tickers} tickers, {model.n_train_rows} rows"
+            + ("; probabilities isotonic-calibrated (cross-validated)." if calibrated else ".")
+        )
 
         return ScenarioForecast(
             ticker=series.ticker,
@@ -192,6 +196,6 @@ class MLForecaster:
             downside_prob=sum(
                 b.probability for b in buckets if b.upper is not None and b.upper <= 0.0
             ),
-            calibration_status="unknown",  # calibrated in Phase 6
+            calibration_status="calibrated" if calibrated else "uncalibrated",
             notes=note,
         )

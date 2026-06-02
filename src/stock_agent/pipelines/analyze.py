@@ -8,6 +8,7 @@ uncertainty note); horizons without enough history are skipped.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from pydantic import ValidationError
 
@@ -15,6 +16,8 @@ from stock_agent.data.earnings import fetch_earnings_context
 from stock_agent.data.loader import PriceLoader
 from stock_agent.features.news_features import build_news_features
 from stock_agent.forecasting.historical import HistoricalSimulation
+from stock_agent.forecasting.ml import MLForecaster
+from stock_agent.forecasting.pooled import default_model_path
 from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import AnthropicClient, LLMError, TextLLM
 from stock_agent.llm.news_summarizer import SummaryGuardError, summarize_news
@@ -63,6 +66,20 @@ def run_analyze(
             forecasts.append(model.forecast(series, horizon_days=h, as_of=as_of))
         except ValueError:
             log.info("analyze.skip_horizon", ticker=ticker, horizon=h, bars=len(series))
+
+    # Calibrated ML overlay (lightgbm) where a trained artifact exists — its niche is
+    # big-move magnitude, shown alongside the historical baseline. Skipped silently
+    # for horizons without an artifact (e.g. the dropped h5), so analyze never blocks
+    # on model availability and the report degrades to baselines-only.
+    ml = MLForecaster("lightgbm", registry=registry)
+    models_dir = Path(settings.output_dir) / "models"
+    for h in horizons:
+        if not default_model_path(models_dir, "lightgbm", h).exists():
+            continue
+        try:
+            forecasts.append(ml.forecast(series, horizon_days=h, as_of=as_of))
+        except (ValueError, KeyError) as exc:
+            log.info("analyze.ml_skip", ticker=ticker, horizon=h, error=str(exc))
 
     # News (always fetched; summary optional).
     news_bundle = NewsFetcher(registry).fetch(

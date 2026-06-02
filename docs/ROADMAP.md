@@ -88,7 +88,7 @@ Bracketed = primary deliverable.
 25. `agent/tools.py` adds `run_backtest` + `get_calibration` (with timeouts / argument bounds for heavier ops); extend system prompt so the agent reports calibration/trust honestly. [agent answers calibration/backtest questions, grounded] **← V1 milestone**
 
 ### Phase 7 — Hardening
-26. Forecast report section with CIs / VaR / calibration status.
+26. **[DONE]** Forecast report surfaces CIs / VaR / **real calibration status** / **horizon-scaled big-move** / horizon-trust. The deterministic report now overlays the **calibrated ML forecast** (lightgbm) alongside the historical baseline per horizon (graceful skip where no artifact); `calibration_status` is sourced from the artifact (`PooledModel.is_calibrated`) instead of a hardcoded `"unknown"`; each block renders the horizon's inner-`k` big-move reading (`large_move_breakdown`) and a horizon-confidence caveat (h≤30 measurable / h60 low-confidence).
 27. Coverage pass; finalize `docs/` (`ARCHITECTURE.md`, `MODELING.md`) + `README.md`.
 
 ## Active ML work queue (post-V1 ML track)
