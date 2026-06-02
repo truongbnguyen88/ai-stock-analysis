@@ -23,7 +23,12 @@ ui:  ## launch the Streamlit chat frontend (browser opens automatically)
 
 pull-models:  ## download the latest CI-trained models from GitHub into outputs/models/
 	@mkdir -p outputs/models
-	gh release download models-latest --pattern 'models.tar.gz' --dir outputs/models --clobber
+	@REPO=$$(git config --get remote.origin.url | sed -E 's#.*github\.com[:/]##; s#\.git$$##'); \
+	URL="https://github.com/$$REPO/releases/download/models-latest/models.tar.gz"; \
+	echo "Downloading $$URL"; \
+	curl -fL "$$URL" -o outputs/models/models.tar.gz || { \
+	  echo "✗ no 'models-latest' release yet (run the retrain workflow first), or download failed"; \
+	  exit 1; }
 	tar -xzf outputs/models/models.tar.gz -C outputs/models
 	@rm -f outputs/models/models.tar.gz
 	@echo "✓ Pulled latest models into outputs/models/"
