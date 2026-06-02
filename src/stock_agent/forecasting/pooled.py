@@ -34,6 +34,7 @@ log = get_logger(__name__)
 
 ModelType = Literal["logistic", "lightgbm"]
 _IMPUTED_MODELS = ("logistic",)  # lightgbm handles NaN natively
+_CALIBRATION_CV = 3  # folds for CalibratedClassifierCV (3 balances robustness vs k× cost)
 
 
 def _make_classifier(model_type: ModelType) -> Any:
@@ -114,7 +115,12 @@ class PooledModel:
         return getattr(self, "thresholds", None) or thresholds_for_horizon(self.horizon_days)
 
     def predict_exceedance(self, x_row: pd.DataFrame) -> list[float | None]:
-        """P(return > threshold) for each threshold; None where a clf is absent."""
+        """P(return > threshold) for each threshold; None where a clf is absent.
+
+        Calibration (when enabled) is baked into the stored classifier — a
+        ``CalibratedClassifierCV`` — so ``predict_proba`` already returns calibrated
+        probabilities; nothing extra is applied here.
+        """
         X = x_row[self.feature_cols]
         if self.imputer is not None:
             X = pd.DataFrame(self.imputer.transform(X), columns=self.feature_cols, index=X.index)
@@ -153,6 +159,7 @@ def train_pooled_from_series(
     min_total_rows: int = 500,
     earnings_by_ticker: dict[str, list[Date]] | None = None,
     vix: pd.Series | None = None,
+    calibrate: bool = True,
 ) -> PooledModel:
     """Train a pooled model from in-memory price series (pure; offline-testable).
 
@@ -213,12 +220,33 @@ def train_pooled_from_series(
 
     classifiers: dict[float, Any] = {}
     notes: list[str] = []
+    # Post-hoc calibration via CalibratedClassifierCV (cv=k): for each threshold it
+    # refits the base classifier on k-1 folds, fits an isotonic map on the held fold,
+    # repeats, and averages. This uses ALL the data for both fitting and calibration
+    # (no holdout data loss) and the averaged calibrator is robust on small folds —
+    # which a single prefit holdout was not (validated: prefit isotonic hurt lightgbm;
+    # see validations_results.md). Isotonic is monotone → ranking (AUC) preserved;
+    # the cross-threshold monotone envelope is enforced downstream in
+    # ml._exceedance_to_buckets. In the walk-forward backtest this all runs inside
+    # each train fold, so the test fold is never seen (leakage-safe).
+    if calibrate:
+        from sklearn.calibration import CalibratedClassifierCV
     for thresh in thresholds:
         labels = y_all[_target_col(thresh)]
         if labels.nunique() < 2:
             notes.append(f"threshold {thresh:+.2f} skipped (single class)")
             continue
-        clf = _make_classifier(model_type)
+        clf: Any = _make_classifier(model_type)
+        if calibrate:
+            try:
+                cal = CalibratedClassifierCV(clf, cv=_CALIBRATION_CV, method="isotonic")
+                cal.fit(X_fit, labels)
+                classifiers[thresh] = cal
+                continue
+            except ValueError as exc:
+                # Too few minority-class samples for k-fold calibration → ship raw.
+                notes.append(f"threshold {thresh:+.2f}: calibration unavailable ({exc}); raw")
+                clf = _make_classifier(model_type)
         clf.fit(X_fit, labels)
         classifiers[thresh] = clf
 

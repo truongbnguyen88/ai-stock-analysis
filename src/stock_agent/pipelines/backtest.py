@@ -59,6 +59,8 @@ def _pooled_builder(
     horizon_days: int,
     registry: ProviderRegistry,
     universe_path: Path,
+    *,
+    calibrate: bool = True,
 ) -> ModelBuilder:
     """Per-fold pooled-ML builder: trains on universe data ``<= train_end``.
 
@@ -92,7 +94,8 @@ def _pooled_builder(
         ]
         sliced = [s for s in sliced if len(s) >= 60]  # drop too-short slices
         pooled = train_pooled_from_series(
-            sliced, horizon_days=horizon_days, model_type=mt, earnings_by_ticker=earnings, vix=vix
+            sliced, horizon_days=horizon_days, model_type=mt, earnings_by_ticker=earnings,
+            vix=vix, calibrate=calibrate,
         )
         return MLForecaster(mt, model=pooled, registry=registry)
 
@@ -111,6 +114,7 @@ def run_backtest_pipeline(
     test_size: int = 6,
     big_move_k: float = 0.10,
     log_experiment: bool = True,
+    calibrate: bool = True,
 ) -> dict[str, BacktestResult]:
     """Backtest one or more forecasters on a ticker; return {model_name: result}.
 
@@ -131,7 +135,9 @@ def run_backtest_pipeline(
             model_label = name
         elif name in _ML_MODELS:
             log.warning("backtest.ml_refit_slow", model=name)
-            builder = _pooled_builder(name, horizon_days, registry, universe_path)
+            builder = _pooled_builder(
+                name, horizon_days, registry, universe_path, calibrate=calibrate
+            )
             model_label = f"ml_{name}"
         else:
             raise ValueError(f"unknown backtest model '{name}'")

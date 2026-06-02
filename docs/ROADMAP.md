@@ -20,7 +20,7 @@ Out of MVP: ML models, Monte Carlo, walk-forward backtesting, calibration, ensem
 ### V1 — statistical/ML modeling + rigorous evaluation
 
 - Monte Carlo forecaster (GBM + block bootstrap + earnings-jump variant).
-- ML forecasters: logistic / XGBoost / LightGBM / random forest under common interface; threshold-bucket targets. **Pooled (cross-sectional) training** across a ticker universe → persisted `PooledModel` artifact loaded at inference (`train` CLI).
+- ML forecasters: **logistic + tuned LightGBM** under a common interface; horizon-scaled threshold-bucket targets, **CalibratedClassifierCV** post-hoc calibration. **Pooled (cross-sectional) training** across a ticker universe → persisted `PooledModel` artifact loaded at inference (`train` CLI). *(xgboost + random_forest were evaluated and dropped — neither beat the toolkit at its cost; see validations_results.md.)*
 - **Price-only model (Option A):** news sentiment is display context (free AV scores by default; Claude opt-in), never a model input — no point-in-time historical news to train on. See TASKS.md decision log.
 - Backtesting: rolling + walk-forward OOS; full metric suite (accuracy, precision, recall, ROC AUC, Brier, log loss).
 - Calibration: reliability diagrams, isotonic/Platt, ECE, predicted-vs-realized.
@@ -93,19 +93,19 @@ Bracketed = primary deliverable.
 
 ## Active ML work queue (post-V1 ML track)
 
-Sequenced pipeline beyond the original phases — the ML-quality + MLOps track. Status as of **2026-05-31**. Empirical results land in [validations_results.md](validations_results.md).
+Sequenced pipeline beyond the original phases — the ML-quality + MLOps track. Status as of **2026-06-02**. Empirical results land in [validations_results.md](validations_results.md).
 
-1. **[IN PROGRESS] Large-scale lightgbm hyperparameter tuning.** Random search (~100 configs, ~13-D space) on the big-move target (h20, |r|>5%), objective = ROC AUC (calibration-invariant — calibration is fixed separately in step 2). **Ticker-level meta-validation against selection bias:** tune on a volatile validation basket, report the winner *once* on a **disjoint held-out basket** {AVGO, MU, ARM, TSLA, VRT}. Funnel: screen ~100 → validate top-12 → held-out test (+h5 spot-check). **Adopt the tuned config only if it beats the incumbent on held-out**; then retrain artifacts. Incumbent included as config #0.
-2. **[NEXT] Post-hoc calibration — logistic + tuned lightgbm.** Measure OOS ECE first; calibrate only where ECE > ~0.05 (lightgbm the prime candidate; logistic likely already fine). **Per-threshold isotonic + monotone-envelope** across the 5 bucket boundaries (prevents negative buckets) + **nested-holdout** fit inside each walk-forward fold (leakage-safe). Validate calibrated-vs-uncalibrated ECE / Brier / log-loss in-loop — **AUC must not move** (the invariant check). Baselines are already empirical-frequency-calibrated (out of scope); RF not in scope (not promoted).
-3. **[PLANNED] Scheduled monthly retraining + validate-then-promote.** A single `train --all` entrypoint (`{logistic, lightgbm} × {h5, h20, h60}`) + a `launchd`/cron monthly schedule. Job: **refresh data → retrain ML artifacts → refit calibrators → re-backtest everything (incl. baselines) → promote only if not worse → log.** Baselines are stateless → *re-validated, not retrained*. Versioned artifacts (training `as_of` in metadata) for rollback; the promote gate guards against shipping a degraded model from a bad data month. Realizes the **MLOps (drift monitoring, automated calibration re-checks)** + **Serving (scheduled refresh)** Future items above.
+1. **[DONE] Large-scale lightgbm tuning + horizon-scaled buckets.** Random search (~100 configs, ~13-D) with **ticker-level meta-validation against selection bias** (tune on a volatile basket → report once on a **disjoint held-out** basket {AVGO, MU, ARM, TSLA, VRT}). Winner **config #38** beat the incumbent on held-out h20 (+0.023 AUC — survived the winner's curse). Also shipped **horizon-scaled scenario buckets** (h20 ±5/±10, h30 ±10/±20, h60 ±15/±30; the inner boundary is the default big-move `k` = 5/10/15%), because a fixed ±5/±10 band is degenerate at long horizons. Retrained **logistic + lightgbm at {20, 30, 60}** via `train --all`; **dropped h5** (too short-term) and **dropped xgboost + random_forest** (neither promoted; RF's `class_weight="balanced"` was a latent calibration bug).
+2. **[IN PROGRESS] Post-hoc calibration — logistic + lightgbm.** Re-validation (volatile NVDA/SMCI/TSLA at each inner `k`) confirmed ML skill at **h20/h30** (AUC 0.59–0.67 > baselines) but **both models miscalibrated** (ECE 0.10–0.32, worsening with horizon); h60 unmeasurable (n≈19) → flagged low-confidence. Calibration is **`CalibratedClassifierCV(cv=3, method="isotonic")`** baked into each pooled threshold-classifier (config-gated via `settings.calibrate_ml`); the cross-threshold **monotone envelope** is enforced downstream in `ml._exceedance_to_buckets`. A/B discipline: calibrated-vs-raw, **AUC must stay flat**. (An earlier *prefit*-isotonic A/B helped logistic but **hurt lightgbm** — 20% data loss + isotonic overfitting small per-fold holdouts — so we switched to `cv=k`; the cv=3 re-A/B is running.)
+3. **[PLANNED] Scheduled monthly retraining + validate-then-promote.** `train --all` (`{logistic, lightgbm} × {20, 30, 60}`) + a `launchd`/cron monthly schedule. Job: **refresh data → retrain ML → refit calibrators → re-backtest everything (incl. baselines) → promote only if not worse → log.** Baselines are stateless → *re-validated, not retrained*. Versioned artifacts (training `as_of` in metadata) for rollback; the promote gate guards against shipping a degraded model from a bad data month. Realizes the **MLOps (drift monitoring, automated calibration re-checks)** + **Serving (scheduled refresh)** Future items above.
 
 ## CLI / chat surface
 
 ```bash
 # Deterministic CLI (scriptable, reproducible)
 python -m stock_agent analyze  --ticker NVDA  --days 90
-python -m stock_agent train    --model xgboost --horizon 20   # pooled ML (one-time)
-python -m stock_agent forecast --ticker MSFT  --horizon 20  --model xgboost
+python -m stock_agent train    --all                          # retrain logistic + lightgbm @ 20/30/60
+python -m stock_agent forecast --ticker MSFT  --horizon 30  --model lightgbm
 python -m stock_agent backtest --ticker AAPL                  # Phase 6
 
 # Conversational agent (same core)

@@ -223,7 +223,7 @@ CLI / Chat Agent  →  pipelines.analyze
 
 1. **Historical simulation (baseline)** — empirical distribution of past `h`-day returns → bucket frequencies. Reference for whether complex models add value.
 2. **Volatility-based Monte Carlo** — estimate drift/vol (EWMA/rolling → later GARCH); simulate paths → bucket probs, E[r], VaR, percentile CIs. Three variants: GBM (parametric), block-bootstrap (fat tails), and **earnings-jump** (GBM + an empirical post-earnings jump bootstrapped from the stock's own ~4y of historical earnings moves when an announcement falls in the horizon; calibration fetch is point-in-time to `as_of`, falls back to GBM with a disclosing note otherwise).
-3. **ML classifiers (pooled, price-only)** — one binary classifier per return-threshold (`> +5/+10%`, `< −5/−10%`), combined into the six buckets with isotonicity enforced. **Must be calibrated** before reporting. Two design decisions (see TASKS.md decision log):
+3. **ML classifiers (pooled, price-only)** — **logistic + tuned LightGBM** (config #38; xgboost & random-forest were evaluated and dropped). One binary classifier per **horizon-scaled** return-threshold (h20 ±5/±10%, h30 ±10/±20%, h60 ±15/±30% — a fixed ±5/±10 band is degenerate at long horizons), combined into the six buckets with isotonicity enforced. **Post-hoc calibrated** — `CalibratedClassifierCV(cv=3, isotonic)` baked into the artifact (config-gated `settings.calibrate_ml`), validated calibrated-vs-raw OOS with AUC held flat. Two design decisions (see TASKS.md decision log):
    - **Pooled, not per-ticker.** Trained once offline across a ticker universe (`configs/universe.txt`), persisted as a `PooledModel` artifact (`forecasting/pooled.py`, `train_pooled.py`) under `outputs/models/`, and loaded at inference. Per-ticker overlapping windows give too-low effective sample size; pooling (~tens of thousands of rows) generalizes because the features are scale-free ratios. Missing artifact → graceful fallback to historical-sim.
    - **Price-only (Option A).** The model uses price/indicator features only. News sentiment is **never** a model input — we have no point-in-time historical news to train on, and a feature absent at training cannot be applied at inference. News sentiment is *display context* (`features/news_features.py`): default = free Alpha Vantage scores; Claude scoring is opt-in.
 
@@ -242,12 +242,12 @@ CLI / Chat Agent  →  pipelines.analyze
 
 *Implemented in `backtesting/` (splitter · metrics · calibration · runner) + `pipelines/backtest.py` + `backtest` CLI.*
 
-- **One comparison surface for every model** — any `ScenarioForecast` is reduced to per-threshold exceedance probabilities `P(r > θ_k) = Σ buckets above θ_k` (θ_k = the bucket boundaries = the ML `THRESHOLDS`), scored against the realized label `1[r > θ_k]`. So historical-sim, Monte-Carlo, and ML are evaluated on identical folds with the exact target the ML models train on.
+- **One comparison surface for every model** — any `ScenarioForecast` is reduced to per-threshold exceedance probabilities `P(r > θ_k) = Σ buckets above θ_k` (θ_k = the **horizon-scaled** bucket boundaries = the ML cut-points from `thresholds_for_horizon`), scored against the realized label `1[r > θ_k]`. So historical-sim, Monte-Carlo, and ML are evaluated on identical folds with the exact target the ML models train on.
 - **Leakage discipline** — the runner forecasts from `bars[:t+1]` at each as-of (historical/MC point-in-time by construction); refittable models (pooled ML) are rebuilt per fold via `build_model(train_end_date)` on universe data ≤ cutoff.
 - **Temporal splitting only** — walk-forward folds (expanding/rolling train → fixed OOS test, stepped). No random K-fold.
 - **Embargo** between train end and test start equal to horizon `h` (prevents target overlap leakage).
 - **Metrics** per fold + aggregated with dispersion: accuracy, precision, recall, ROC AUC, Brier, log loss.
-- **Calibration first-class** — reliability diagrams, Expected Calibration Error, post-hoc isotonic/Platt fit on validation, re-evaluated OOS.
+- **Calibration first-class** — reliability diagrams + Expected Calibration Error measure trust; the served ML models are calibrated via `CalibratedClassifierCV(cv=k, isotonic)` baked into the artifact, validated calibrated-vs-raw OOS (ECE/Brier down, **AUC invariant**). The `backtest` harness's `calibrate=` flag drives that A/B.
 - **Baselines as guardrails** — every ML model compared to historical-sim + MC on identical folds. Underperforming/uncalibrated models reported as such.
 - **Reproducibility** — each run logs config, seeds, data window, provider versions, metrics to `outputs/experiments/<run_id>/`.
 

@@ -100,6 +100,7 @@ def train_pooled(
         model_type=model_type,
         earnings_by_ticker=earnings_by_ticker,
         vix=vix if not vix.empty else None,
+        calibrate=settings.calibrate_ml,
     )
 
     path = default_model_path(Path(settings.output_dir) / "models", model_type, horizon_days)

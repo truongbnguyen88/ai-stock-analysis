@@ -29,6 +29,8 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-05-31 | **Big-move reframe** — P(\|r\|>k) magnitude target (h5/h20) | ✅ **First genuine ML win** — logistic beats baselines on big-move AUC everywhere + Brier at h5 (MSFT/KO) | Build a `prob_large_move` signal (logistic, calibrated); ML's real niche |
 | 2026-05-31 | **VIX feature A/B** + universe → 110 tickers (big-move, h5) | ➖ neutral-to-positive (Brier flat, +AUC; KO AUC 0.84→0.93) | **Keep** VIX (sound, leakage-safe, optionality in high-vol regimes); expand universe |
 | 2026-05-31 | **RF tuning + basket test** — tuned RandomForest vs logistic/lightgbm/baselines, 9-ticker vol spectrum (big-move, h20) | ✅ routing confirmed: `corr(vol, log−tree AUC gap) = -0.913`; RF only **ties** lightgbm | **Do NOT promote RF** (cost ≫ benefit); toolkit stays logistic + lightgbm |
+| 2026-06-01 | **Large-scale lightgbm tuning** (~100 configs, ticker-level meta-validation) + **horizon-scaled buckets** | ✅ config #38 wins held-out h20 (+0.023 AUC); scaling balances the target for volatile names | Adopt #38; ship scaled buckets (h20 ±5/10, h30 ±10/20, h60 ±15/30); drop h5; drop xgboost/RF |
+| 2026-06-01 | **Re-validation on scaled buckets** (volatile NVDA/SMCI/TSLA; h20/30/60 at inner k) | ✅ ML skill at h20/h30 (AUC 0.59–0.67 > baselines); ⚠️ both models **miscalibrated** (ECE 0.10–0.32); h60 unmeasurable (n=19) | **Calibrate logistic AND lightgbm** (Step 3); flag h60 big-move low-confidence |
 
 ---
 
@@ -234,3 +236,40 @@ python -m stock_agent backtest --ticker NVDA                    # baselines, sam
 - **Weak absolute skill on several names.** AMD/MRVL/PLTR AUC ≈ 0.5 (PLTR < 0.5); the big-move edge is strong on NVDA/SMCI, marginal elsewhere. With ~61 OOS/ticker the per-ticker AUC CIs are wide (±~0.1) — trust the aggregate, not ±0.03 individual rankings.
 
 **Decision.** **Do NOT promote RandomForest.** It only *ties* lightgbm overall while costing ~10–50× more at inference (300 deep trees over ~100k+ rows vs histogram boosting) and losing the most-volatile name. A heavy model that merely ties a cheap, validated one doesn't earn the swap. **Production toolkit stands: logistic (stable names) + regularized lightgbm (volatile names);** RF is documented as competitive-but-not-cost-justified. Sequence / deep models stay parked. **Next:** post-hoc calibration scoped to the *shipped* toolkit (logistic + lightgbm) — measure OOS ECE, calibrate where ECE > ~0.05 (lightgbm the prime candidate; logistic likely already well-calibrated).
+
+---
+
+## 2026-06-01 — Large-scale lightgbm tuning + horizon-scaled buckets
+
+**Question.** Can a larger hyperparameter search beat the prior lightgbm config — *without* selection bias? And does a fixed ±5%/±10% big-move band stay informative across horizons?
+
+**Tuning.** Random search, ~100 configs over a ~13-D space (learning rate, n_estimators, num_leaves, max_depth, min_child_samples, subsample, colsample, reg_lambda/alpha, **min_split_gain, min_child_weight, max_bin, path_smooth**). Objective = big-move ROC AUC (calibration-invariant; calibration handled separately). **Ticker-level meta-validation against selection bias:** stage 1 screen (NVDA/SMCI) → stage 2 validate (5-ticker volatile basket) → stage 3 **held-out** test on a DISJOINT basket {AVGO, MU, ARM, TSLA, VRT}. The funnel reordered (stage-1 winner #33 fell to rank 5 — winner's curse in action); the validation winner was **#38** (`n_estimators=400, num_leaves=47, max_depth=-1, learning_rate=0.024, min_child_samples=50, subsample=0.98, colsample=0.56, reg_lambda≈9, path_smooth=1, max_bin=127`).
+
+**Held-out verdict.** #38 beats the incumbent on the **disjoint** basket: mean big-move AUC **0.583 vs 0.559 (+0.0234)** at h20 — the validation edge (+0.035) shrank but survived → a *real* (modest) improvement, not selection noise. h30 directional +0.026; h60 unmeasurable (few folds). **Adopted #38** for all horizons.
+
+**Horizon-scaled buckets.** Base rates of `|r|>5%` over longer horizons are degenerate (~90% at h60 → the target is single-class). Scaled the bucket band with horizon — **h20 ±5/±10, h30 ±10/±20, h60 ±15/±30** — so each horizon's inner boundary (5/10/15%) is the natural "big move" threshold. `k` is a read-time parameter (`get_large_move`); the artifact predicts all boundaries.
+
+**Decision.** Adopt #38; ship horizon-scaled buckets; retrain logistic + lightgbm at **{20, 30, 60}** (`train --all`); **drop h5** (too short-term for swing trading) and **drop xgboost + random_forest** (never promoted; RF's `class_weight="balanced"` was a latent calibration bug). Toolkit = logistic + tuned lightgbm only.
+
+---
+
+## 2026-06-01 — Re-validation on the horizon-scaled buckets (volatile names)
+
+**Question.** The big-move *target* changed (h30 → P(|r|>10%), h60 → P(|r|>15%)), so prior numbers no longer describe these models. Did scaling balance the target? Do the models have skill at the new thresholds? And what's the calibration error (the Step-3 scope)?
+
+**Base rates (direct from prices).** The scaled thresholds are right-sized **for volatile names** (the big-move regime): volatile {NVDA,AMD,SMCI} ≈ 55–75% across horizons (balanced/informative); stable {KO,PG,JNJ} fall to **1–9%** at h30/h60 — correct, *stable names don't make 15% moves in 60 days*. So big-move skill is only measurable on volatile names; that's the validation set.
+
+**Setup.** Walk-forward backtest on **NVDA/SMCI/TSLA**, each horizon at its inner k (h20/5%, h30/10%, h60/15%), logistic + lightgbm + baselines. Means over the 3 names:
+
+| horizon (k) | base % | hist AUC | mc AUC | **logistic AUC** | **lightgbm AUC** | **log ECE** | **lgb ECE** | n/ticker |
+|---|---|---|---|---|---|---|---|---|
+| h20 (5%) | 73 | 0.48 | 0.51 | **0.65** | **0.66** | 0.10 | 0.11 | 61 |
+| h30 (10%) | 58 | 0.40 | 0.44 | **0.67** | **0.59** | 0.18 | 0.17 | 40 |
+| h60 (15%) | 56 | 0.33 | 0.31 | 0.52 | 0.50 | 0.29 | 0.32 | **19** |
+
+**Findings.**
+- **Skill is real at h20 & h30.** Both ML models (0.59–0.67) clearly beat the baselines (~0.40–0.51). logistic ≈ lightgbm (logistic even edges at h30) → the "lightgbm for volatile" advantage is marginal, but no reason to change the toolkit.
+- **h60 is unmeasurable.** Every model ≈ 0.5 with only **19 OOS predictions** (the non-overlapping-60-day-window limit). Can't validate h60 skill → serve it as **low-confidence**.
+- **Both models are miscalibrated** (ECE 0.10 → 0.18 → 0.32, worsening with horizon), while baselines are well-calibrated (0.06–0.15). Tellingly, **ML Brier does not beat the baselines despite higher AUC** (h20: lgb 0.291 vs baseline 0.245) — real resolution wasted by overconfidence. (Earlier guess that logistic was "probably fine" was **wrong** — it's miscalibrated too.)
+
+**Decision.** **Calibrate BOTH logistic and lightgbm** (Step 3: per-threshold isotonic + monotone-envelope + nested holdout). Priority h20 + h30 (skill + miscalibrated → calibration recovers Brier without touching AUC). h60: apply for honesty but flag the big-move signal as low-confidence. Baselines: already calibrated, left alone.

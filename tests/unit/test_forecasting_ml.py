@@ -37,7 +37,7 @@ def _universe(n_tickers: int = 6) -> list[PriceSeries]:
 
 def test_train_pooled_produces_model() -> None:
     model = train_pooled_from_series(
-        _universe(), horizon_days=20, model_type="logistic", min_total_rows=100
+        _universe(), horizon_days=20, model_type="logistic", min_total_rows=100, calibrate=False
     )
     assert model.n_tickers >= 1
     assert model.n_train_rows >= 100
@@ -52,6 +52,7 @@ def test_pooled_forecast_buckets_valid(model_type: str) -> None:
         horizon_days=20,
         model_type=model_type,  # type: ignore[arg-type]
         min_total_rows=100,
+        calibrate=False,
     )
     fc = MLForecaster(model_type, model=model).forecast(  # type: ignore[arg-type]
         _noisy_series("NVDA", seed=99), horizon_days=20
@@ -68,7 +69,7 @@ def test_pooled_forecast_buckets_valid(model_type: str) -> None:
 
 def test_pooled_save_load_roundtrip(tmp_path: Path) -> None:
     model = train_pooled_from_series(
-        _universe(), horizon_days=20, model_type="lightgbm", min_total_rows=100
+        _universe(), horizon_days=20, model_type="lightgbm", min_total_rows=100, calibrate=False
     )
     path = tmp_path / "pooled_lightgbm_h20.joblib"
     model.save(path)
@@ -96,7 +97,7 @@ def test_ml_falls_back_to_historical_sim_without_artifact(tmp_path: Path) -> Non
 def test_ml_loads_artifact_from_disk(tmp_path: Path) -> None:
     # Train + persist at the canonical path, then a fresh forecaster loads it.
     model = train_pooled_from_series(
-        _universe(), horizon_days=15, model_type="lightgbm", min_total_rows=100
+        _universe(), horizon_days=15, model_type="lightgbm", min_total_rows=100, calibrate=False
     )
     (tmp_path / "pooled_lightgbm_h15.joblib").parent.mkdir(parents=True, exist_ok=True)
     model.save(tmp_path / "pooled_lightgbm_h15.joblib")
@@ -105,3 +106,28 @@ def test_ml_loads_artifact_from_disk(tmp_path: Path) -> None:
         _noisy_series("NVDA", seed=42), horizon_days=15
     )
     assert fc.notes is not None and "Pooled" in fc.notes  # used the artifact, not fallback
+
+
+def test_calibration_wraps_classifier_when_enabled_else_not() -> None:
+    from sklearn.calibration import CalibratedClassifierCV
+
+    cal = train_pooled_from_series(
+        _universe(), horizon_days=20, model_type="lightgbm", min_total_rows=100, calibrate=True
+    )
+    raw = train_pooled_from_series(
+        _universe(), horizon_days=20, model_type="lightgbm", min_total_rows=100, calibrate=False
+    )
+    # calibrate=True stores CalibratedClassifierCV per threshold; calibrate=False the raw model.
+    assert any(isinstance(c, CalibratedClassifierCV) for c in cal.classifiers.values())
+    assert not any(isinstance(c, CalibratedClassifierCV) for c in raw.classifiers.values())
+
+
+def test_calibrated_model_yields_valid_distribution() -> None:
+    m = train_pooled_from_series(
+        _universe(), horizon_days=20, model_type="lightgbm", min_total_rows=100, calibrate=True
+    )
+    # Calibrated probabilities still form a valid distribution (monotone envelope →
+    # non-negative buckets that sum to 1).
+    fc = MLForecaster("lightgbm", model=m).forecast(_noisy_series("Z", seed=3), horizon_days=20)
+    assert sum(b.probability for b in fc.buckets) == pytest.approx(1.0, abs=1e-6)
+    assert all(0.0 <= b.probability <= 1.0 for b in fc.buckets)

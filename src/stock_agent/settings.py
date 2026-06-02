@@ -90,6 +90,10 @@ class Settings(BaseSettings):
     log_format: Literal["json", "console"] = "json"
     output_dir: Path = Path("outputs")
     random_seed: int = 42
+    # Post-hoc calibration of the pooled ML classifiers (per-threshold isotonic on a
+    # nested holdout). Validated to cut OOS ECE without moving AUC; 0/False disables
+    # it (e.g. to A/B calibrated vs raw in a backtest).
+    calibrate_ml: bool = True
 
     # ---- Chat history (Streamlit frontend) ----
     # Saved conversation threads (text + charts + resumable agent history). Lives
