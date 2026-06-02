@@ -24,6 +24,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Keepalive — reset the 60-day schedule-disable timer
+        # GitHub auto-disables a scheduled workflow after 60 days with no repo
+        # activity. A push on every monthly trigger (~30 days < 60) keeps it
+        # "active" hands-off. Placed before training so a failed/slow retrain
+        # still resets the timer. GITHUB_TOKEN pushes don't re-trigger workflows,
+        # so there's no recursion ([skip ci] is belt-and-suspenders).
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p .github
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/last-retrain.txt
+          git add .github/last-retrain.txt
+          git commit -m "chore(ci): monthly retrain keepalive [skip ci]" || exit 0
+          git push
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
