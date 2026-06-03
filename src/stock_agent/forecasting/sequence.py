@@ -111,7 +111,11 @@ class _Standardizer:
 
 @dataclass
 class SequenceModel:
-    """Trained LSTM weights + standardizer + config (one horizon)."""
+    """Trained LSTM weights + standardizer + config (one horizon).
+
+    ``temperature`` (>1 softens, <1 sharpens) is a post-hoc calibration scalar fit
+    on a validation slice; ``dropout`` is stored so the net can be reconstructed.
+    """
 
     state_dict: dict[str, Any]
     scaler: _Standardizer
@@ -120,9 +124,14 @@ class SequenceModel:
     hidden: int
     layers: int
     n_features: int
+    dropout: float = 0.0
+    temperature: float = 1.0
+    layernorm: bool = False
 
 
-def _build_net(n_features: int, hidden: int, layers: int) -> Any:
+def _build_net(
+    n_features: int, hidden: int, layers: int, dropout: float = 0.0, layernorm: bool = False
+) -> Any:
     from torch import nn
 
     class LSTMNet(nn.Module):
@@ -130,13 +139,16 @@ def _build_net(n_features: int, hidden: int, layers: int) -> Any:
             super().__init__()
             self.lstm = nn.LSTM(
                 n_features, hidden, num_layers=layers, batch_first=True,
-                dropout=0.1 if layers > 1 else 0.0,
+                dropout=dropout if layers > 1 else 0.0,
             )
+            # LayerNorm stabilises the deeper (3–4 layer) stacks in the tuning sweep.
+            self.norm = nn.LayerNorm(hidden) if layernorm else nn.Identity()
+            self.drop = nn.Dropout(dropout)
             self.head = nn.Linear(hidden, _N_BUCKETS)
 
         def forward(self, x: Any) -> Any:
             out, _ = self.lstm(x)
-            return self.head(out[:, -1, :])  # last timestep → bucket logits
+            return self.head(self.drop(self.norm(out[:, -1, :])))  # last step → bucket logits
 
     return LSTMNet()
 
@@ -152,8 +164,16 @@ def train_sequence_model(
     lr: float = 1e-3,
     batch_size: int = 256,
     seed: int = 42,
+    dropout: float = 0.0,
+    weight_decay: float = 0.0,
+    layernorm: bool = False,
 ) -> SequenceModel:
-    """Train a pooled LSTM over the universe's leakage-safe feature sequences."""
+    """Train a pooled LSTM over the universe's leakage-safe feature sequences.
+
+    Fixed-epoch trainer (no early stopping) used by the unit tests and simple
+    callers; the tuning harness (``sequence_tune``) does its own early-stopped,
+    validation-selected, temperature-calibrated training.
+    """
     import torch
     from torch import nn
 
@@ -175,8 +195,8 @@ def train_sequence_model(
     Xs = scaler.transform(X)
     log.info("sequence.train_start", n_seq=len(Xs), horizon=horizon, features=X.shape[-1])
 
-    net = _build_net(X.shape[-1], hidden, layers)
-    opt = torch.optim.Adam(net.parameters(), lr=lr)
+    net = _build_net(X.shape[-1], hidden, layers, dropout, layernorm)
+    opt = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=weight_decay)
     loss_fn = nn.CrossEntropyLoss()
     xt = torch.from_numpy(Xs)
     yt = torch.from_numpy(Y)
@@ -199,6 +219,8 @@ def train_sequence_model(
         hidden=hidden,
         layers=layers,
         n_features=X.shape[-1],
+        dropout=dropout,
+        layernorm=layernorm,
     )
 
 
@@ -214,7 +236,10 @@ class SequenceForecaster:
         import torch
 
         if self._net is None:
-            net = _build_net(self._model.n_features, self._model.hidden, self._model.layers)
+            net = _build_net(
+                self._model.n_features, self._model.hidden, self._model.layers,
+                self._model.dropout, self._model.layernorm,
+            )
             net.load_state_dict(self._model.state_dict)
             net.eval()
             self._net = net
@@ -236,7 +261,8 @@ class SequenceForecaster:
         x = self._model.scaler.transform(window)[None]  # [1, L, F]
         net, torch = self._net_eval()
         with torch.no_grad():
-            probs = torch.softmax(net(torch.from_numpy(x)), dim=1).numpy()[0]
+            logits = net(torch.from_numpy(x)) / self._model.temperature  # temp-scaled calibration
+            probs = torch.softmax(logits, dim=1).numpy()[0]
 
         buckets = make_prob_buckets([float(p) for p in probs], buckets_for_horizon(horizon_days))
         expected = sum(_bucket_midpoint(b) * b.probability for b in buckets)

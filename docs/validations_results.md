@@ -34,6 +34,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-02 | **Calibration A/B** — prefit-isotonic vs `CalibratedClassifierCV(cv=3)` (volatile, h20/h30) | prefit helped logistic but **hurt lightgbm**; **cv=3 improves Brier in all cells** + fixes lightgbm ECE | Ship calibration (cv=3) for **both** models; default `calibrate_ml=True` |
 | 2026-06-02 | **Task 8 spike — regime (Gaussian HMM) forecaster** vs unconditional baselines (volatile basket, h20; h60 sanity) | ❌ ties baselines (mean +0.0006 Brier, i.e. marginally worse) — vol-regime conditioning is **redundant** with bootstrap/VIX | **Do NOT promote**; keep `regime_hmm` experimental (CLI/backtest only); **reinforces parking TFT/LSTM** |
 | 2026-06-02 | **Task 8 spike — pooled LSTM sequence forecaster** vs baselines (NVDA/TSLA, h20 single-split; config sweep) | ❌ **worse**, not just a tie — Brier 0.30/0.26 vs ~0.19, ECE 0.21–0.26 vs ~0.07; lighter fits only approach the baseline from below, never beat | **Do NOT promote**; `lstm_seq` + torch kept as an isolated optional extra; **confirms the ceiling is information, not model class** |
+| 2026-06-03 | **Task 8 (cont.) — heavy LSTM + LR sweep + 114-ticker validation + calibration sweep** (3–4 layers, LayerNorm; CalibratedClassifierCV isotonic & sigmoid) | ❌ extracts a **real but redundant** vol signal (pooled big-move AUC +0.02–0.04 over historical) yet **loses Brier/ECE on ~75% of tickers**; **no** calibration method helps (val→test shift) | **Close LSTM/sequence track**; ceiling is *information*; next lever = GARCH (MC-tier upgrade) or Task 9 (news) |
 
 ---
 
@@ -366,3 +367,39 @@ run_backtest_pipeline("NVDA", 20,
 **Decision.** **Do NOT promote** `lstm_seq`. Keep it as an isolated optional extra (torch is heavy and segfaults alongside lightgbm in one process on macOS, so its tests are env-gated — `RUN_SEQUENCE_TESTS=1`; the default gate + CI never load torch). **Do not pursue a transformer** — same inputs, more capacity, strictly higher cost/variance. The only lever with real upside is a **new information source** (Task 9 point-in-time news), not a new function class on price alone.
 
 **Reproduce.** Install the extra (`pip install -e ".[sequence]"`), then the single-split eval in the session log (train `train_sequence_model` on a universe sliced ≤ a cutoff date; compare via `run_backtest` on post-cutoff folds with matched `min_train`).
+
+---
+
+## 2026-06-03 — Task 8 (cont.): heavy LSTM, LR sweep, 114-ticker validation, calibration sweep
+
+The spike used 40 tickers, one config, no early stopping. To **refute** "it failed only because it was under-powered / under-calibrated," we gave the sequence model every advantage. Harness: `forecasting/sequence_tune.py` (early stopping on val Brier, temperature calibration, train-vs-val AUC diagnostic, stride subsampling). Protocol: full 114-ticker universe; **date split** train ≤ 2024-01-02 (60%) / val 60–80% / **held-out test > 2025-03-19**; per-threshold exceedance scoring; winners persisted to `outputs/experimental/` (gitignored).
+
+**1. Heavy architecture search** (3–4 LSTM layers, hidden 128/256, LayerNorm, dropout): **flat** — val Brier 0.1707–0.1715, val AUC 0.62–0.64 across *all* configs; **train AUC ≈ val AUC** (generalizable, not overfit — capacity isn't the issue).
+
+**2. Learning-rate sweep** (3e-5 → 1e-3): flat; best `lr=3e-4` (val Brier 0.1700, immaterial vs 1e-3's 0.1715). A flat response over both architecture and LR is the fingerprint of *no additional extractable signal*.
+
+**3. Pooled held-out big-move AUC vs historical** (n=27k–32k):
+
+| | LSTM | historical | edge |
+|---|---|---|---|
+| h20 | 0.665 | 0.644 | +0.021 |
+| h30 | 0.698 | 0.674 | +0.024 |
+| h60 | 0.720 | 0.683 | +0.037 |
+
+A **small, real, generalizable** discrimination edge (growing with horizon) — so the heavy net *does* extract vol signal the light one (AUC≈0.5) missed.
+
+**4. 114-ticker held-out Brier / ECE** (mean across tickers; the deployable verdict):
+
+| Horizon | LSTM | historical | LSTM win-rate vs hist |
+|---|---|---|---|
+| h20 | 0.182 / 0.154 | **0.170** / 0.113 | **25%** (28/114) |
+| h30 | 0.214 / 0.221 | **0.199** / 0.169 | **27%** (31/114) |
+| h60 | 0.235 / 0.278 | 0.240 / 0.244 | 55%* (h60 unmeasurable) |
+
+Worse Brier and ECE; loses to the trivial baseline on **~3 of 4 tickers** at the measurable horizons.
+
+**5. Calibration sweep** (temperature · manual per-threshold isotonic · `CalibratedClassifierCV(cv=3)` isotonic & sigmoid). Raw pooled exceedance ECE was **already good** (0.085 / 0.075 / 0.058) — the model is *not* miscalibrated at the pooled level. **Every** val-fit calibrator made the **test** period *worse* (val→test distribution shift); AUC stayed invariant (confirming correct, resolution-preserving recalibration); the 114-ticker win-rate never approached 50% (18–40%). Sigmoid transferred marginally better than isotonic (parametric → shift-robust), as expected, but still net-negative.
+
+**Why it loses (decomposed).** Brier = reliability − resolution + uncertainty. Calibration only shrinks *reliability*; it cannot add *resolution*. The LSTM's resolution (AUC ≈ 0.665) ≈ the baseline's (0.644) → **redundant**, so even a perfectly-calibrated LSTM converges to ≈ a *tie*, never a win. The residual per-ticker miscalibration (per-ticker ECE 0.15–0.29) is invisible to any *global* pooled calibrator.
+
+**Decision.** **Close the sequence/regime track (Task 8).** Capacity (3–4 layers), learning rate, full universe, and four calibration methods incl. `CalibratedClassifierCV(cv=3)` were all ruled out across 114 tickers and three horizons. The binding constraint is **information, not model class or calibration**. Next levers: **GARCH** (a principled conditional-volatility upgrade to the Monte-Carlo/baseline tier — different mechanism, not just more capacity) and/or **Task 9** (point-in-time news = genuinely new information). `lstm_seq` + `sequence_tune.py` stay as an isolated, torch-gated experimental harness for the record.
