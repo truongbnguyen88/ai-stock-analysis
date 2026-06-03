@@ -17,7 +17,7 @@ returns, not a point prediction or a buy/sell signal.
 
 - [0. The shared output contract](#0-the-shared-output-contract)
 - [1. Historical Simulation](#1-historical-simulation)
-- [2. Monte Carlo: GBM, bootstrap, and earnings-jump](#2-monte-carlo-gbm-bootstrap-and-earnings-jump)
+- [2. Monte Carlo: GBM, bootstrap, earnings-jump, and GARCH](#2-monte-carlo-gbm-bootstrap-earnings-jump-and-garch)
 - [3. Machine Learning: pooled, price-only classifiers](#3-machine-learning-pooled-price-only-classifiers)
 - [4. Side-by-side comparison](#4-side-by-side-comparison)
 - [5. What none of them do](#5-what-none-of-them-do)
@@ -73,7 +73,7 @@ buckets and the ML targets are the *same* partition by design.
 flowchart LR
     PS["PriceSeries + horizon + as_of"]
     PS --> H["Historical Sim"]
-    PS --> M["Monte Carlo<br/>gbm · bootstrap · jump"]
+    PS --> M["Monte Carlo<br/>gbm · bootstrap · jump · garch"]
     PS --> L["ML pooled classifiers"]
     H --> SF["ScenarioForecast<br/>6 buckets · mean · VaR · CI"]
     M --> SF
@@ -168,10 +168,10 @@ stock's *own historical frequency table* of 20-day outcomes.
 
 ---
 
-## 2. Monte Carlo: GBM, bootstrap, and earnings-jump
+## 2. Monte Carlo: GBM, bootstrap, earnings-jump, and GARCH
 
 **File:** [forecasting/monte_carlo.py](../src/stock_agent/forecasting/monte_carlo.py)
-· **Model names:** `monte_carlo_gbm`, `monte_carlo_bootstrap`, `monte_carlo_jump`
+· **Model names:** `monte_carlo_gbm`, `monte_carlo_bootstrap`, `monte_carlo_jump`, `monte_carlo_garch`
 
 Monte Carlo **simulates $N$ forward price paths** ($N = 10{,}000$), reads each
 path's terminal return, and forms the distribution by *frequency over the
@@ -371,6 +371,78 @@ $\sigma_J^2 / \big[(h-1)\sigma^2 + \sigma_J^2\big]$:
   points. The jump matters most exactly when the horizon is short and the
   catalyst dominates — the case GBM is most wrong about.
 
+### 2.4 GARCH (conditional volatility) — `monte_carlo_garch`
+
+**Motivation.** GBM holds volatility *constant* over the horizon; the bootstrap
+implicitly carries *recent* volatility forward by resampling recent returns.
+Neither **forecasts how volatility evolves**. But equity volatility has two robust
+empirical properties: it **clusters** (big days follow big days) and it
+**mean-reverts** (calm and storm both fade toward a long-run level). GARCH models
+exactly this — the purpose-built tool for our validated finding that *magnitude is
+predictable, direction is not*.
+
+**The model — GJR-GARCH(1,1) with Student-t innovations.** Decompose each daily
+return into a mean plus a time-varying-scale shock,
+
+$$
+r_t = \mu + \varepsilon_t, \qquad \varepsilon_t = \sigma_t\, z_t, \qquad
+z_t \sim t_\nu \ \text{(standardized to unit variance)},
+$$
+
+and let the **conditional variance** evolve as
+
+$$
+\sigma_t^2 = \omega + \big(\alpha + \gamma\,\mathbb{1}[\varepsilon_{t-1} < 0]\big)\,
+\varepsilon_{t-1}^2 + \beta\,\sigma_{t-1}^2 .
+$$
+
+- $\alpha$ — **ARCH** term: how strongly a fresh shock raises tomorrow's variance.
+- $\beta$ — **GARCH** term: persistence of variance (yesterday's level carries over).
+- $\gamma$ — **GJR / leverage** term (the `o=1` in code): *negative* shocks add
+  **extra** variance — the equity leverage effect (markets get more volatile on the
+  way down).
+- $\omega$ — baseline variance; $\nu$ — Student-t degrees of freedom → **fat tails**
+  (Normal innovations understate equity tail risk).
+
+Two derived quantities matter: **persistence** $\alpha + \beta + \tfrac{1}{2}\gamma$
+is typically 0.95–0.99 for equities (volatility is sticky), and the **long-run
+variance** $\bar\sigma^2 = \omega / (1 - \alpha - \beta - \tfrac{1}{2}\gamma)$ is the
+level forecasts **mean-revert** toward.
+
+**Forward simulation.** Fit by maximum likelihood on the daily log returns up to
+`as_of`, yielding the *current* conditional variance $\sigma_T^2$. From there,
+simulate `n_paths` forward paths of `horizon` days — recursing the variance equation
+and drawing $z_t$ from the fitted Student-t — so the variance forecast **drifts back
+toward $\bar\sigma^2$** over the horizon. Each path's summed daily returns give a
+terminal h-day return; the sample of terminals becomes the six buckets / VaR / CI
+through the shared `sample_to_forecast` contract — identical output shape to every
+other model.
+
+**Why it adds information the others lack.** Historical-sim is *unconditional* (same
+tail every day); GBM holds *today's* vol flat for the whole horizon; the bootstrap
+resamples *recent* returns (it inherits recent vol but has no forward dynamics).
+GARCH alone **projects volatility forward with mean-reversion**: when current vol is
+unusually high (or low) it correctly narrows (or widens) the terminal distribution
+as vol reverts. That structure is worth most at **longer horizons** (h30/h60) and
+around **regime transitions** — exactly where "hold recent vol constant" is wrong.
+
+**Implementation notes.** Fit is **per-ticker** on daily returns (~1000+
+*non-overlapping* observations for 3–4 parameters) — so, unlike the pooled ML
+models, it sidesteps the overlapping-window effective-sample-size problem entirely.
+Deterministic (a seeded Student-t drives the simulation; `arch`'s `forecast`
+`random_state` is ignored, so the seed goes on the *distribution*). Degrades safely:
+< 250 returns, a missing `arch` install, or a non-converging fit fall back to the
+**block bootstrap** with a disclosing note.
+
+**Validation (see [validations_results.md](validations_results.md)).** On a
+12-ticker walk-forward, GARCH is the **first model in the post-V1 search to beat the
+baselines on the deployable proper score**: it **ties** the bootstrap at h20 (short
+horizon → recent vol ≈ forward vol, edge redundant) but **wins on Brier at h30
+(9/12) and h60 (10/12)**, with the **highest big-move AUC at every horizon** — so the
+win is *earned resolution*, not just calibration. Promoted into the default
+comparison set and the chat agent. It models *spread, not direction* — direction
+stays efficient (AUC ≈ 0.5), consistent with the rest of this document.
+
 ### Monte Carlo: assumptions & failure modes
 
 - **GBM:** normality + constant $\mu, \sigma$ over the horizon; no autocorrelation.
@@ -381,6 +453,11 @@ $\sigma_J^2 / \big[(h-1)\sigma^2 + \sigma_J^2\big]$:
 - **Jump:** assumes past earnings reactions are representative of the next one;
   thin sample ($M \approx 16$) means the jump distribution itself is uncertain;
   the mean-inclusive choice imports historical directional skew.
+- **GARCH:** assumes the conditional-variance recursion (clustering + leverage) is
+  stable and the Student-t captures the tails; MLE needs a few hundred daily
+  observations and can fail to converge on short/degenerate series (→ bootstrap
+  fallback). Models *variance, not the mean* — it sharpens tails/VaR, not the
+  directional call.
 
 ---
 
@@ -697,11 +774,11 @@ AUC/calibration shown inline as a trust badge) is the next enhancement.
 
 ## 4. Side-by-side comparison
 
-| | Historical Sim | Monte Carlo (GBM/bootstrap/jump) | ML (pooled) |
+| | Historical Sim | Monte Carlo (GBM/bootstrap/jump/GARCH) | ML (pooled) |
 |---|---|---|---|
 | **Type** | Empirical, unconditional | Parametric / semi-parametric simulation | Conditional supervised |
-| **Conditions on today's state?** | No | Only via recent $\mu,\sigma$ (+ earnings for jump) | **Yes** (18 features) |
-| **Distributional assumption** | None | GBM: Normal log-returns; bootstrap: none; jump: + empirical jump | None on returns; learned mapping |
+| **Conditions on today's state?** | No | Via recent $\mu,\sigma$ (+ earnings for jump); **GARCH forecasts vol forward, mean-reverting** | **Yes** (18 features) |
+| **Distributional assumption** | None | GBM: Normal log-returns; bootstrap: none; jump: + empirical jump; GARCH: GJR-GARCH-t conditional variance | None on returns; learned mapping |
 | **Data needed** | This ticker's prices | This ticker's prices (+ earnings for jump) | Universe history + a trained artifact |
 | **Captures fat tails?** | Yes (empirically) | GBM no; bootstrap/jump yes | Via thresholds; tails data-starved |
 | **Captures event risk (earnings)?** | No | **Only the jump variant** | Via `days_to_next_earnings` (weakly) |
