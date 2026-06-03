@@ -36,6 +36,7 @@ STATELESS_MODELS: tuple[str, ...] = (
     "historical_sim",
     "monte_carlo_gbm",
     "monte_carlo_bootstrap",
+    "monte_carlo_garch",  # validated peer (Task 9): best at h30/h60, ties at h20
 )
 _ML_MODELS: tuple[str, ...] = ("logistic", "lightgbm")
 _BACKTEST_LOOKBACK_DAYS = 2200  # ~6y: warmup + enough OOS folds
@@ -51,6 +52,8 @@ def _stateless_model(name: str, registry: ProviderRegistry) -> ForecastModel:
         return MonteCarlo(variant="bootstrap", n_paths=_MC_PATHS)
     if name == "monte_carlo_jump":
         return MonteCarlo(variant="jump", n_paths=_MC_PATHS, registry=registry)
+    if name == "monte_carlo_garch":
+        return MonteCarlo(variant="garch", n_paths=_MC_PATHS)
     if name == "regime_hmm":
         # Experimental (Task 8): fit point-in-time inside forecast(), so the
         # runner's per-as-of slicing keeps it leakage-safe like the other
@@ -137,7 +140,8 @@ def run_backtest_pipeline(
 
     results: dict[str, BacktestResult] = {}
     for name in model_names:
-        if name in STATELESS_MODELS or name in ("monte_carlo_jump", "regime_hmm"):
+        refit_stateless = ("monte_carlo_jump", "regime_hmm")  # opt-in (not in the default set)
+        if name in STATELESS_MODELS or name in refit_stateless:
             builder = stateless_builder(_stateless_model(name, registry))
             model_label = name
         elif name in _ML_MODELS:

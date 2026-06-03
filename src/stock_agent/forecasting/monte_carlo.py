@@ -36,15 +36,19 @@ from typing import Literal
 import numpy as np
 
 from stock_agent.forecasting.historical import sample_to_forecast
+from stock_agent.logging_config import get_logger
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.market import PriceSeries
 
+log = get_logger(__name__)
+
 # Simulation defaults.
 _N_PATHS = 10_000
 _VOL_WINDOW = 60  # recent days used to estimate μ and σ
 _BLOCK_SIZE = 10  # block bootstrap block length (≈ √252 ≈ 16; 10 is typical)
+_GARCH_MIN_OBS = 250  # daily returns needed for a stable GJR-GARCH fit; else bootstrap
 _MIN_JUMP_SAMPLES = 8  # below this many past earnings moves, skip the jump
 _TRADING_TO_CAL = 365.0 / 252.0  # trading days → calendar days
 # Earnings recur ~quarterly, so the ~420d forecast window holds only ~4-5 moves —
@@ -79,19 +83,25 @@ class MonteCarlo:
     ``variant="bootstrap"`` — non-parametric, preserves fat tails.
     ``variant="jump"``      — GBM + an earnings jump when earnings fall in the
                               horizon (needs ``registry`` for earnings dates).
+    ``variant="garch"``     — GJR-GARCH(1,1)-t: forecasts conditional volatility
+                              FORWARD (mean-reverting) with the equity leverage
+                              effect + fat tails. Unlike GBM (constant vol) and the
+                              bootstrap (recent-vol resampling), it models how vol
+                              evolves over the horizon — sharper tails/VaR when
+                              current vol differs from the long-run level.
     """
 
     def __init__(
         self,
-        variant: Literal["gbm", "bootstrap", "jump"] = "gbm",
+        variant: Literal["gbm", "bootstrap", "jump", "garch"] = "gbm",
         n_paths: int = _N_PATHS,
         vol_window: int = _VOL_WINDOW,
         block_size: int = _BLOCK_SIZE,
         seed: int = 42,
         registry: ProviderRegistry | None = None,
     ) -> None:
-        if variant not in ("gbm", "bootstrap", "jump"):
-            raise ValueError(f"unknown variant '{variant}'; expected gbm/bootstrap/jump")
+        if variant not in ("gbm", "bootstrap", "jump", "garch"):
+            raise ValueError(f"unknown variant '{variant}'; expected gbm/bootstrap/jump/garch")
         self.name = f"monte_carlo_{variant}"
         self._variant = variant
         self._n_paths = n_paths
@@ -115,6 +125,8 @@ class MonteCarlo:
             sample = self._gbm(log_rets, horizon_days)
         elif self._variant == "bootstrap":
             sample = self._bootstrap(log_rets, horizon_days)
+        elif self._variant == "garch":
+            sample, note = self._garch(series.ticker, log_rets, horizon_days)
         else:
             sample, note = self._jump(series, log_rets, horizon_days, as_of)
 
@@ -140,6 +152,62 @@ class MonteCarlo:
     def _gbm(self, log_rets: np.ndarray, horizon: int) -> np.ndarray:
         """GBM terminal SIMPLE returns (expm1 of the terminal log returns)."""
         return np.asarray(np.expm1(self._gbm_terminal_log(log_rets, horizon)), dtype=float)
+
+    def _garch(
+        self, ticker: str, log_rets: np.ndarray, horizon: int
+    ) -> tuple[np.ndarray, str | None]:
+        """GJR-GARCH(1,1)-t forward simulation of terminal h-day SIMPLE returns.
+
+        Fits a Glosten-Jagannathan-Runkle GARCH (the ``o=1`` term captures the
+        equity *leverage effect* — volatility rises more after negative shocks)
+        with Student-t innovations (fat tails), then simulates ``n_paths`` forward
+        paths from the *current* conditional variance. Because GARCH variance
+        forecasts mean-revert toward the long-run level, the terminal distribution
+        widens/narrows correctly when today's vol is unusually high/low — the
+        information GBM (constant vol) and the bootstrap (recent-vol resampling)
+        lack at multi-day horizons.
+
+        Degrades safely: insufficient history, a missing ``arch`` install, or any
+        fit/simulation failure falls back to the block bootstrap (with a note).
+        Deterministic — a seeded ``RandomState`` drives the simulation and the MLE
+        starts from fixed values.
+        """
+        if len(log_rets) < _GARCH_MIN_OBS:
+            note = f"{len(log_rets)} returns < {_GARCH_MIN_OBS} min for GARCH; bootstrap fallback."
+            return self._bootstrap(log_rets, horizon), note
+        try:
+            import warnings
+
+            from arch.univariate import GARCH, ConstantMean, StudentsT
+
+            r = 100.0 * log_rets  # scale to ~O(1) so the MLE is well-conditioned
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")  # convergence/scale warnings → handled by fallback
+                # Explicit construction (arch_model only takes a string dist): a
+                # seeded Student-t distribution is what makes the simulation
+                # reproducible — forecast(random_state=) is ignored by arch.
+                am = ConstantMean(r)
+                am.volatility = GARCH(p=1, o=1, q=1)  # o=1 → GJR leverage term
+                am.distribution = StudentsT(seed=self._seed)
+                res = am.fit(disp="off")
+                sim = res.forecast(
+                    horizon=horizon,
+                    method="simulation",
+                    simulations=self._n_paths,
+                    reindex=False,
+                )
+            values = sim.simulations.values
+            if values is None:
+                raise ValueError("GARCH simulation returned no values")
+            paths = values[0]  # (n_paths, horizon), percent log returns
+            sample = np.asarray(np.expm1(paths.sum(axis=1) / 100.0), dtype=float)
+            if not np.all(np.isfinite(sample)):
+                raise ValueError("non-finite GARCH simulation")
+            return sample, None
+        except Exception as exc:  # noqa: BLE001 - any fit/sim failure → safe bootstrap fallback
+            log.info("garch.fallback", ticker=ticker, error=str(exc))
+            note = f"GARCH fit failed ({exc}); bootstrap fallback."
+            return self._bootstrap(log_rets, horizon), note
 
     def _earnings_dates(self, ticker: str) -> list[Date] | None:
         if self._registry is None:

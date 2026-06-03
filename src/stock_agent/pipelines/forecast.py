@@ -23,6 +23,7 @@ MODEL_NAMES: list[str] = [
     "monte_carlo_gbm",
     "monte_carlo_bootstrap",
     "monte_carlo_jump",
+    "monte_carlo_garch",  # GJR-GARCH-t conditional vol (Task 9)
     *_ML_TYPES,
     "regime_hmm",  # experimental (Task 8); CLI/backtest only, not agent/report
 ]
@@ -38,6 +39,8 @@ def _build_model(model_name: str, registry: ProviderRegistry) -> ForecastModel:
     if model_name == "monte_carlo_jump":
         # Needs the registry to fetch earnings dates for the jump.
         return MonteCarlo(variant="jump", registry=registry)
+    if model_name == "monte_carlo_garch":
+        return MonteCarlo(variant="garch")
     if model_name in _ML_TYPES:
         # Pass the registry so the earnings feature can be computed at inference.
         return MLForecaster(model_name, registry=registry)  # type: ignore[arg-type]

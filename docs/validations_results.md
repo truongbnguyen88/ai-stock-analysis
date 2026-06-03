@@ -35,6 +35,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-02 | **Task 8 spike — regime (Gaussian HMM) forecaster** vs unconditional baselines (volatile basket, h20; h60 sanity) | ❌ ties baselines (mean +0.0006 Brier, i.e. marginally worse) — vol-regime conditioning is **redundant** with bootstrap/VIX | **Do NOT promote**; keep `regime_hmm` experimental (CLI/backtest only); **reinforces parking TFT/LSTM** |
 | 2026-06-02 | **Task 8 spike — pooled LSTM sequence forecaster** vs baselines (NVDA/TSLA, h20 single-split; config sweep) | ❌ **worse**, not just a tie — Brier 0.30/0.26 vs ~0.19, ECE 0.21–0.26 vs ~0.07; lighter fits only approach the baseline from below, never beat | **Do NOT promote**; `lstm_seq` + torch kept as an isolated optional extra; **confirms the ceiling is information, not model class** |
 | 2026-06-03 | **Task 8 (cont.) — heavy LSTM + LR sweep + 114-ticker validation + calibration sweep** (3–4 layers, LayerNorm; CalibratedClassifierCV isotonic & sigmoid) | ❌ extracts a **real but redundant** vol signal (pooled big-move AUC +0.02–0.04 over historical) yet **loses Brier/ECE on ~75% of tickers**; **no** calibration method helps (val→test shift) | **Close LSTM/sequence track**; ceiling is *information*; next lever = GARCH (MC-tier upgrade) or Task 9 (news) |
+| 2026-06-03 | **Task 9 — GJR-GARCH(1,1)-t** (`monte_carlo_garch`) vs bootstrap/historical, 12-ticker basket, h20/30/60 | ✅ **first model to beat the baselines on Brier** — **tie at h20** (redundant), **wins h30 (9/12)** and **h60 (10/12)** on Brier vs bootstrap | **Promote** to the default MC comparison set; modest *real* edge at long horizons (forward vol mean-reversion) |
 
 ---
 
@@ -403,3 +404,36 @@ Worse Brier and ECE; loses to the trivial baseline on **~3 of 4 tickers** at the
 **Why it loses (decomposed).** Brier = reliability − resolution + uncertainty. Calibration only shrinks *reliability*; it cannot add *resolution*. The LSTM's resolution (AUC ≈ 0.665) ≈ the baseline's (0.644) → **redundant**, so even a perfectly-calibrated LSTM converges to ≈ a *tie*, never a win. The residual per-ticker miscalibration (per-ticker ECE 0.15–0.29) is invisible to any *global* pooled calibrator.
 
 **Decision.** **Close the sequence/regime track (Task 8).** Capacity (3–4 layers), learning rate, full universe, and four calibration methods incl. `CalibratedClassifierCV(cv=3)` were all ruled out across 114 tickers and three horizons. The binding constraint is **information, not model class or calibration**. Next levers: **GARCH** (a principled conditional-volatility upgrade to the Monte-Carlo/baseline tier — different mechanism, not just more capacity) and/or **Task 9** (point-in-time news = genuinely new information). `lstm_seq` + `sequence_tune.py` stay as an isolated, torch-gated experimental harness for the record.
+
+---
+
+## 2026-06-03 — Task 9: GJR-GARCH(1,1)-t conditional-volatility forecaster ✅
+
+After three null results (regime tie, LSTM redundant), GARCH is the **first new model to beat the baselines on the deployable proper score** — exactly because it adds a *different mechanism*, not more capacity over the same inputs.
+
+**Model.** `MonteCarlo(variant="garch")` (`monte_carlo_garch`): per-ticker **GJR-GARCH(1,1)** with **Student-t** innovations via `arch` — `o=1` captures the equity *leverage effect* (vol rises more after down-moves), Student-t the fat tails. Fits on daily log returns ≤ `as_of` (leakage-safe; *daily* obs → no overlapping-window / effective-N problem), simulates `n_paths` forward paths from the **current** conditional variance (which **mean-reverts** toward the long-run level), → terminal-return sample → `ScenarioForecast`. Deterministic (seeded `StudentsT`; arch's `forecast(random_state=)` is ignored, so the seed goes on the *distribution*). Degrades to the **block bootstrap** on short history (<250 returns) or any fit failure.
+
+**Setup.** Walk-forward, embargo = h, 12-ticker basket spanning the vol spectrum (NVDA/TSLA/SMCI/MU/AVGO/AMD/AAPL/MSFT/KO/PG/JNJ/WMT). Compared to `monte_carlo_bootstrap` (the strongest baseline — it *also* conditions on recent vol) and `historical_sim`.
+
+**Results (mean Brier / ECE across the basket; win-rate = GARCH beats bootstrap on Brier):**
+
+| Horizon | GARCH | bootstrap | historical | win-rate |
+|---|---|---|---|---|
+| h20 (62 OOS) | 0.1705 / 0.050 | 0.1706 / 0.047 | 0.1713 / 0.051 | 5/12 — **tie** |
+| h30 (41 OOS) | **0.1961** / 0.088 | 0.1973 / 0.095 | 0.1982 / 0.099 | **9/12** |
+| h60 (20 OOS) | **0.2350** / 0.168 | 0.2398 / 0.154 | 0.2431 / 0.171 | **10/12** |
+
+**Findings.**
+- **Additive at h30/h60, redundant at h20** — exactly as the mechanism predicts. At short horizons the current vol ≈ the realized forward vol, so the bootstrap's recent-vol resampling already captures it (tie). At longer horizons the gap between *current* vol and the *long-run* level matters, and GARCH's mean-reverting variance forecast is genuinely more than "hold recent vol constant" → it wins on **9–10 of 12** tickers and beats **both** baselines on mean Brier.
+- Gaps are small in absolute terms (0.001–0.005 Brier) but **consistent across a diverse basket** — signal, not noise. ECE is comparable (slightly better at h30, slightly worse at h60 — Brier, the proper score, is the arbiter).
+
+**Decision.** **Promote** `monte_carlo_garch` into the default offline comparison set (`STATELESS_MODELS`) — it's a validated peer of the other MC variants and the strongest at h30/h60. Cheap, deterministic, interpretable, leakage-safe. `arch>=8` is a core dep (pandas-3.0 compatible; no OpenMP/lightgbm segfault). Surfacing it as the *preferred* long-horizon baseline in the written report is a follow-up.
+
+**Reproduce.**
+```python
+from stock_agent.pipelines.backtest import run_backtest_pipeline
+from stock_agent.settings import get_settings
+run_backtest_pipeline("NVDA", 60,
+    model_names=["monte_carlo_garch", "monte_carlo_bootstrap", "historical_sim"],
+    settings=get_settings(), test_size=6)
+```

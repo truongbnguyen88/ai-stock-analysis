@@ -36,6 +36,7 @@ dependencies = [
     "lightgbm>=4.6,<5",        # gradient-boosted classifier (tuned big-move model)
     "joblib>=1.5,<2",          # the pickler for the trained artifacts (train/serve parity)
     "hmmlearn>=0.3,<0.4",      # Gaussian HMM for the regime forecaster (Task 8 spike)
+    "arch>=8.0,<9",            # GJR-GARCH-t conditional-volatility forecaster (Task 9)
     # UI
     "streamlit>=1.35",   # browser-based chat frontend
     # Export (chat summary -> document)
@@ -84,7 +85,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
