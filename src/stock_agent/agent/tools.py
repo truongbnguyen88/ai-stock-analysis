@@ -46,11 +46,13 @@ _PRICE_LOOKBACK_DAYS = 420
 
 # Backtest tool bounds (heavy op → keep the chat responsive). Only fast, offline,
 # leakage-safe stateless models are exposed to the agent; ML backtests need a
-# per-fold pooled refit (minutes) and stay a CLI-only operation.
+# per-fold pooled refit (minutes) and stay a CLI-only operation. The two promoted
+# Monte-Carlo methods are bootstrap (best/tied at short horizons) and GARCH (the
+# validated winner at h30/h60); gbm is dropped — it lost on Brier everywhere.
 _BACKTEST_MODELS: tuple[str, ...] = (
     "historical_sim",
-    "monte_carlo_gbm",
     "monte_carlo_bootstrap",
+    "monte_carlo_garch",
 )
 _BT_MIN_HORIZON, _BT_MAX_HORIZON = 5, 60
 _BT_TIMEOUT_S = 45.0  # wall-clock backstop; argument bounds keep typical runs ~seconds
@@ -188,10 +190,11 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "enum": list(MODEL_NAMES),
                     "default": "historical_sim",
                     "description": (
-                        "Forecast model: 'historical_sim' (empirical baseline, default), "
-                        "'monte_carlo_gbm'/'monte_carlo_bootstrap' (simulation), or ML "
-                        "('logistic'/'lightgbm' — need a trained artifact, else fall back "
-                        "to the baseline with a note)."
+                        "Forecast model: 'historical_sim' (empirical baseline, default), the two "
+                        "Monte-Carlo simulators 'monte_carlo_bootstrap' (fat-tail resampling; best "
+                        "at short horizons) and 'monte_carlo_garch' (GJR-GARCH-t conditional vol; "
+                        "validated best at horizons >=30d), or ML ('logistic'/'lightgbm' — need a "
+                        "trained artifact, else fall back to the baseline with a note)."
                     ),
                 },
             },
@@ -205,9 +208,9 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "accurate its probabilities have been historically. Returns Brier score, log loss, "
             "ROC AUC and accuracy per return threshold, plus calibration (ECE) and a trust label. "
             "Use for 'how accurate/reliable has the model been?'. Heavier than one forecast — "
-            "limited to fast offline models (historical_sim / monte_carlo_gbm / "
-            "monte_carlo_bootstrap) and horizon 5-60 trading days. ROC AUC near 0.5 means no "
-            "directional edge (expected for the unconditional baselines)."
+            "limited to fast offline models (historical_sim / monte_carlo_bootstrap / "
+            "monte_carlo_garch) and horizon 5-60 trading days. ROC AUC near 0.5 means no "
+            "directional edge (expected — only magnitude/volatility is predictable)."
         ),
         "input_schema": {
             "type": "object",

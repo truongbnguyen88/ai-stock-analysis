@@ -76,7 +76,7 @@ def test_run_backtest_tool_shape() -> None:
 
 def test_get_calibration_tool_shape() -> None:
     out = _executor().execute(
-        "get_calibration", {"ticker": "TST", "horizon_days": 20, "model": "monte_carlo_gbm"}
+        "get_calibration", {"ticker": "TST", "horizon_days": 20, "model": "monte_carlo_bootstrap"}
     )
     assert "error" not in out
     assert 0.0 <= out["ece"] <= 1.0

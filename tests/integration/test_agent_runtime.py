@@ -181,12 +181,13 @@ def test_run_forecast_tool_routes_model_selection() -> None:
     # Default model is the baseline.
     base = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20})
     assert base.get("model_name") == "historical_sim"
-    # Monte Carlo needs no trained artifact — routing should pick it.
+    # Monte Carlo needs no trained artifact — routing should pick it (one of the two
+    # promoted variants; GARCH routes through the identical code path).
     mc = ex.execute(
-        "run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "monte_carlo_gbm"}
+        "run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "monte_carlo_bootstrap"}
     )
     assert "error" not in mc
-    assert mc.get("model_name") == "monte_carlo_gbm"
+    assert mc.get("model_name") == "monte_carlo_bootstrap"
     # ML without a trained artifact falls back to the baseline but keeps its name.
     ml = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20, "model": "lightgbm"})
     assert "error" not in ml
