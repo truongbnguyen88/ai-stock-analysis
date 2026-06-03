@@ -33,6 +33,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-01 | **Re-validation on scaled buckets** (volatile NVDA/SMCI/TSLA; h20/30/60 at inner k) | ✅ ML skill at h20/h30 (AUC 0.59–0.67 > baselines); ⚠️ both models **miscalibrated** (ECE 0.10–0.32); h60 unmeasurable (n=19) | **Calibrate logistic AND lightgbm** (Step 3); flag h60 big-move low-confidence |
 | 2026-06-02 | **Calibration A/B** — prefit-isotonic vs `CalibratedClassifierCV(cv=3)` (volatile, h20/h30) | prefit helped logistic but **hurt lightgbm**; **cv=3 improves Brier in all cells** + fixes lightgbm ECE | Ship calibration (cv=3) for **both** models; default `calibrate_ml=True` |
 | 2026-06-02 | **Task 8 spike — regime (Gaussian HMM) forecaster** vs unconditional baselines (volatile basket, h20; h60 sanity) | ❌ ties baselines (mean +0.0006 Brier, i.e. marginally worse) — vol-regime conditioning is **redundant** with bootstrap/VIX | **Do NOT promote**; keep `regime_hmm` experimental (CLI/backtest only); **reinforces parking TFT/LSTM** |
+| 2026-06-02 | **Task 8 spike — pooled LSTM sequence forecaster** vs baselines (NVDA/TSLA, h20 single-split; config sweep) | ❌ **worse**, not just a tie — Brier 0.30/0.26 vs ~0.19, ECE 0.21–0.26 vs ~0.07; lighter fits only approach the baseline from below, never beat | **Do NOT promote**; `lstm_seq` + torch kept as an isolated optional extra; **confirms the ceiling is information, not model class** |
 
 ---
 
@@ -337,3 +338,31 @@ run_backtest_pipeline("NVDA", 20,
     model_names=["regime_hmm", "historical_sim", "monte_carlo_bootstrap"],
     settings=get_settings(), test_size=6)
 ```
+
+---
+
+## 2026-06-02 — Task 8 spike: pooled LSTM sequence forecaster
+
+**Hypothesis.** A sequence model might capture *temporal structure* (vol clustering, momentum/mean-reversion dynamics) that the tabular one-day feature snapshot flattens — adding skill beyond the toolkit. **LSTM chosen over a transformer**: sample-efficient on low *effective* N (overlapping windows), its autoregressive inductive bias fits vol-clustering, and it's deterministic + CPU-cheap; a transformer adds capacity, not information.
+
+**Model.** `forecasting/sequence.py` (`lstm_seq`, optional `[sequence]` extra → torch): pooled LSTM over `L=60`-day sequences of the 18 scale-free daily features, softmax over the 6 horizon-scaled buckets → native `ScenarioForecast`. Leakage-safe (features ≤ t; labels use `P_{t+h}`; standardizer fit on train pool; model used only on as-of dates after its training cutoff). Deterministic (seeded, single-thread, `use_deterministic_algorithms`).
+
+**Setup.** **Single temporal split** (a fast go/no-go before paying for full per-fold walk-forward): train on a 40-ticker universe sliced ≤ a cutoff date, then compare to the baselines on the **same** post-cutoff OOS folds (NVDA/TSLA, h20, n=28).
+
+**Results (h20 mean Brier / ECE; baselines ~0.185 / 0.07).**
+
+| Model | NVDA Brier | NVDA ECE | TSLA Brier | TSLA ECE |
+|---|---|---|---|---|
+| monte_carlo_bootstrap | **0.1841** | 0.077 | **0.2043** | 0.072 |
+| historical_sim | 0.1850 | 0.070 | 0.2046 | 0.072 |
+| lstm_seq | 0.3021 | 0.264 | 0.2627 | 0.209 |
+
+**Config sweep (NVDA, to check tuning doesn't reverse it):** `e3·h24·L1` → 0.1926 / 0.115 · `e5·h32·L1` → 0.2046 / 0.145 · `e10·h32·L2` → 0.2856 / 0.232. More training/capacity **monotonically worsens** it (overfit); the best (heavily-underfit) config only approaches the baseline **from below** and stays worse-calibrated.
+
+**Findings.**
+- The LSTM is **decisively worse** than the baselines — overconfident and badly miscalibrated (ECE 3–4× the baselines) — the classic high-capacity / low-effective-N overfit on overlapping windows.
+- It can be regularized *toward* the baseline but **never beats it**. With the regime model only *tying*, this nails the conclusion: **the binding constraint is information, not model class** — a higher-capacity function over the same price inputs cannot clear a signal ceiling.
+
+**Decision.** **Do NOT promote** `lstm_seq`. Keep it as an isolated optional extra (torch is heavy and segfaults alongside lightgbm in one process on macOS, so its tests are env-gated — `RUN_SEQUENCE_TESTS=1`; the default gate + CI never load torch). **Do not pursue a transformer** — same inputs, more capacity, strictly higher cost/variance. The only lever with real upside is a **new information source** (Task 9 point-in-time news), not a new function class on price alone.
+
+**Reproduce.** Install the extra (`pip install -e ".[sequence]"`), then the single-split eval in the session log (train `train_sequence_model` on a universe sliced ≤ a cutoff date; compare via `run_backtest` on post-cutoff folds with matched `min_train`).

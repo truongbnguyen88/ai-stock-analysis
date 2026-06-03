@@ -51,6 +51,11 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
+# Experimental sequence model (Task 8 LSTM spike). Kept OUT of core deps + CI:
+# torch is heavy and the model is unproven. Install with `pip install -e ".[sequence]"`.
+sequence = [
+    "torch>=2.2,<3",
+]
 
 [project.scripts]
 # Console entry point. The real CLI app arrives in Phase 4 (cli/app.py); until
@@ -79,7 +84,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
