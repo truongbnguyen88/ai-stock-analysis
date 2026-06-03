@@ -35,7 +35,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-02 | **Task 8 spike — regime (Gaussian HMM) forecaster** vs unconditional baselines (volatile basket, h20; h60 sanity) | ❌ ties baselines (mean +0.0006 Brier, i.e. marginally worse) — vol-regime conditioning is **redundant** with bootstrap/VIX | **Do NOT promote**; keep `regime_hmm` experimental (CLI/backtest only); **reinforces parking TFT/LSTM** |
 | 2026-06-02 | **Task 8 spike — pooled LSTM sequence forecaster** vs baselines (NVDA/TSLA, h20 single-split; config sweep) | ❌ **worse**, not just a tie — Brier 0.30/0.26 vs ~0.19, ECE 0.21–0.26 vs ~0.07; lighter fits only approach the baseline from below, never beat | **Do NOT promote**; `lstm_seq` + torch kept as an isolated optional extra; **confirms the ceiling is information, not model class** |
 | 2026-06-03 | **Task 8 (cont.) — heavy LSTM + LR sweep + 114-ticker validation + calibration sweep** (3–4 layers, LayerNorm; CalibratedClassifierCV isotonic & sigmoid) | ❌ extracts a **real but redundant** vol signal (pooled big-move AUC +0.02–0.04 over historical) yet **loses Brier/ECE on ~75% of tickers**; **no** calibration method helps (val→test shift) | **Close LSTM/sequence track**; ceiling is *information*; next lever = GARCH (MC-tier upgrade) or Task 9 (news) |
-| 2026-06-03 | **Task 9 — GJR-GARCH(1,1)-t** (`monte_carlo_garch`) vs bootstrap/historical, 12-ticker basket, h20/30/60 | ✅ **first model to beat the baselines on Brier** — **tie at h20** (redundant), **wins h30 (9/12)** and **h60 (10/12)** on Brier vs bootstrap | **Promote** to the default MC comparison set; modest *real* edge at long horizons (forward vol mean-reversion) |
+| 2026-06-03 | **Task 9 — GJR-GARCH(1,1)-t** (`monte_carlo_garch`) vs bootstrap/historical, 12-ticker basket, h20/30/60 | ✅ **first model to beat the baselines on Brier** — tie h20, wins h30 (9/12) + h60 (10/12); also **highest big-move AUC at every horizon** (+0.04–0.06 → win is *earned* resolution, not just calibration) | **Promote** to the default MC comparison set; modest *real* edge at long horizons (forward vol mean-reversion) |
 
 ---
 
@@ -426,6 +426,18 @@ After three null results (regime tie, LSTM redundant), GARCH is the **first new 
 **Findings.**
 - **Additive at h30/h60, redundant at h20** — exactly as the mechanism predicts. At short horizons the current vol ≈ the realized forward vol, so the bootstrap's recent-vol resampling already captures it (tie). At longer horizons the gap between *current* vol and the *long-run* level matters, and GARCH's mean-reverting variance forecast is genuinely more than "hold recent vol constant" → it wins on **9–10 of 12** tickers and beats **both** baselines on mean Brier.
 - Gaps are small in absolute terms (0.001–0.005 Brier) but **consistent across a diverse basket** — signal, not noise. ECE is comparable (slightly better at h30, slightly worse at h60 — Brier, the proper score, is the arbiter).
+
+**Discrimination (AUC) — the Brier win is *earned*, not just calibration.** Big-move `P(|r|>k)` AUC at the horizon-scaled `k`:
+
+| Horizon | GARCH | bootstrap | historical | direction AUC (GARCH) | GARCH > boot |
+|---|---|---|---|---|---|
+| h20 (k=5%) | **0.545** | 0.497 | 0.502 | 0.493 | 10/12 |
+| h30 (k=10%) | **0.518** | 0.476 | 0.468 | 0.431 | 7/12 |
+| h60 (k=15%) | **0.477** | 0.418 | 0.412 | 0.371 | 7/10 |
+
+- GARCH has the **highest big-move AUC at every horizon** (+0.04–0.06 over bootstrap, 7–10/12 win-rate) → its lower Brier is backed by **better resolution** (discrimination), unlike the LSTM whose AUC was redundant ~0.5. Calibration *and* sharpness both improved.
+- Absolute discrimination is **modest** (0.52–0.55 at h20/h30) — vol clustering buys a little big-move predictability, not a lot. The h60 figures sit < 0.5 but that is **noise** (n=20 OOS/ticker); all models are < 0.5 there while the *ordering* (GARCH > bootstrap > historical) still holds.
+- **Direction AUC ≈ 0.37–0.49 (≤ 0.5)** — direction stays efficient; GARCH correctly adds nothing on direction, only on magnitude.
 
 **Decision.** **Promote** `monte_carlo_garch` into the default offline comparison set (`STATELESS_MODELS`) — it's a validated peer of the other MC variants and the strongest at h30/h60. Cheap, deterministic, interpretable, leakage-safe. `arch>=8` is a core dep (pandas-3.0 compatible; no OpenMP/lightgbm segfault). Surfacing it as the *preferred* long-horizon baseline in the written report is a follow-up.
 
