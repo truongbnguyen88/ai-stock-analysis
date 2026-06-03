@@ -7,6 +7,7 @@ from stock_agent.forecasting.base import ForecastModel
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.forecasting.ml import MLForecaster
 from stock_agent.forecasting.monte_carlo import MonteCarlo
+from stock_agent.forecasting.regime import RegimeForecaster
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.settings import Settings
@@ -23,6 +24,7 @@ MODEL_NAMES: list[str] = [
     "monte_carlo_bootstrap",
     "monte_carlo_jump",
     *_ML_TYPES,
+    "regime_hmm",  # experimental (Task 8); CLI/backtest only, not agent/report
 ]
 
 
@@ -39,6 +41,8 @@ def _build_model(model_name: str, registry: ProviderRegistry) -> ForecastModel:
     if model_name in _ML_TYPES:
         # Pass the registry so the earnings feature can be computed at inference.
         return MLForecaster(model_name, registry=registry)  # type: ignore[arg-type]
+    if model_name == "regime_hmm":
+        return RegimeForecaster()
     raise ValueError(f"unknown model '{model_name}'; available: {MODEL_NAMES}")
 
 

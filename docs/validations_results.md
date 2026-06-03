@@ -32,6 +32,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-01 | **Large-scale lightgbm tuning** (~100 configs, ticker-level meta-validation) + **horizon-scaled buckets** | ✅ config #38 wins held-out h20 (+0.023 AUC); scaling balances the target for volatile names | Adopt #38; ship scaled buckets (h20 ±5/10, h30 ±10/20, h60 ±15/30); drop h5; drop xgboost/RF |
 | 2026-06-01 | **Re-validation on scaled buckets** (volatile NVDA/SMCI/TSLA; h20/30/60 at inner k) | ✅ ML skill at h20/h30 (AUC 0.59–0.67 > baselines); ⚠️ both models **miscalibrated** (ECE 0.10–0.32); h60 unmeasurable (n=19) | **Calibrate logistic AND lightgbm** (Step 3); flag h60 big-move low-confidence |
 | 2026-06-02 | **Calibration A/B** — prefit-isotonic vs `CalibratedClassifierCV(cv=3)` (volatile, h20/h30) | prefit helped logistic but **hurt lightgbm**; **cv=3 improves Brier in all cells** + fixes lightgbm ECE | Ship calibration (cv=3) for **both** models; default `calibrate_ml=True` |
+| 2026-06-02 | **Task 8 spike — regime (Gaussian HMM) forecaster** vs unconditional baselines (volatile basket, h20; h60 sanity) | ❌ ties baselines (mean +0.0006 Brier, i.e. marginally worse) — vol-regime conditioning is **redundant** with bootstrap/VIX | **Do NOT promote**; keep `regime_hmm` experimental (CLI/backtest only); **reinforces parking TFT/LSTM** |
 
 ---
 
@@ -298,3 +299,41 @@ python -m stock_agent backtest --ticker NVDA                    # baselines, sam
 - **AUC is *not strictly* invariant** (dips ~0.03 at h20, rises at h30 → ≈flat on average). Expected: `cv=3` replaces the single classifier with an **ensemble of 3** (each on ⅔ the data), so base scores shift slightly. Within n=61 noise, and Brier (which subsumes resolution) improved regardless. Strict AUC-invariance only holds for single-classifier `cv="prefit"` — which is what hurt lightgbm.
 
 **Decision.** **Ship calibration for both models via `CalibratedClassifierCV(cv=3, isotonic)`** (default `settings.calibrate_ml=True`); retrain the 6 served artifacts calibrated. The cross-threshold **monotone envelope** stays enforced downstream (`ml._exceedance_to_buckets`). `cv=3` chosen over 5 to bound the k× training cost. h60 still served **low-confidence** (unmeasurable, n≈19).
+
+---
+
+## 2026-06-02 — Task 8 spike: regime (Gaussian HMM) forecaster
+
+**Hypothesis.** Direction is ≈ efficient but *volatility/magnitude* is predictable, and latent market regimes are volatility states. So conditioning the forward-return distribution on the **current regime** should sharpen the big-move tails the toolkit targets — possibly beating the unconditional baselines.
+
+**Model.** `forecasting/regime.py` (`regime_hmm`): fit a `GaussianHMM(n_states=3, diag)` on the stock's daily `(log-return, |log-return|)` sequence using data ≤ `as_of`, take the current Viterbi state, and build the forecast from the **historical h-day forward returns whose start-day shared that regime** (reusing `historical.sample_to_forecast`). Leakage-safe (fit + conditioning strictly within `[0, as_of]`); deterministic (`random_state=42`); graceful fallback to unconditional history when the fit fails or the current regime has < 30 conditioned windows. Wired into the `forecast` / `backtest` CLI only.
+
+**Setup.** Walk-forward, embargo = h, 11 folds, n=61 OOS at h20 (4 folds / n≈19 at h60). Compared `regime_hmm` vs `historical_sim` + `monte_carlo_bootstrap` on the volatile basket.
+
+**Results (h20, mean Brier; `regime − historical`).**
+
+| Ticker | regime | historical | bootstrap | regime − hist |
+|---|---|---|---|---|
+| NVDA | 0.2013 | **0.1981** | 0.1988 | +0.0032 |
+| TSLA | 0.2360 | 0.2335 | **0.2334** | +0.0025 |
+| SMCI | 0.2419 | 0.2410 | **0.2388** | +0.0009 |
+| MU | **0.2130** | 0.2139 | 0.2127 | −0.0009 |
+| AVGO | 0.1828 | 0.1828 | **0.1789** | +0.0001 |
+| ARM | 0.2371 | 0.2369 | **0.2349** | +0.0002 |
+
+Basket mean `regime − historical` = **+0.0006** (regime marginally *worse*); `monte_carlo_bootstrap` is generally best. ECE is comparable (regime sometimes slightly better, e.g. NVDA 0.040 vs 0.048). h60 sanity is mixed and unmeasurable (NVDA −0.0090 but ECE 0.19; TSLA +0.0056; n=19).
+
+**Findings.**
+- **Regime conditioning does not beat the baselines.** It ties them within noise at h20 and is unmeasurable at h60 — the same ceiling every prior experiment hit.
+- **Why:** the signal it adds (recent volatility state) is **redundant** — the bootstrap baseline already resamples from recent realized returns, and the pooled ML already has `vix_*` + vol features. Conditioning on a latent vol-regime re-encodes information the comparison set already has, so no net resolution is gained. Same lesson as the VIX A/B and the "ML ties MC" horizon sweep.
+
+**Decision.** **Do NOT promote** `regime_hmm`; keep it as an experimental CLI/backtest model (leakage-safe, tested) for future reference. This **reinforces parking TFT/LSTM**: a model that targets the *known-predictable* axis (volatility) directly still can't beat the baselines because the signal is redundant/efficient — so a heavier, higher-variance sequence net is even lower-EV at far greater cost. Revisit only with a genuinely new information source (e.g. Task 9 point-in-time news), not a new function class over the same price inputs.
+
+**Reproduce.**
+```python
+from stock_agent.pipelines.backtest import run_backtest_pipeline
+from stock_agent.settings import get_settings
+run_backtest_pipeline("NVDA", 20,
+    model_names=["regime_hmm", "historical_sim", "monte_carlo_bootstrap"],
+    settings=get_settings(), test_size=6)
+```

@@ -35,6 +35,7 @@ dependencies = [
     "scikit-learn>=1.9,<1.10", # logistic regression, imputation, isotonic calibration
     "lightgbm>=4.6,<5",        # gradient-boosted classifier (tuned big-move model)
     "joblib>=1.5,<2",          # the pickler for the trained artifacts (train/serve parity)
+    "hmmlearn>=0.3,<0.4",      # Gaussian HMM for the regime forecaster (Task 8 spike)
     # UI
     "streamlit>=1.35",   # browser-based chat frontend
     # Export (chat summary -> document)
@@ -78,7 +79,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
