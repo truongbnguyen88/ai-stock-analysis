@@ -329,29 +329,29 @@ def ingest_news(
         bool,
         typer.Option("--dry-run", help="Estimate bytes/cost only — no rows read, no spend"),
     ] = False,
+    streams: Annotated[
+        str,
+        typer.Option("--streams", help="Comma list: per_ticker,market,topics (default both base)"),
+    ] = "per_ticker,market",
     no_business_filter: Annotated[
         bool,
         typer.Option("--no-business-filter", help="Disable the per-ticker business-theme filter"),
+    ] = False,
+    no_topic_names: Annotated[
+        bool,
+        typer.Option("--no-topic-names", help="Topics: themes only (skip AI/AllNames — cheaper)"),
     ] = False,
 ) -> None:
     """Pull daily GDELT news-sentiment features into outputs/news_sentiment/ (Task 10).
 
     Aggregation runs server-side in BigQuery, so only small daily feature rows are
     downloaded — never article text. ALWAYS run --dry-run first to see bytes-to-scan
-    (the 1 TiB/month free tier; ~$5/TiB after). Chunk by year / spread across
-    calendar months to stay free.
+    (the 1 TiB/month free tier; ~$5/TiB after). Streams write separate CSVs, so you
+    can pull --streams topics later without re-pulling the base streams.
     """
     from datetime import date as _Date
 
-    from stock_agent.news.gdelt_ingest import (
-        DEFAULT_ALIAS_PATH,
-        alias_regex_rows,
-        build_market_query,
-        build_per_ticker_query,
-        estimate_bytes,
-        ingest,
-        load_alias_map,
-    )
+    from stock_agent.news.gdelt_ingest import ALL_STREAMS, estimate_bytes, ingest, stream_query
 
     settings = get_settings()
     configure_logging(settings)
@@ -359,48 +359,47 @@ def ingest_news(
     if end_d <= start_d:
         typer.echo("--end must be after --start")
         raise typer.Exit(code=1)
+    selected = [s.strip() for s in streams.split(",") if s.strip()]
+    bad = [s for s in selected if s not in ALL_STREAMS]
+    if bad:
+        typer.echo(f"--streams: unknown {bad} (allowed: {list(ALL_STREAMS)})")
+        raise typer.Exit(code=1)
+    biz, names = not no_business_filter, not no_topic_names
 
     if dry_run:
-        rows = alias_regex_rows(load_alias_map(DEFAULT_ALIAS_PATH))
-        gib = 1024**3
+        gib, free = 1024**3, 1024**4
+        total = 0
+        typer.echo(f"Dry run {start} → {end} (exclusive), streams={selected}:")
         try:
-            mkt = estimate_bytes(build_market_query(start_d, end_d), project=project)
-            tik = estimate_bytes(
-                build_per_ticker_query(
-                    start_d, end_d, rows, require_business_theme=not no_business_filter
-                ),
-                project=project,
-            )
+            for s in selected:
+                sql = stream_query(
+                    s, start_d, end_d, require_business_theme=biz, include_topic_names=names
+                )
+                b = estimate_bytes(sql, project=project)
+                total += b
+                typer.echo(f"  {s:>11} stream: {b / gib:8.2f} GiB")
         except RuntimeError as exc:
             typer.echo(str(exc))
             raise typer.Exit(code=1) from exc
-        total = mkt + tik
-        typer.echo(f"Dry run {start} → {end} (exclusive):")
-        typer.echo(f"  market    stream: {mkt / gib:8.2f} GiB")
-        typer.echo(f"  per-ticker stream:{tik / gib:8.2f} GiB")
-        cost = total / 1024**4 * 5  # ~$5 per TiB on-demand
-        typer.echo(f"  TOTAL scanned:    {total / gib:8.2f} GiB  (~${cost:.2f} on-demand)")
-        free = 1024**4
+        typer.echo(f"  {'TOTAL':>11}:        {total / gib:8.2f} GiB  (~${total / 1024**4 * 5:.2f})")
         typer.echo(
             "  ✓ within 1 TiB/month free tier"
             if total <= free
-            else "  ⚠ exceeds the 1 TiB free tier — chunk by year or spread across months"
+            else "  ⚠ exceeds 1 TiB free tier — pull fewer streams / shorter window / next month"
         )
         return
 
-    typer.echo(f"Ingesting GDELT news features {start} → {end} (exclusive) …")
+    typer.echo(f"Ingesting GDELT {selected} {start} → {end} (exclusive) …")
     try:
-        per_ticker, market = ingest(
-            start_d, end_d, project=project, require_business_theme=not no_business_filter
+        results = ingest(
+            start_d, end_d, project=project, streams=tuple(selected),
+            require_business_theme=biz, include_topic_names=names,
         )
     except RuntimeError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=1) from exc
-    n_tickers = per_ticker.index.get_level_values("ticker").nunique() if len(per_ticker) else 0
-    typer.echo(
-        f"Done: per-ticker {len(per_ticker):,} rows ({n_tickers} tickers), "
-        f"market {len(market):,} days → outputs/news_sentiment/"
-    )
+    for name, frame in results.items():
+        typer.echo(f"  {name}: {len(frame):,} rows → outputs/news_sentiment/{name}.csv")
 
 
 @app.command()

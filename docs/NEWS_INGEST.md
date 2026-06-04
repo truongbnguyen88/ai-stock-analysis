@@ -10,16 +10,30 @@ in `outputs/news_sentiment/` (gitignored; features only).
 
 ## What you get
 
+Three independent streams, each its own CSV (so you can pull one without re-pulling
+the others — see `--streams`):
+
 | File | Grain | Columns |
 |---|---|---|
-| `outputs/news_sentiment/per_ticker.csv` | (date, ticker) | `article_count, tone_mean, tone_std, pos_count, neg_count` |
-| `outputs/news_sentiment/market.csv` | date | `pol_article_count, pol_tone_mean, pol_tone_std, epu_count, pres_article_count, pres_tone_mean` |
+| `per_ticker.csv` | (date, ticker) | `article_count, tone_mean, tone_std, pos_count, neg_count` |
+| `market.csv` | date | `pol_article_count, pol_tone_mean, pol_tone_std, epu_count, pres_article_count, pres_tone_mean` |
+| `topics.csv` | (date, topic) | `article_count, tone_mean, tone_std, pos_count, neg_count` |
 
 - **per-ticker** — company coverage tone, matched from GDELT organization tags to
   `configs/ticker_aliases.json` (word-boundary, business-theme-disambiguated).
 - **market** — market-wide political / economic-policy-uncertainty / presidential
-  tone (same for every ticker on a date, like VIX). This carries the "things
-  presidents say / policy" macro signal.
+  tone (same for every ticker on a date, like VIX). The "things presidents say /
+  policy" macro signal.
+- **topics** — sector/topic macro sentiment (same for every ticker on a date). Topics:
+  `tech, healthcare, energy` (from GDELT `V2Themes` — cheap, same column the market
+  query scans) + `ai, ai_infra` (from `AllNames` entity match — GDELT has no clean
+  "AI" theme, so these need keyword matching; `--no-topic-names` skips them). An
+  article counts toward every topic it matches.
+
+Tone is GDELT's lexicon (bag-of-words) score in ≈[-10, +10]; crude but
+deterministic and reproducible. Raw daily aggregates are stored; scale-free,
+pooling-valid features (`news_buzz`/`{topic}_buzz` spike vs trailing mean,
+`{topic}_tone`, …) are derived downstream by `features/news_history.py`.
 
 Tone is GDELT's lexicon (bag-of-words) score in ≈[-10, +10]; crude but
 deterministic and reproducible. Raw daily aggregates are stored; scale-free,
@@ -68,23 +82,40 @@ python -m stock_agent ingest-news --start 2022-01-01 --end 2023-01-01 --project 
 ```
 
 Flags:
-- `--dry-run` — estimate only.
+- `--streams` — comma list of `per_ticker,market,topics` (default `per_ticker,market`).
+  Each writes its own CSV, so you can add a stream later without re-pulling the others.
+- `--no-topic-names` — topics: themes only (`tech/healthcare/energy`), skip the
+  `ai`/`ai_infra` AllNames scan (cheaper).
 - `--no-business-filter` — drop the per-ticker business/econ theme co-occurrence
   filter (more recall, more false-positive name hits).
-- `--project` — the GCP project billed for the query.
+- `--dry-run` — estimate only. `--project` — the GCP project billed.
 
-> **Note (chunked runs):** each invocation currently *overwrites* the store for its
-> window. Multi-window accumulation (append + dedup) is a small follow-up; until
-> then, run one wide window if it fits the free tier, or merge the per-window CSVs.
+### Adding the topics stream later (free)
+The three streams are independent files, so once you have `per_ticker` + `market`
+you can add topics in a separate run — the full topics stream (incl. AI) is ~553 GiB,
+**within the free tier on its own**:
+
+```bash
+python -m stock_agent ingest-news --start 2023-01-01 --end 2026-06-03 \
+    --project YOUR_GCP_PROJECT --streams topics --dry-run    # confirm ~553 GiB
+python -m stock_agent ingest-news --start 2023-01-01 --end 2026-06-03 \
+    --project YOUR_GCP_PROJECT --streams topics              # writes topics.csv
+```
+
+> **Note (chunked runs):** each invocation *overwrites* the CSV(s) for the streams it
+> pulls (others untouched). Multi-window accumulation (append + dedup) is a small
+> follow-up; until then, run one wide window per stream, or merge the per-window CSVs.
 
 ## Tuning the topical scope
 
 - **Company → ticker aliases:** `configs/ticker_aliases.json`. Add distinctive
   company *names* (not bare ticker symbols). ETFs are intentionally empty.
-- **Political / EPU / presidential themes** and the **business disambiguation
-  set:** the `*_THEMES` tuples at the top of
+- **Political / EPU / presidential themes**, the **business disambiguation set**, and
+  the **topic definitions** (`TOPIC_THEMES` = sector V2Themes patterns; `TOPIC_NAMES` =
+  AI AllNames keywords) are all constants at the top of
   [`src/stock_agent/news/gdelt_ingest.py`](../src/stock_agent/news/gdelt_ingest.py).
-  Re-running after edits is cheap — dry-run first.
+  They were chosen from a GDELT theme/entity frequency probe (high-volume, clean tags;
+  AI has no theme so it uses entity keywords). Edit + re-run (dry-run first).
 
 ## Leakage / point-in-time
 

@@ -18,13 +18,33 @@ from stock_agent.features.news_history import (
 from stock_agent.news.aggregate import MARKET_COLS, PER_TICKER_COLS
 
 
-def _per_ticker(rows: dict[tuple[str, str], dict[str, float]]) -> pd.DataFrame:
+def _keyed(rows: dict[tuple[str, str], dict[str, float]], level: str) -> pd.DataFrame:
     idx = pd.MultiIndex.from_tuples(
-        [(pd.Timestamp(d), t) for (d, t) in rows], names=["date", "ticker"]
+        [(pd.Timestamp(d), t) for (d, t) in rows], names=["date", level]
     )
     if not rows:
         return pd.DataFrame({c: pd.Series(dtype="float64") for c in PER_TICKER_COLS}, index=idx)
     return pd.DataFrame(list(rows.values()), index=idx)[PER_TICKER_COLS]
+
+
+def _per_ticker(rows: dict[tuple[str, str], dict[str, float]]) -> pd.DataFrame:
+    return _keyed(rows, "ticker")
+
+
+def _topics(rows: dict[tuple[str, str], dict[str, float]]) -> pd.DataFrame:
+    return _keyed(rows, "topic")
+
+
+def _store(
+    per_ticker: pd.DataFrame | None = None,
+    market: pd.DataFrame | None = None,
+    topics: pd.DataFrame | None = None,
+) -> NewsStore:
+    return NewsStore(
+        per_ticker=per_ticker if per_ticker is not None else _per_ticker({}),
+        market=market if market is not None else _market({}),
+        topics=topics if topics is not None else _topics({}),
+    )
 
 
 def _market(rows: dict[str, dict[str, float]]) -> pd.DataFrame:
@@ -56,7 +76,7 @@ def _mrow(pol_c: float, pol_t: float, epu: float, pres_c: float, pres_t: float) 
 
 
 def test_unknown_ticker_yields_all_nan_columns() -> None:
-    store = NewsStore(per_ticker=_per_ticker({}), market=_market({}))
+    store = _store()
     idx = pd.date_range("2024-01-01", periods=5, freq="D")
     out = build_news_history_features("NVDA", idx, store)
     assert list(out.columns) == NEWS_HISTORY_COLS
@@ -66,7 +86,7 @@ def test_unknown_ticker_yields_all_nan_columns() -> None:
 def test_tone_and_fractions_aligned_with_one_day_lag() -> None:
     # News on 2024-01-10 should appear in the feature row for 2024-01-11 (lag=1).
     pt = _per_ticker({("2024-01-10", "NVDA"): _row(ac=10, tone=3.0, pos=6, neg=2)})
-    store = NewsStore(per_ticker=pt, market=_market({}))
+    store = _store(per_ticker=pt)
     idx = pd.to_datetime(["2024-01-10", "2024-01-11", "2024-01-12"])
     out = build_news_history_features("NVDA", idx, store, lag_days=1, buzz_window=5)
     assert pd.isna(out.loc[idx[0], "news_tone"])  # same-day: not yet available
@@ -82,7 +102,7 @@ def test_buzz_is_a_scale_free_spike_ratio() -> None:
     rows = {(d.strftime("%Y-%m-%d"), "AAPL"): _row(ac=10, tone=0.0, pos=3, neg=3) for d in days}
     spike_day = pd.Timestamp("2024-02-01")
     rows[(spike_day.strftime("%Y-%m-%d"), "AAPL")] = _row(ac=50, tone=0.0, pos=20, neg=5)
-    store = NewsStore(per_ticker=_per_ticker(rows), market=_market({}))
+    store = _store(per_ticker=_per_ticker(rows))
     idx = pd.to_datetime(["2024-02-01", "2024-02-02"])
     out = build_news_history_features("AAPL", idx, store, lag_days=1, buzz_window=20)
     assert abs(out.loc[idx[1], "news_buzz"] - 5.0) < 1e-9  # 50 / baseline(10)
@@ -93,7 +113,7 @@ def test_leakage_future_spike_absent_from_earlier_rows() -> None:
     base = pd.date_range("2024-01-01", periods=14, freq="D")
     rows = {(d.strftime("%Y-%m-%d"), "MSFT"): _row(ac=5, tone=1.0, pos=2, neg=1) for d in base}
     rows[("2024-01-20", "MSFT")] = _row(ac=500, tone=-9.0, pos=0, neg=400)
-    store = NewsStore(per_ticker=_per_ticker(rows), market=_market({}))
+    store = _store(per_ticker=_per_ticker(rows))
     idx = pd.to_datetime(["2024-01-15", "2024-01-21"])
     out = build_news_history_features("MSFT", idx, store, lag_days=1, buzz_window=10)
     assert out.loc[idx[0], "news_tone"] == 1.0  # pre-spike state, not the -9 spike
@@ -107,7 +127,7 @@ def test_as_of_truncates_future_news() -> None:
             ("2024-01-20", "NVDA"): _row(ac=10, tone=-5.0, pos=1, neg=8),
         }
     )
-    store = NewsStore(per_ticker=pt, market=_market({}))
+    store = _store(per_ticker=pt)
     idx = pd.to_datetime(["2024-01-11", "2024-01-25"])
     # as_of before the second article → it must be invisible even for the 01-25 row.
     out = build_news_history_features("NVDA", idx, store, as_of=date(2024, 1, 15), lag_days=1)
@@ -117,8 +137,20 @@ def test_as_of_truncates_future_news() -> None:
 
 def test_market_stream_shared_features() -> None:
     mk = _market({"2024-03-01": _mrow(pol_c=100, pol_t=-1.0, epu=80, pres_c=20, pres_t=-0.5)})
-    store = NewsStore(per_ticker=_per_ticker({}), market=mk)
+    store = _store(market=mk)
     idx = pd.to_datetime(["2024-03-02"])
     out = build_news_history_features("ANY", idx, store, lag_days=1)
     assert out.loc[idx[0], "pol_tone"] == -1.0
     assert out.loc[idx[0], "pres_tone"] == -0.5
+
+
+def test_topic_streams_are_shared_macro_features() -> None:
+    # A topic stream behaves like the market stream: same value for every ticker.
+    tp = _topics({("2024-03-01", "ai"): _row(ac=200, tone=2.5, pos=120, neg=30)})
+    store = _store(topics=tp)
+    idx = pd.to_datetime(["2024-03-02"])
+    out = build_news_history_features("ANYTICKER", idx, store, lag_days=1)
+    assert out.loc[idx[0], "ai_tone"] == 2.5  # available next day (lag), shared across tickers
+    assert "ai_buzz" in out.columns
+    # A topic absent from the store stays NaN (e.g. AI topics not pulled).
+    assert pd.isna(out.loc[idx[0], "healthcare_tone"])

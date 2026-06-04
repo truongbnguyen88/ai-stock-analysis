@@ -35,6 +35,10 @@ import pandas as pd
 from stock_agent.news.aggregate import MARKET_COLS, PER_TICKER_COLS
 from stock_agent.news.gdelt_ingest import DEFAULT_STORE_DIR
 
+# Topic/sector macro streams (shared across tickers on a date, like the market stream).
+# Must match the topics produced by news.gdelt_ingest (TOPIC_THEMES + TOPIC_NAMES).
+NEWS_TOPICS: list[str] = ["tech", "healthcare", "energy", "ai", "ai_infra"]
+
 # Model feature columns contributed by news history (kept stable across train/infer).
 NEWS_HISTORY_COLS: list[str] = [
     # per-ticker (scale-free / bounded)
@@ -46,6 +50,9 @@ NEWS_HISTORY_COLS: list[str] = [
     "pol_tone",
     "epu_buzz",
     "pres_tone",
+    # topic/sector macro streams: tone + volume-spike per topic
+    *(f"{t}_tone" for t in NEWS_TOPICS),
+    *(f"{t}_buzz" for t in NEWS_TOPICS),
 ]
 
 DEFAULT_BUZZ_WINDOW = 60  # trailing calendar days for the buzz baseline
@@ -54,23 +61,29 @@ DEFAULT_LAG_DAYS = 1  # conservative publication lag (news of day D available at
 
 @dataclass(frozen=True)
 class NewsStore:
-    """Loaded daily news-sentiment store (both streams)."""
+    """Loaded daily news-sentiment store (per-ticker + market + topic streams)."""
 
     per_ticker: pd.DataFrame  # (date, ticker) MultiIndex → PER_TICKER_COLS
     market: pd.DataFrame  # date index → MARKET_COLS
+    topics: pd.DataFrame  # (date, topic) MultiIndex → PER_TICKER_COLS
 
     def tickers(self) -> set[str]:
         if self.per_ticker.empty:
             return set()
         return set(self.per_ticker.index.get_level_values("ticker"))
 
+    def topics_present(self) -> set[str]:
+        if self.topics.empty:
+            return set()
+        return set(self.topics.index.get_level_values("topic"))
+
     @property
     def is_empty(self) -> bool:
-        return bool(self.per_ticker.empty and self.market.empty)
+        return bool(self.per_ticker.empty and self.market.empty and self.topics.empty)
 
 
-def _empty_per_ticker() -> pd.DataFrame:
-    midx = pd.MultiIndex.from_arrays([[], []], names=["date", "ticker"])
+def _empty_keyed(level: str) -> pd.DataFrame:
+    midx = pd.MultiIndex.from_arrays([[], []], names=["date", level])
     return pd.DataFrame({c: pd.Series(dtype="float64") for c in PER_TICKER_COLS}, index=midx)
 
 
@@ -81,19 +94,26 @@ def _empty_market() -> pd.DataFrame:
 
 
 def load_news_store(store_dir: Path = DEFAULT_STORE_DIR) -> NewsStore:
-    """Load the per-ticker + market CSVs (empty, typed frames if a file is absent)."""
+    """Load the per-ticker + market + topics CSVs (empty typed frames if absent)."""
     store_dir = Path(store_dir)
-    pt_path, mk_path = store_dir / "per_ticker.csv", store_dir / "market.csv"
 
-    if pt_path.exists():
-        pt = pd.read_csv(pt_path, parse_dates=["date"]).set_index(["date", "ticker"]).sort_index()
-    else:
-        pt = _empty_per_ticker()
-    if mk_path.exists():
-        mk = pd.read_csv(mk_path, parse_dates=["date"]).set_index("date").sort_index()
-    else:
-        mk = _empty_market()
-    return NewsStore(per_ticker=pt, market=mk)
+    def _keyed(name: str, level: str) -> pd.DataFrame:
+        p = store_dir / f"{name}.csv"
+        if not p.exists():
+            return _empty_keyed(level)
+        return pd.read_csv(p, parse_dates=["date"]).set_index(["date", level]).sort_index()
+
+    mk_path = store_dir / "market.csv"
+    mk = (
+        pd.read_csv(mk_path, parse_dates=["date"]).set_index("date").sort_index()
+        if mk_path.exists()
+        else _empty_market()
+    )
+    return NewsStore(
+        per_ticker=_keyed("per_ticker", "ticker"),
+        market=mk,
+        topics=_keyed("topics", "topic"),
+    )
 
 
 def _buzz(count: pd.Series, window: int) -> pd.Series:
@@ -183,5 +203,22 @@ def build_news_history_features(
         aligned = _lag_align(feat, price_index, lag_days)
         for col in ("pol_tone", "epu_buzz", "pres_tone"):
             out[col] = aligned[col]
+
+    # --- topic / sector macro streams (shared across tickers, like market) ---
+    present = store.topics_present()
+    for topic in NEWS_TOPICS:
+        if topic not in present:
+            continue  # columns stay NaN (e.g. AI topics not pulled)
+        sub = store.topics.xs(topic, level="topic")
+        sub = sub[sub.index <= cutoff]
+        if sub.empty:
+            continue
+        d = _continuous(sub, cutoff)
+        feat = pd.DataFrame(index=d.index)
+        feat[f"{topic}_tone"] = d["tone_mean"].ffill()
+        feat[f"{topic}_buzz"] = _buzz(d["article_count"].fillna(0.0), buzz_window)
+        aligned = _lag_align(feat, price_index, lag_days)
+        out[f"{topic}_tone"] = aligned[f"{topic}_tone"]
+        out[f"{topic}_buzz"] = aligned[f"{topic}_buzz"]
 
     return out

@@ -19,9 +19,12 @@ from stock_agent.news.gdelt_ingest import (
     alias_regex_rows,
     build_market_query,
     build_per_ticker_query,
+    build_topics_query,
     load_alias_map,
     normalize_market_result,
     normalize_per_ticker_result,
+    normalize_topics_result,
+    topic_names,
 )
 
 
@@ -118,3 +121,37 @@ def test_normalize_empty_results_are_typed() -> None:
     mk = normalize_market_result(pd.DataFrame())
     assert list(pt.columns) == PER_TICKER_COLS and pt.empty
     assert list(mk.columns) == MARKET_COLS and mk.empty
+
+
+def test_topics_query_themes_only_vs_with_ai_names() -> None:
+    themes_only = build_topics_query(date(2023, 1, 1), date(2024, 1, 1), include_names=False)
+    with_ai = build_topics_query(date(2023, 1, 1), date(2024, 1, 1), include_names=True)
+    # Theme topics always present; partition pruning enforced.
+    for t in ("tech", "healthcare", "energy"):
+        assert f"is_{t}" in themes_only
+        assert f"STRUCT('{t}' AS topic" in themes_only
+    assert "_PARTITIONTIME >=" in themes_only
+    # Themes-only must NOT scan AllNames (the cost-doubling column); AI version must.
+    assert "AllNames" not in themes_only
+    assert "AllNames" in with_ai and "is_ai" in with_ai
+    assert topic_names(include_names=False) == ["tech", "healthcare", "energy"]
+    assert "ai" in topic_names(include_names=True)
+
+
+def test_normalize_topics_result_indexed_by_date_topic() -> None:
+    raw = pd.DataFrame(
+        {
+            "topic": ["ai", "energy"],
+            "day": [20240102, 20240102],
+            "article_count": [200.0, 50.0],
+            "tone_mean": [2.0, -1.0],
+            "tone_std": [1.0, None],
+            "pos_count": [120.0, 10.0],
+            "neg_count": [30.0, 20.0],
+        }
+    )
+    out = normalize_topics_result(raw)
+    assert list(out.columns) == PER_TICKER_COLS
+    assert out.index.names == ["date", "topic"]
+    assert out.loc[(date(2024, 1, 2), "energy"), "tone_std"] == 0.0
+    assert normalize_topics_result(pd.DataFrame()).empty

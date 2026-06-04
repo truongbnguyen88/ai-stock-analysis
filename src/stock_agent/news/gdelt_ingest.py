@@ -66,6 +66,63 @@ PRESIDENTIAL_THEMES: tuple[str, ...] = ("tax_fncact_president",)  # "president" 
 # a bare organization-name hit in unrelated coverage is dropped.
 BUSINESS_THEMES: tuple[str, ...] = ("econ_", "business", "bus_", "epu_", "tax_", "wb_")
 
+# --- Topic / sector macro streams (daily sentiment per topic, shared across tickers) ---
+# Topic → V2Themes regex patterns. These fold into the SAME V2Themes scan as the
+# market query (cheap). Patterns chosen from a GDELT theme-frequency probe (high
+# volume, clean tags): see docs/NEWS_INGEST.md. ``wb_.*health`` etc. are regex.
+TOPIC_THEMES: dict[str, tuple[str, ...]] = {
+    "tech": (
+        "information_and_communication_technolog",
+        "soc_innovation",
+        "soc_emergingtech",
+        "tech_automation",
+        "wb_376_innovation_technology",
+        "wb_377_firm_innovation",
+    ),
+    "healthcare": (
+        "general_health",
+        "medical",
+        "wb_.*health",
+        "tax_disease",
+        "pharmaceutic",
+        "drug_trade",
+        "ungp_healthcare",
+        "epu_cats_healthcare",
+    ),
+    "energy": (
+        "energy_and_extractives",
+        "renewable_energy",
+        "env_oil",
+        "env_naturalgas",
+        "env_coal",
+        "env_solar",
+        "nuclear_energy",
+        "power_systems",
+        "energy_efficiency",
+        "env_mining",
+    ),
+}
+# Topic → AllNames entity patterns. GDELT has NO clean "AI" theme, so AI topics are
+# captured by named-entity keyword match (probe-confirmed volume). This requires
+# scanning the AllNames column → extra bytes (opt-in; see include_names).
+TOPIC_NAMES: dict[str, tuple[str, ...]] = {
+    "ai": (
+        "artificial intelligence",
+        "machine learning",
+        "generative ai",
+        "large language model",
+        "neural network",
+        "deep learning",
+    ),
+    "ai_infra": (
+        "data center",  # also matches "data centers"
+        "data centre",  # also matches "data centres"
+        "cloud computing",
+        "semiconductor",
+        "hyperscale",
+    ),
+}
+
 # Default output store (gitignored; features only).
 DEFAULT_STORE_DIR = Path("outputs/news_sentiment")
 DEFAULT_ALIAS_PATH = Path("configs/ticker_aliases.json")
@@ -228,6 +285,64 @@ ORDER BY day, ticker
 """.strip()  # noqa: E501 — generated SQL
 
 
+def topic_names(*, include_names: bool = True) -> list[str]:
+    """Topics emitted by the topics stream (theme-based always; AllNames-based if on)."""
+    return list(TOPIC_THEMES) + (list(TOPIC_NAMES) if include_names else [])
+
+
+def build_topics_query(start: Date, end: Date, *, include_names: bool = True) -> str:
+    """SQL for the daily topic/sector macro stream over [start, end).
+
+    One scan of the base table computes a boolean flag per topic, then an in-memory
+    ``UNNEST`` unpivots to (topic, day) rows — so an article counts toward every
+    topic it matches (e.g. an "AI data-center power" article hits ai + ai_infra +
+    energy) without re-scanning. Theme topics read ``V2Themes`` (same column the
+    market query scans → cheap); ``include_names`` adds AI topics from ``AllNames``
+    (an extra column scan, ~doubles the bytes).
+    """
+    flags = [
+        f"    {_theme_predicate('LOWER(V2Themes)', pats)} AS is_{topic}"
+        for topic, pats in TOPIC_THEMES.items()
+    ]
+    extra = ""
+    if include_names:
+        flags += [
+            f"    {_theme_predicate('LOWER(AllNames)', pats)} AS is_{topic}"
+            for topic, pats in TOPIC_NAMES.items()
+        ]
+        extra = " AND AllNames IS NOT NULL"
+    structs = ",\n  ".join(
+        f"STRUCT('{t}' AS topic, is_{t} AS hit)" for t in topic_names(include_names=include_names)
+    )
+    flags_sql = ",\n".join(flags)
+    band = NEUTRAL_TONE_BAND
+    return f"""
+WITH base AS (
+  SELECT
+    DIV(DATE, 1000000) AS day,
+    SAFE_CAST(SPLIT(V2Tone, ',')[OFFSET(0)] AS FLOAT64) AS tone,
+{flags_sql}
+  FROM `{GKG_TABLE}`
+  WHERE {_partition_window(start, end)}
+    AND V2Tone IS NOT NULL AND V2Themes IS NOT NULL{extra}
+)
+SELECT
+  u.topic AS topic,
+  base.day AS day,
+  COUNT(*) AS article_count,
+  AVG(base.tone) AS tone_mean,
+  STDDEV_SAMP(base.tone) AS tone_std,
+  COUNTIF(base.tone > {band}) AS pos_count,
+  COUNTIF(base.tone < -{band}) AS neg_count
+FROM base, UNNEST([
+  {structs}
+]) u
+WHERE u.hit
+GROUP BY topic, day
+ORDER BY day, topic
+""".strip()  # noqa: E501 — generated SQL
+
+
 # --------------------------------------------------------------------------- #
 # BigQuery execution (lazy import; optional [gdelt] extra)
 # --------------------------------------------------------------------------- #
@@ -291,22 +406,51 @@ def normalize_market_result(df: pd.DataFrame) -> pd.DataFrame:
     return out.reindex(columns=MARKET_COLS).fillna(fills).astype("float64")
 
 
+def normalize_topics_result(df: pd.DataFrame) -> pd.DataFrame:
+    """BigQuery topic rows → (date, topic)-indexed frame (same cols as per-ticker)."""
+    midx = pd.MultiIndex.from_arrays([[], []], names=["date", "topic"])
+    if df.empty:
+        return pd.DataFrame({c: pd.Series(dtype="float64") for c in PER_TICKER_COLS}, index=midx)
+    out = df.copy()
+    out["date"] = out["day"].map(_day_to_date)
+    out = out.set_index(["date", "topic"]).sort_index()
+    out["tone_std"] = out["tone_std"].fillna(0.0)
+    return out[PER_TICKER_COLS].astype("float64")
+
+
 # --------------------------------------------------------------------------- #
 # Store IO (CSV — small, dependency-free, inspectable; features only)
 # --------------------------------------------------------------------------- #
-def write_store(
-    per_ticker: pd.DataFrame, market: pd.DataFrame, *, store_dir: Path = DEFAULT_STORE_DIR
-) -> None:
-    """Persist both daily streams as CSV under ``store_dir`` (created if absent)."""
-    store_dir.mkdir(parents=True, exist_ok=True)
-    per_ticker.to_csv(store_dir / "per_ticker.csv")
-    market.to_csv(store_dir / "market.csv")
-    log.info(
-        "news_store.written",
-        store_dir=str(store_dir),
-        per_ticker_rows=len(per_ticker),
-        market_rows=len(market),
-    )
+ALL_STREAMS: tuple[str, ...] = ("per_ticker", "market", "topics")
+STREAM_FILE: dict[str, str] = {s: f"{s}.csv" for s in ALL_STREAMS}
+
+
+def stream_query(
+    stream: str,
+    start: Date,
+    end: Date,
+    *,
+    alias_path: Path = DEFAULT_ALIAS_PATH,
+    require_business_theme: bool = True,
+    include_topic_names: bool = True,
+) -> str:
+    """Build the SQL for one named stream (per_ticker | market | topics)."""
+    if stream == "market":
+        return build_market_query(start, end)
+    if stream == "topics":
+        return build_topics_query(start, end, include_names=include_topic_names)
+    if stream == "per_ticker":
+        rows = alias_regex_rows(load_alias_map(alias_path))
+        return build_per_ticker_query(start, end, rows, require_business_theme=require_business_theme)  # noqa: E501
+    raise ValueError(f"unknown stream: {stream!r} (expected one of {ALL_STREAMS})")
+
+
+def _normalize(stream: str, df: pd.DataFrame) -> pd.DataFrame:
+    if stream == "market":
+        return normalize_market_result(df)
+    if stream == "topics":
+        return normalize_topics_result(df)
+    return normalize_per_ticker_result(df)
 
 
 def ingest(
@@ -317,17 +461,25 @@ def ingest(
     alias_path: Path = DEFAULT_ALIAS_PATH,
     store_dir: Path = DEFAULT_STORE_DIR,
     require_business_theme: bool = True,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Run both stream queries over [start, end), normalize, and write the store.
+    streams: tuple[str, ...] = ("per_ticker", "market"),
+    include_topic_names: bool = True,
+) -> dict[str, pd.DataFrame]:
+    """Run the selected stream queries over [start, end), normalize, write CSVs.
 
-    Returns the (per_ticker, market) frames. End is exclusive.
+    Only the requested streams are queried and written — so a later run (e.g.
+    ``streams=("topics",)`` next month) does NOT clobber the existing per-ticker /
+    market files. End is exclusive. Returns ``{stream: frame}``.
     """
-    alias_rows = alias_regex_rows(load_alias_map(alias_path))
-    market_sql = build_market_query(start, end)
-    ticker_sql = build_per_ticker_query(
-        start, end, alias_rows, require_business_theme=require_business_theme
-    )
-    market = normalize_market_result(run_query(market_sql, project=project))
-    per_ticker = normalize_per_ticker_result(run_query(ticker_sql, project=project))
-    write_store(per_ticker, market, store_dir=store_dir)
-    return per_ticker, market
+    store_dir.mkdir(parents=True, exist_ok=True)
+    out: dict[str, pd.DataFrame] = {}
+    for stream in streams:
+        sql = stream_query(
+            stream, start, end, alias_path=alias_path,
+            require_business_theme=require_business_theme,
+            include_topic_names=include_topic_names,
+        )
+        frame = _normalize(stream, run_query(sql, project=project))
+        frame.to_csv(store_dir / STREAM_FILE[stream])
+        out[stream] = frame
+        log.info("news_store.written", stream=stream, rows=len(frame), store_dir=str(store_dir))
+    return out
