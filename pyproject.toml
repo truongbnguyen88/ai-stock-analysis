@@ -57,6 +57,13 @@ dev = [
 sequence = [
     "torch>=2.2,<3",
 ]
+# GDELT news-feature ingest (Task 10). Kept OUT of core deps: only needed to run
+# the offline `ingest-news` backfill against BigQuery. Install with
+# `pip install -e ".[gdelt]"` + `gcloud auth application-default login`.
+gdelt = [
+    "google-cloud-bigquery>=3.20",
+    "db-dtypes>=1.2",  # lets BigQuery results convert cleanly to pandas dtypes
+]
 
 [project.scripts]
 # Console entry point. The real CLI app arrives in Phase 4 (cli/app.py); until
@@ -85,7 +92,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

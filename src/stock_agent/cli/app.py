@@ -318,6 +318,91 @@ def backtest(
             )
 
 
+@app.command(name="ingest-news")
+def ingest_news(
+    start: Annotated[str, typer.Option("--start", help="Window start (YYYY-MM-DD, inclusive)")],
+    end: Annotated[str, typer.Option("--end", help="Window end (YYYY-MM-DD, exclusive)")],
+    project: Annotated[
+        str | None, typer.Option("--project", help="Google Cloud project for BigQuery billing")
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Estimate bytes/cost only — no rows read, no spend"),
+    ] = False,
+    no_business_filter: Annotated[
+        bool,
+        typer.Option("--no-business-filter", help="Disable the per-ticker business-theme filter"),
+    ] = False,
+) -> None:
+    """Pull daily GDELT news-sentiment features into outputs/news_sentiment/ (Task 10).
+
+    Aggregation runs server-side in BigQuery, so only small daily feature rows are
+    downloaded — never article text. ALWAYS run --dry-run first to see bytes-to-scan
+    (the 1 TiB/month free tier; ~$5/TiB after). Chunk by year / spread across
+    calendar months to stay free.
+    """
+    from datetime import date as _Date
+
+    from stock_agent.news.gdelt_ingest import (
+        DEFAULT_ALIAS_PATH,
+        alias_regex_rows,
+        build_market_query,
+        build_per_ticker_query,
+        estimate_bytes,
+        ingest,
+        load_alias_map,
+    )
+
+    settings = get_settings()
+    configure_logging(settings)
+    start_d, end_d = _Date.fromisoformat(start), _Date.fromisoformat(end)
+    if end_d <= start_d:
+        typer.echo("--end must be after --start")
+        raise typer.Exit(code=1)
+
+    if dry_run:
+        rows = alias_regex_rows(load_alias_map(DEFAULT_ALIAS_PATH))
+        gib = 1024**3
+        try:
+            mkt = estimate_bytes(build_market_query(start_d, end_d), project=project)
+            tik = estimate_bytes(
+                build_per_ticker_query(
+                    start_d, end_d, rows, require_business_theme=not no_business_filter
+                ),
+                project=project,
+            )
+        except RuntimeError as exc:
+            typer.echo(str(exc))
+            raise typer.Exit(code=1) from exc
+        total = mkt + tik
+        typer.echo(f"Dry run {start} → {end} (exclusive):")
+        typer.echo(f"  market    stream: {mkt / gib:8.2f} GiB")
+        typer.echo(f"  per-ticker stream:{tik / gib:8.2f} GiB")
+        cost = total / 1024**4 * 5  # ~$5 per TiB on-demand
+        typer.echo(f"  TOTAL scanned:    {total / gib:8.2f} GiB  (~${cost:.2f} on-demand)")
+        free = 1024**4
+        typer.echo(
+            "  ✓ within 1 TiB/month free tier"
+            if total <= free
+            else "  ⚠ exceeds the 1 TiB free tier — chunk by year or spread across months"
+        )
+        return
+
+    typer.echo(f"Ingesting GDELT news features {start} → {end} (exclusive) …")
+    try:
+        per_ticker, market = ingest(
+            start_d, end_d, project=project, require_business_theme=not no_business_filter
+        )
+    except RuntimeError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    n_tickers = per_ticker.index.get_level_values("ticker").nunique() if len(per_ticker) else 0
+    typer.echo(
+        f"Done: per-ticker {len(per_ticker):,} rows ({n_tickers} tickers), "
+        f"market {len(market):,} days → outputs/news_sentiment/"
+    )
+
+
 @app.command()
 def chat(
     message: Annotated[

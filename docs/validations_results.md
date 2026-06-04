@@ -36,6 +36,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-02 | **Task 8 spike — pooled LSTM sequence forecaster** vs baselines (NVDA/TSLA, h20 single-split; config sweep) | ❌ **worse**, not just a tie — Brier 0.30/0.26 vs ~0.19, ECE 0.21–0.26 vs ~0.07; lighter fits only approach the baseline from below, never beat | **Do NOT promote**; `lstm_seq` + torch kept as an isolated optional extra; **confirms the ceiling is information, not model class** |
 | 2026-06-03 | **Task 8 (cont.) — heavy LSTM + LR sweep + 114-ticker validation + calibration sweep** (3–4 layers, LayerNorm; CalibratedClassifierCV isotonic & sigmoid) | ❌ extracts a **real but redundant** vol signal (pooled big-move AUC +0.02–0.04 over historical) yet **loses Brier/ECE on ~75% of tickers**; **no** calibration method helps (val→test shift) | **Close LSTM/sequence track**; ceiling is *information*; next lever = GARCH (MC-tier upgrade) or Task 9 (news) |
 | 2026-06-03 | **Task 9 — GJR-GARCH(1,1)-t** (`monte_carlo_garch`) vs bootstrap/historical, 12-ticker basket, h20/30/60 | ✅ **first model to beat the baselines on Brier** — tie h20, wins h30 (9/12) + h60 (10/12); also **highest big-move AUC at every horizon** (+0.04–0.06 → win is *earned* resolution, not just calibration) | **Promote** to the default MC comparison set; modest *real* edge at long horizons (forward vol mean-reversion) |
+| 2026-06-03 | **Task 10 — GDELT news features vs price-only** — single-split **then full walk-forward** (7 folds, 30 tickers, h20/30/60, both models, +retune control) | ❌ **no robust gain** — logistic nothing; lightgbm a faint negative-Brier lean (−0.001→−0.003, win 54–58%) but **within fold std** and the **retune control shows news ties retuned-price** (0.1886 vs 0.1887) → the gain is model-tuning, not news | **Do NOT promote**; keep ingest+features experimental (default-OFF); **information ceiling holds** (strongest test in repo) |
 
 ---
 
@@ -448,4 +449,67 @@ from stock_agent.settings import get_settings
 run_backtest_pipeline("NVDA", 60,
     model_names=["monte_carlo_garch", "monte_carlo_bootstrap", "historical_sim"],
     settings=get_settings(), test_size=6)
+```
+
+---
+
+## 2026-06-03 — Task 10: GDELT news features vs price-only (the information ceiling, tested directly)
+
+**Question.** Every prior validation concluded the binding constraint is *information, not model class*. Task 10 is the one lever that adds genuinely **new information** — point-in-time news sentiment — which was previously *unavailable* (no historical news → "blocked on data"). We unblocked it with **GDELT 2.0 GKG via BigQuery**: free, multi-year, monitoring-timestamped (point-in-time), pre-scored lexicon tone. So this finally tests the ceiling hypothesis with real data instead of asserting it.
+
+**Data.** Server-side-aggregated daily streams (`news/gdelt_ingest.py` → `outputs/news_sentiment/`), 2023-01→2026-06, 105/108 non-ETF tickers (3 `&`-name misses fixed for next pull). Features (`features/news_history.py`, leakage-safe, 1-day publication lag, scale-free): per-ticker `news_buzz` (count vs own trailing-60d mean), `news_tone`, `news_pos_frac`, `news_neg_frac`; market-wide (VIX-like) `pol_tone`, `epu_buzz`, `pres_tone`.
+
+**Design.** Faithful A/B reusing the production blocks (`build_training_matrix` targets, `_make_classifier`, median imputer). 15-ticker pool (volatile semis + stable large-caps), h20, **identical rows** for both arms (only the 7 news columns differ), **temporal** split (train < 2025-09 ≤ test; 9,075 train / 2,535 test rows, 100% news coverage). Both **logistic** and **lightgbm**; directional thresholds + the **big-move** target `|r|>k` (ML's only historical niche). `scripts/validate_news_features.py`.
+
+**Result — news adds no reliable edge (Δ = +news − price-only):**
+
+| Model · target | mean ΔBrier | mean ΔAUC | Read |
+|---|---|---|---|
+| logistic · directional (5 thr) | **+0.0015** | **−0.018** | worse |
+| logistic · big-move (k=5/10%) | +0.0015 / +0.0001 | −0.008 / −0.001 | worse / neutral |
+| lightgbm · directional (5 thr) | −0.0010 | +0.002 | ~noise |
+| lightgbm · big-move (k=5/10%) | +0.0027 / +0.0022 | −0.012 / −0.007 | worse |
+
+- Deltas are **inconsistent in sign** across models/targets and **tiny** (all within ±0.003 Brier, ±0.02 AUC) — the signature of *no real signal*, not a near-miss.
+- News does **not** even help the **big-move/volatility** target (its best shot) — it's neutral-to-worse there for both models. The per-ticker price/vol features + market VIX already encode the volatility regime; crude GDELT tone over noisy org→ticker mapping adds nothing incremental.
+- A booster (lightgbm), the model most able to exploit weak interactions, finds **no extractable directional signal either** (directional Δ ≈ noise).
+
+**Decision (single-split).** Pointed to "no gain" — but a single split is weak, so it was followed by a full walk-forward (below) before finalizing.
+
+### Full walk-forward + retune control (the rigorous follow-up)
+
+`scripts/validate_news_features_full.py`: **7 embargoed walk-forward folds** (2024-07→2026-04), **30 tickers**, horizons **20/30/60**, both models, directional + big-move targets, per-ticker win-rate, **`log1p`-normalized buzz**, and a **held-out lightgbm retune** with a `price-retuned` control. Mean Δ over folds (Δ<0 Brier / Δ>0 AUC = news helps):
+
+| Horizon | logistic ΔBrier / ΔAUC / ticker-win | lightgbm ΔBrier / ΔAUC / ticker-win |
+|---|---|---|
+| 20 | +0.0009 / −0.005 / 46% | −0.0008 / +0.002 / 56% |
+| 30 | −0.0002 / −0.006 / 46% | −0.0017 / +0.004 / 58% |
+| 60 | −0.0018 / +0.004 / 55% | −0.0028 / +0.009 / 54% |
+
+- **logistic: no gain at any horizon** (neutral-to-negative; AUC consistently ≤ 0).
+- **lightgbm: a small negative-Brier lean that grows with horizon** (−0.0008 → −0.0028), helping 56–73% of cells — which the single split had missed. *But* it is **within the per-fold std** (0.002–0.011, ≥ the mean), win-rates are barely above 50%, and it does not appear for the linear model.
+
+**The retune control is decisive** (h20 big-move, disjoint held-out test):
+
+| Arm | Brier | AUC |
+|---|---|---|
+| retuned lightgbm **+ news** (25 feat) | 0.1886 | 0.694 |
+| price-only, **production** config | 0.1950 | 0.684 |
+| price-only, **retuned** config (the control) | **0.1887** | — |
+
+Retuned-news (0.1886) **ties** retuned-price (0.1887) to within 0.0001 Brier. The real improvement over the production baseline (0.1950 → 0.1887) came from **retuning the model, not from the news columns**. (The script prints "BEATS" by comparing to the *better* price baseline, but the `price-retuned` control shows that label is noise.) **Conclusion: news adds no incremental information once the booster is properly tuned.**
+
+**Decision.** **Do NOT promote** news into the model — price-only (Option A) stands. Ingest pipeline, store, loader, alias config kept as **validated-negative experimental infrastructure** (default-OFF; not wired into the production assembler), like the regime/LSTM experiments. News stays **display context**, never a model input. The precise claim (more careful than the single-split's "no gain"): **no robust, control-validated, economically-meaningful gain** — a faint lightgbm lean exists but is within noise, absent for logistic, and attributable to model flexibility rather than news (the retune control). Answers the question the project deferred "to last", with the strongest test in the repo (multi-fold walk-forward + held-out retune): the **information ceiling holds** — direction is efficient, magnitude is already captured by price/VIX/GARCH. Closes the post-V1 ML track.
+
+**Caveats / what would change the verdict.** GDELT tone is a crude bag-of-words score and the org→ticker map is noisy; a future re-test could try the **Loughran-McDonald** finance lexicon (GCAM) instead of generic `V2Tone`, entity-disambiguated counts, or news-volume *surprise* — but the bar is high given how flat (and retune-explained) the response is, and feature-searching a near-null signal risks p-hacking.
+
+**Reproduce.**
+```bash
+# 1. Pull the data (one-time, ~945 GiB scan, free tier — see docs/NEWS_INGEST.md)
+python -m stock_agent ingest-news --start 2023-01-01 --end 2026-06-03 --project YOUR_GCP_PROJECT
+# 2a. Quick single-split A/B (both models)
+PYTHONPATH=src python scripts/validate_news_features.py
+AB_MODEL=lightgbm PYTHONPATH=src python scripts/validate_news_features.py
+# 2b. Full walk-forward + retune control (the rigorous run)
+PYTHONPATH=src python scripts/validate_news_features_full.py
 ```
