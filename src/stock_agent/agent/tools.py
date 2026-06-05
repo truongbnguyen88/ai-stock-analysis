@@ -597,10 +597,26 @@ class ToolExecutor:
                 for b in c.bins
             ],
             "post_hoc_recalibration": post,  # null when too few points to split honestly
+            "interval_coverage": (
+                {
+                    "nominal_ci": round(r.conformal.ci_level, 2),
+                    "empirical_coverage": round(r.conformal.empirical_coverage, 3),
+                    "conformalized_coverage": (
+                        round(r.conformal.conformalized_coverage, 3)
+                        if r.conformal.conformalized_coverage is not None
+                        else None
+                    ),
+                    "n_eval": r.conformal.n_eval,
+                }
+                if r.conformal is not None
+                else None
+            ),
             "interpretation_key": (
                 "ECE is the average gap between predicted probability and realized frequency "
                 "(0 = perfectly calibrated). In the reliability table, 'realized' below "
-                "'predicted' means the model was overconfident in that probability band."
+                "'predicted' means the model was overconfident in that probability band. "
+                "interval_coverage.empirical_coverage is what the model's stated CI actually "
+                "covered OOS — far from nominal_ci means the interval is mis-sized."
             ),
             "methodology": (
                 f"Walk-forward out-of-sample, embargo = horizon, {r.n_folds} folds, "

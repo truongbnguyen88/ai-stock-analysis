@@ -266,6 +266,17 @@ def _print_backtest(result: BacktestResult) -> None:
         else ""
     )
     typer.echo(f"  Calibration   : ECE {c.ece:.3f}  MCE {c.mce:.3f}{post}")
+    if result.conformal is not None:
+        cf = result.conformal
+        conf = (
+            f" → conformal {cf.conformalized_coverage:.0%}"
+            if cf.conformalized_coverage is not None
+            else ""
+        )
+        typer.echo(
+            f"  Interval cov  : {cf.empirical_coverage:.0%} of the stated "
+            f"{cf.ci_level:.0%} CI held OOS (n={cf.n_eval}){conf}"
+        )
     typer.echo("")
     typer.echo("  Per-threshold (P(r > θ)):")
     typer.echo(f"    {'θ':>7s}  {'base':>6s}  {'Brier':>7s}  {'logloss':>8s}  {'AUC':>5s}")

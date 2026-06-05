@@ -76,6 +76,24 @@ class FoldSummary(BaseModel):
     mean_brier: float  # averaged across thresholds within the fold
 
 
+class ConformalReport(BaseModel):
+    """Split-conformal coverage of the model's prediction interval (honest temporal split).
+
+    ``empirical_coverage`` is what the model's STATED ``ci_level`` interval actually
+    covered out-of-sample; ``conformalized_coverage`` is the coverage after the
+    distribution-free correction ``q`` (fit on the earlier half, evaluated on the later
+    half). A big gap from ``ci_level`` means the model's own intervals are mis-sized.
+    """
+
+    ci_level: float  # nominal coverage the interval claims (e.g. 0.90)
+    n_eval: int  # OOS points the coverage is measured on
+    empirical_coverage: float  # what the stated interval actually covered
+    correction: float | None = None  # q (return units); None if too few points to split
+    conformalized_coverage: float | None = None  # coverage after applying q
+    mean_width: float  # mean stated interval width (return units)
+    mean_width_conformal: float | None = None  # mean conformalized width
+
+
 class BacktestResult(BaseModel):
     """Full out-of-sample evaluation of one forecaster on one ticker/horizon."""
 
@@ -93,6 +111,7 @@ class BacktestResult(BaseModel):
     # where ML's volatility/tail skill is NOT redundant with the directional baselines.
     big_move_k: float = 0.10
     big_move: ThresholdMetrics | None = None
+    conformal: ConformalReport | None = None  # interval-coverage diagnostics
     mean_brier: float  # mean Brier across thresholds (headline scalar; lower better)
     mean_log_loss: float
     folds: list[FoldSummary]

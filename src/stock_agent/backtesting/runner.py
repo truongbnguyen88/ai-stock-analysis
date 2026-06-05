@@ -14,6 +14,7 @@ construction. Refittable models (pooled ML) are rebuilt per fold via
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from datetime import date as Date
 
@@ -24,8 +25,9 @@ from stock_agent.backtesting.metrics import threshold_metrics
 from stock_agent.backtesting.splitter import assert_no_leakage, walk_forward_splits
 from stock_agent.features.assembler import THRESHOLDS
 from stock_agent.forecasting.base import ForecastModel
+from stock_agent.forecasting.conformal import conformal_metrics
 from stock_agent.logging_config import get_logger
-from stock_agent.schemas.backtest import BacktestResult, FoldSummary
+from stock_agent.schemas.backtest import BacktestResult, ConformalReport, FoldSummary
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.market import PriceSeries
 
@@ -118,6 +120,10 @@ def run_backtest(
     cal_y: list[float] = []
     big_move_prob: list[float] = []  # P(|r| > big_move_k) per as-of (direction-agnostic)
     big_move_label: list[float] = []
+    ci_lo: list[float] = []  # (ci_low, ci_high, realized) per as-of for conformal coverage
+    ci_hi: list[float] = []
+    ci_real: list[float] = []
+    ci_level_seen: float | None = None
     fold_summaries: list[FoldSummary] = []
     notes: list[str] = []
 
@@ -136,6 +142,12 @@ def run_backtest(
             # Big-move signal: P(|r| > k) = P(< -k) + P(> +k) = outer two buckets.
             big_move_prob.append(fc.buckets[0].probability + fc.buckets[-1].probability)
             big_move_label.append(1.0 if abs(realized) > big_move_k else 0.0)
+            # Prediction-interval coverage (conformal): collect (CI, realized) per as-of.
+            if fc.ci_low is not None and fc.ci_high is not None and fc.ci_level is not None:
+                ci_lo.append(fc.ci_low)
+                ci_hi.append(fc.ci_high)
+                ci_real.append(realized)
+                ci_level_seen = fc.ci_level
             for k, theta in enumerate(thresholds):
                 label = 1.0 if realized > theta else 0.0
                 probs_by_thresh[k].append(ex[k])
@@ -170,6 +182,22 @@ def run_backtest(
         else None
     )
 
+    # Prediction-interval coverage diagnostics (split-conformal).
+    conformal = None
+    if ci_level_seen is not None and ci_lo:
+        cm = conformal_metrics(ci_lo, ci_hi, ci_real, alpha=1.0 - ci_level_seen)
+        if cm is not None:
+            q = cm.correction if math.isfinite(cm.correction) else None
+            conformal = ConformalReport(
+                ci_level=ci_level_seen,
+                n_eval=cm.n_eval,
+                empirical_coverage=cm.empirical_coverage,
+                correction=q,
+                conformalized_coverage=cm.conformalized_coverage,
+                mean_width=cm.mean_width,
+                mean_width_conformal=cm.mean_width_conformal,
+            )
+
     n_predictions = len(probs_by_thresh[0])
     mean_brier = float(np.mean([m.brier for m in per_threshold]))
     mean_log_loss = float(np.mean([m.log_loss for m in per_threshold]))
@@ -198,6 +226,7 @@ def run_backtest(
         calibration=calibration,
         big_move_k=big_move_k,
         big_move=big_move,
+        conformal=conformal,
         mean_brier=mean_brier,
         mean_log_loss=mean_log_loss,
         folds=fold_summaries,
