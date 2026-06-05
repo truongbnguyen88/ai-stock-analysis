@@ -94,6 +94,9 @@ class Settings(BaseSettings):
     # nested holdout). Validated to cut OOS ECE without moving AUC; 0/False disables
     # it (e.g. to A/B calibrated vs raw in a backtest).
     calibrate_ml: bool = True
+    # Apply the offline pooled conformal interval-correction (outputs/models/conformal.json)
+    # to served CIs/VaR so the stated coverage is honest. No-op if the artifact is absent.
+    conformal_intervals: bool = True
 
     # ---- Promote gate (scheduled-retrain data-quality guard) ----
     # The CI retrain publishes an artifact only if `verify-models` passes. Beyond the

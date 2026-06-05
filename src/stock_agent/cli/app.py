@@ -203,6 +203,44 @@ def _train_all(universe: Path, settings: Settings) -> None:
     typer.echo("\nDone — production toolkit retrained.")
 
 
+@app.command(name="conformal-calibrate")
+def conformal_calibrate(
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file (one ticker per line)")
+    ] = Path("configs/universe.txt"),
+    basket_size: Annotated[
+        int, typer.Option("--basket-size", help="How many universe tickers to pool over")
+    ] = 24,
+) -> None:
+    """Compute pooled conformal interval-corrections → outputs/models/conformal.json.
+
+    For each (model, horizon): build the model as of ~1y ago, forecast the held-out year
+    across the basket, pool the (CI, realized) pairs, and fit one distribution-free `q` so
+    the served CI/VaR has honest coverage. Slow (offline, one-time). Applied at inference
+    when `settings.conformal_intervals` is on.
+    """
+    if not universe.exists():
+        typer.echo(f"Universe file not found: {universe}")
+        raise typer.Exit(code=1)
+    settings = get_settings()
+    configure_logging(settings)
+    from stock_agent.forecasting.train_conformal import calibrate, conformal_path
+    from stock_agent.providers.registry import build_default_registry
+
+    typer.echo("Calibrating conformal interval-corrections (offline; this takes a while) …")
+    art = calibrate(build_default_registry(settings), settings, universe_path=universe,
+                    basket_size=basket_size)
+    path = conformal_path(settings)
+    art.save(path)
+    typer.echo(f"\nSaved {path}  (cutoff {art.cal_cutoff}, target {art.ci_level:.0%}):")
+    for model, by_h in art.entries.items():
+        for h, e in by_h.items():
+            typer.echo(
+                f"  {model:>22} h{h:<3}  q={e.q:+.3f}  "
+                f"coverage {e.coverage_before:.0%} → {e.coverage_after:.0%}  (n={e.n})"
+            )
+
+
 @app.command(name="verify-models")
 def verify_models(
     universe: Annotated[

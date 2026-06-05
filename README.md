@@ -39,7 +39,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   (5/10/15% for h20/h30/h60). This is ML's genuine niche: direction is ≈ efficient,
   magnitude/volatility is predictable. See [docs/models_explanation.md](docs/models_explanation.md).
 - **`backtest`** — walk-forward, embargoed, leakage-safe evaluation (Brier / log-loss
-  / AUC / ECE) comparing every model to baselines on identical folds.
+  / AUC / ECE **+ prediction-interval coverage**) comparing every model to baselines on
+  identical folds. CIs are **conformally calibrated** (`conformal-calibrate` → a pooled,
+  distribution-free correction so a stated 90% interval actually covers ~90% OOS).
 - **`chat`** — a conversational agent (Role C) that orchestrates the tools, grounds
   every number, and can export an executive summary to PDF/DOCX/Markdown.
 

@@ -70,4 +70,35 @@ def run_forecast(
     series = (
         PriceLoader(registry).load_recent(ticker.upper(), _PRICE_LOOKBACK_DAYS, min_bars=30).series
     )
-    return _build_model(model_name, registry).forecast(series, horizon_days=horizon_days)
+    forecast = _build_model(model_name, registry).forecast(series, horizon_days=horizon_days)
+    return _apply_conformal(forecast, settings)
+
+
+def _apply_conformal(forecast: ScenarioForecast, settings: Settings) -> ScenarioForecast:
+    """Widen/​tighten the served CI + VaR by the offline pooled conformal ``q`` (if any).
+
+    ``ci_low``/``var_95`` are the same 5% lower quantile, so both shift by ``-q``;
+    ``ci_high`` by ``+q``; ``var_99`` (1% level) shifts by ``-q`` too (approximate but
+    conservative — the correction is calibrated to the CI level). No-op without an artifact.
+    """
+    if not settings.conformal_intervals or forecast.ci_low is None or forecast.ci_high is None:
+        return forecast
+    from stock_agent.forecasting.conformal import conformalize_interval
+    from stock_agent.forecasting.conformal_calibrate import ConformalArtifact
+    from stock_agent.forecasting.train_conformal import conformal_path
+
+    art = ConformalArtifact.load(conformal_path(settings))
+    if art is None:
+        return forecast
+    q = art.q_for(forecast.model_name, forecast.horizon_days)
+    if q is None:
+        return forecast
+    lo, hi = conformalize_interval(forecast.ci_low, forecast.ci_high, q)
+    update: dict[str, object] = {"ci_low": lo, "ci_high": hi}
+    if forecast.var_95 is not None:
+        update["var_95"] = forecast.var_95 - q
+    if forecast.var_99 is not None:
+        update["var_99"] = forecast.var_99 - q
+    note = f"CI/VaR conformally calibrated (q={q:+.3f} @ {art.ci_level:.0%} target)."
+    update["notes"] = f"{forecast.notes} {note}".strip() if forecast.notes else note
+    return forecast.model_copy(update=update)

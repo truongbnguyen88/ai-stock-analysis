@@ -250,6 +250,7 @@ CLI / Chat Agent  →  pipelines.analyze
 - **Embargo** between train end and test start equal to horizon `h` (prevents target overlap leakage).
 - **Metrics** per fold + aggregated with dispersion: accuracy, precision, recall, ROC AUC, Brier, log loss.
 - **Calibration first-class** — reliability diagrams + Expected Calibration Error measure trust; the served ML models are calibrated via `CalibratedClassifierCV(cv=k, isotonic)` baked into the artifact, validated calibrated-vs-raw OOS (ECE/Brier down, **AUC invariant**). The `backtest` harness's `calibrate=` flag drives that A/B.
+- **Interval coverage is conformalized** — ECE calibrates *bucket probabilities*; **split conformal** (`forecasting/conformal.py`) calibrates the *prediction interval* so the stated CI has honest coverage. The backtest reports stated-vs-conformalized coverage (`ConformalReport`); a **pooled offline correction** `q` per (model, horizon) — calibrated as-of a cutoff, pooled across the universe (`train_conformal.py`), persisted `outputs/models/conformal.json` — is applied to served CIs/VaR at inference (config-gated `settings.conformal_intervals`). Distribution-free, finite-sample marginal coverage; leakage-safe (calibration window is the past).
 - **Baselines as guardrails** — every ML model compared to historical-sim + MC on identical folds. Underperforming/uncalibrated models reported as such.
 - **Reproducibility** — each run logs config, seeds, data window, provider versions, metrics to `outputs/experiments/<run_id>/`.
 
