@@ -38,6 +38,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-03 | **Task 9 — GJR-GARCH(1,1)-t** (`monte_carlo_garch`) vs bootstrap/historical, 12-ticker basket, h20/30/60 | ✅ **first model to beat the baselines on Brier** — tie h20, wins h30 (9/12) + h60 (10/12); also **highest big-move AUC at every horizon** (+0.04–0.06 → win is *earned* resolution, not just calibration) | **Promote** to the default MC comparison set; modest *real* edge at long horizons (forward vol mean-reversion) |
 | 2026-06-03 | **Task 10 — GDELT news features vs price-only** — single-split **then full walk-forward** (7 folds, 30 tickers, h20/30/60, both models, +retune control) | ❌ **no robust gain** — logistic nothing; lightgbm a faint negative-Brier lean (−0.001→−0.003, win 54–58%) but **within fold std** and the **retune control shows news ties retuned-price** (0.1886 vs 0.1887) → the gain is model-tuning, not news | **Do NOT promote**; keep ingest+features experimental (default-OFF); **information ceiling holds** (strongest test in repo) |
 | 2026-06-04 | **XGBoost reconsidered** — heavy random-search tune (winner's-curse-guarded) + 3-way bake-off vs logistic/lightgbm (7-fold walk-forward, h20/30/60, with news), **raw then CCCV-calibrated** | **raw:** tuned-xgb looked best everywhere, lightgbm worst + poorly-calibrated (ECE 0.11–0.13). **calibrated (the fair test):** CCCV fixes lightgbm; all three converge & **logistic is nominally best at every h** (xgb last at h30/h60), all tied within fold std → xgb's raw edge was a **calibration artifact** | **Do NOT promote xgboost**; vindicates the original drop-xgboost call; logistic stays default |
+| 2026-06-04 | **Ensemble** — 5-member linear pool (historical + bootstrap + GARCH + logistic + lightgbm), **equal vs online-stacked** weights, walk-forward via the real harness (4 tickers, h20/60, per-fold ML retrain) | does **not** beat the best single member on Brier (h20 0.1688 vs GARCH 0.1680; h60 0.1319 vs bootstrap 0.1288); **skill-weighting (stacking) adds nothing** (members' Briers cluster, too few folds). BUT best **big-move AUC** (h20 0.68 vs baselines ≤0.60) at **good calibration** (ECE 0.054 ≪ ML's 0.06–0.09) | **Promote (user call) as a robust all-rounder** — not a Brier win, but never worst + best magnitude discrimination at honest calibration + one default. Equal weights (stacking dropped). *Wiring pending.* |
 
 ---
 
@@ -547,4 +548,32 @@ PYTHONPATH=src python scripts/validate_news_features_full.py
 **Reproduce.**
 ```bash
 PYTHONPATH=src python scripts/tune_validate_xgboost.py   # tune + calibrated 3-way bake-off
+```
+
+---
+
+## 2026-06-04 — Ensemble: 5-member linear probability pool (equal vs skill-weighted)
+
+**Question.** GARCH's win showed different *mechanisms* are complementary — does a probability-pooled ensemble of the validated models beat the best single one? Ensembles usually win on Brier without new information, so this is a ceiling-proof lever.
+
+**Model.** `forecasting/ensemble.py` — `EnsembleForecast`, a linear pool over 5 members: `historical_sim`, `monte_carlo_bootstrap`, `monte_carlo_garch`, pooled `logistic`, pooled `lightgbm`. Bucket probs linear-pooled; E[r]/upside/downside exact weighted means; **VaR/CI recomputed from the mixture CDF** (never averaging quantiles — `forecasting/quantiles.py`). ML members that lack a trained artifact self-report a historical fallback and are dropped. (Side improvement shipped with this: ML forecasters now emit bucket-derived VaR/CI, so they contribute quantile anchors and no longer flatten the mixture tail.)
+
+**Setup** (`scripts/validate_ensemble.py`). Walk-forward via the **production harness primitives** (`walk_forward_splits` → `exceedance_probabilities` → `threshold_metrics`/`calibration_report`) with per-fold pooled ML retrain (shared cache). 4 tickers (NVDA/AMD/MSFT/KO), h20/h60, identical as-ofs for all models. Two weightings: **equal**, and **online convex stacking** — at each fold the simplex weights (ridge-pulled to uniform) that minimised the ensemble's exceedance Brier on ALL PRIOR folds only (leakage-safe; plain 1/Brier is too flat to matter since members' Briers cluster ~0.17).
+
+**Result (mean over 4 tickers; Brier ↓, ECE ↓, bigAUC ↑):**
+
+| h | best member | ens equal | ens skill | ens bigAUC | baselines bigAUC |
+|---|---|---|---|---|---|
+| 20 | GARCH **0.1680** | 0.1688 | 0.1689 | **0.682** (ECE 0.054) | 0.49–0.60 |
+| 60 | bootstrap **0.1288** | 0.1319 | 0.1330 | — (n too small) | — |
+
+- **Does NOT beat the best single member on Brier** at either horizon (ties GARCH at h20, slightly trails bootstrap at h60). The best single model is already near the price-only Brier floor; averaging correlated members can't beat it. Contrast GARCH, which won by adding a *new mechanism* — pooling existing ones adds no information.
+- **Skill-weighting (stacking) adds nothing** — weights barely move from uniform (members' Briers cluster within ~0.01) and ~11 folds is too few for learned weights to generalize (h60 stacking is marginally *worse* than equal). **Dropped — equal weights shipped.**
+- **Genuine strength:** highest **big-move AUC** (h20 0.68 vs baselines ≤0.60, near the ML members' 0.65–0.70) at **markedly better calibration** (ECE 0.054 vs ML 0.064–0.085). It's a *better-calibrated way to get the magnitude signal* than raw ML.
+
+**Decision (user call). Promote the equal-weight 5-member ensemble as a robust all-rounder** — *not* on a Brier win (it has none), but because it is **never the worst**, has the **best magnitude discrimination at honest calibration**, and gives **one default forecast** with no per-horizon model-picking. Honest caveat recorded: on the headline Brier score it ties (not beats) the best single baseline; for the lowest Brier at a specific horizon, GARCH (h20) / bootstrap (h60) remain marginally ahead. **Status: available now (`forecast --model ensemble`); agent-vetting + docs wiring PENDING (next session).** Pre-promotion calibration check (verified, not assumed): the 2 ML members are CCCV cv=3 isotonic-calibrated (`is_calibrated=True` on served artifacts) + lightgbm tuned (#38); the 3 baselines aren't classifiers so CCCV is N/A but they're empirically well-calibrated (ECE 0.03–0.07); the *pooled* ensemble measured ECE 0.054 at h20. Open: promotion scope + whether to add a thin post-hoc isotonic so it reports `calibration_status="calibrated"`.
+
+**Reproduce.**
+```bash
+PYTHONPATH=src python scripts/validate_ensemble.py   # equal + online-stacked, per-fold ML retrain
 ```
