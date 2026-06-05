@@ -29,6 +29,7 @@ from stock_agent.features.assembler import current_features_vector
 from stock_agent.forecasting.buckets import BucketDef, buckets_for_horizon, make_prob_buckets
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.forecasting.pooled import PooledModel, default_model_path
+from stock_agent.forecasting.quantiles import quantiles_from_buckets
 from stock_agent.logging_config import get_logger
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry
@@ -173,10 +174,15 @@ class MLForecaster:
 
         buckets = _exceedance_to_buckets(probs_gt, buckets_for_horizon(horizon_days))
         expected_return = sum(_bucket_midpoint(b) * b.probability for b in buckets)
+        # VaR / CI from the predicted bucket distribution. Deep-tail levels can land
+        # inside an open outer bucket, so these are coarse bucket-derived estimates
+        # (no within-bucket shape) — see forecasting.quantiles.
+        q = quantiles_from_buckets(buckets, (0.01, 0.05, 0.95))
         calibrated = model.is_calibrated
         note = (
             f"Pooled {self._model_type}: {model.n_tickers} tickers, {model.n_train_rows} rows"
             + ("; probabilities isotonic-calibrated (cross-validated)." if calibrated else ".")
+            + " VaR/CI are bucket-derived (coarse tails)."
         )
 
         return ScenarioForecast(
@@ -196,6 +202,11 @@ class MLForecaster:
             downside_prob=sum(
                 b.probability for b in buckets if b.upper is not None and b.upper <= 0.0
             ),
+            var_95=q[0.05],
+            var_99=q[0.01],
+            ci_level=0.90,
+            ci_low=q[0.05],
+            ci_high=q[0.95],
             calibration_status="calibrated" if calibrated else "uncalibrated",
             notes=note,
         )

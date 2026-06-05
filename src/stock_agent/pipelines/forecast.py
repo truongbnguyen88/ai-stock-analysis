@@ -25,6 +25,7 @@ MODEL_NAMES: list[str] = [
     "monte_carlo_jump",
     "monte_carlo_garch",  # GJR-GARCH-t conditional vol (Task 9)
     *_ML_TYPES,
+    "ensemble",  # linear probability pool over baselines + GARCH + pooled ML
     "regime_hmm",  # experimental (Task 8); CLI/backtest only, not agent/report
 ]
 
@@ -44,6 +45,10 @@ def _build_model(model_name: str, registry: ProviderRegistry) -> ForecastModel:
     if model_name in _ML_TYPES:
         # Pass the registry so the earnings feature can be computed at inference.
         return MLForecaster(model_name, registry=registry)  # type: ignore[arg-type]
+    if model_name == "ensemble":
+        from stock_agent.forecasting.ensemble import full_ensemble
+
+        return full_ensemble(registry)
     if model_name == "regime_hmm":
         return RegimeForecaster()
     raise ValueError(f"unknown model '{model_name}'; available: {MODEL_NAMES}")
