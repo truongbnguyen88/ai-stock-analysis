@@ -37,6 +37,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-03 | **Task 8 (cont.) — heavy LSTM + LR sweep + 114-ticker validation + calibration sweep** (3–4 layers, LayerNorm; CalibratedClassifierCV isotonic & sigmoid) | ❌ extracts a **real but redundant** vol signal (pooled big-move AUC +0.02–0.04 over historical) yet **loses Brier/ECE on ~75% of tickers**; **no** calibration method helps (val→test shift) | **Close LSTM/sequence track**; ceiling is *information*; next lever = GARCH (MC-tier upgrade) or Task 9 (news) |
 | 2026-06-03 | **Task 9 — GJR-GARCH(1,1)-t** (`monte_carlo_garch`) vs bootstrap/historical, 12-ticker basket, h20/30/60 | ✅ **first model to beat the baselines on Brier** — tie h20, wins h30 (9/12) + h60 (10/12); also **highest big-move AUC at every horizon** (+0.04–0.06 → win is *earned* resolution, not just calibration) | **Promote** to the default MC comparison set; modest *real* edge at long horizons (forward vol mean-reversion) |
 | 2026-06-03 | **Task 10 — GDELT news features vs price-only** — single-split **then full walk-forward** (7 folds, 30 tickers, h20/30/60, both models, +retune control) | ❌ **no robust gain** — logistic nothing; lightgbm a faint negative-Brier lean (−0.001→−0.003, win 54–58%) but **within fold std** and the **retune control shows news ties retuned-price** (0.1886 vs 0.1887) → the gain is model-tuning, not news | **Do NOT promote**; keep ingest+features experimental (default-OFF); **information ceiling holds** (strongest test in repo) |
+| 2026-06-04 | **XGBoost reconsidered** — heavy random-search tune (winner's-curse-guarded) + 3-way bake-off vs logistic/lightgbm (7-fold walk-forward, h20/30/60, with news), **raw then CCCV-calibrated** | **raw:** tuned-xgb looked best everywhere, lightgbm worst + poorly-calibrated (ECE 0.11–0.13). **calibrated (the fair test):** CCCV fixes lightgbm; all three converge & **logistic is nominally best at every h** (xgb last at h30/h60), all tied within fold std → xgb's raw edge was a **calibration artifact** | **Do NOT promote xgboost**; vindicates the original drop-xgboost call; logistic stays default |
 
 ---
 
@@ -512,4 +513,38 @@ PYTHONPATH=src python scripts/validate_news_features.py
 AB_MODEL=lightgbm PYTHONPATH=src python scripts/validate_news_features.py
 # 2b. Full walk-forward + retune control (the rigorous run)
 PYTHONPATH=src python scripts/validate_news_features_full.py
+```
+
+---
+
+## 2026-06-04 — XGBoost reconsidered: heavy tuning + calibrated 3-way bake-off
+
+**Question.** XGBoost was dropped early (it didn't beat the toolkit at its cost). Give it a second chance with the **same rigor lightgbm got** (config #38): heavy random-search tuning, then a rigorous walk-forward comparison vs logistic & lightgbm — run **with the news features**, and **calibrated the way production serves** (`CalibratedClassifierCV` isotonic).
+
+**Setup** (`scripts/tune_validate_xgboost.py`). 30-ticker basket (volatile semis + mega-cap + stable large-caps); **18 price + 7 active news** features (the 10 topic columns are excluded — all-NaN until `topics.csv` is pulled); horizons 20/30/60; **7 embargoed walk-forward folds** (2024-07→2026-04, ~23k pooled rows); directional + big-move targets; metrics = Brier / AUC / **ECE** as mean ± std over folds, with a base-rate floor.
+- **Tuning** (winner's-curse-guarded): random search of 60 configs on a **20-ticker** TUNE basket (train→val big-move Brier), then the winner is confirmed on a **disjoint 10-ticker held-out** basket. Winner: shallow + heavily regularized (`max_depth=3, lr=0.01, min_child_weight=50, colsample=0.48, reg_lambda≈4.7, reg_alpha≈1.8, gamma≈0.56, n=400`).
+
+**The key methodological finding — calibration is the equalizer.**
+- **Raw (no CCCV):** tuned-xgb looked **best** at every horizon; lightgbm was **worst** and the only **"poorly calibrated"** model (ECE 0.11–0.13). This made xgboost look like a real upgrade.
+- **Calibrated (CCCV, all three — the production-faithful test):** CCCV fixes lightgbm's calibration, all three converge, and **logistic is the best Brier at every horizon**. XGBoost's raw edge was a **calibration artifact** — its heavy regularization self-calibrates, so it only led when the others were left un-calibrated. Equalize calibration and the advantage vanishes.
+
+**Calibrated results** (30 tickers, 25 features, **CCCV cv=5**; cv=3 gave the same story):
+
+| Horizon | base_rate Brier | **logistic** | lightgbm | xgboost | xgb ECE |
+|---|---|---|---|---|---|
+| h20 | 0.2016 | **0.1948** | 0.1993 | 0.1959 | 0.095 |
+| h30 | 0.1584 | **0.1498** | 0.1546 | 0.1547 | 0.094 |
+| h60 | 0.1543 | **0.1483** | 0.1516 | 0.1527 | **0.103 (poor)** |
+
+- Per-fold Brier std ≈ ±0.011–0.029, so the model-class gaps are **within noise** — logistic is *nominally* best, all three statistically tied. AUC tells the same story (logistic ≈ trees, ~0.62–0.68, all ≫ 0.5).
+- **XGBoost has no edge** and is the **only poorly-calibrated model at h60** (cv=5 did not rescue its long-horizon calibration). It can rank (AUC fine) but can't convert that to a better Brier.
+- Direction stays efficient: base_rate wins the 0% target (and the far tails at h60) at every horizon.
+
+**Decision. Do NOT promote XGBoost** — calibrated (as we serve), it does not beat logistic; it's heavier, more complex, and worse-calibrated at long horizons. This **vindicates the original drop-xgboost call**; logistic stays the default, lightgbm the volatile-name tree companion. The broader lesson recorded: **compare models on their served (calibrated) footing** — a raw comparison rewarded the model that happened to self-calibrate, not the most skillful one.
+
+**Caveats.** 30-ticker basket (not the full 114-universe), single tuning seed, lightgbm left on config #38 (not re-tuned for this exact setup — user-accepted; the calibrated gap is small enough that re-tuning is unlikely to flip past a calibrated xgboost). News features are the 7 active ones (topic features pending the July pull).
+
+**Reproduce.**
+```bash
+PYTHONPATH=src python scripts/tune_validate_xgboost.py   # tune + calibrated 3-way bake-off
 ```
