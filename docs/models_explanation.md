@@ -772,6 +772,37 @@ AUC/calibration shown inline as a trust badge) is the next enhancement.
 
 ---
 
+## 3.7 The ensemble — a calibrated pool over all the models
+
+`forecasting/ensemble.py` (`EnsembleForecast`). The interactive **default** forecast: a
+**linear probability pool** ("mixture") over the 5 validated members — `historical_sim`,
+`monte_carlo_bootstrap`, `monte_carlo_garch`, pooled `logistic`, pooled `lightgbm` — equal-weighted.
+
+**How the blend is built (each rule is principled, not ad-hoc):**
+
+- **Bucket probabilities** → linear pool: $p^{\text{blend}}_i = \sum_m w_m\, p^{(m)}_i$. This is the exact bucket mass of the mixture distribution "pick member $m$ with prob $w_m$, then draw from it." All members share the horizon's bucket scheme, so the masses align.
+- **E[r], P(up), P(down)** → exact weighted means. These are *linear* functionals of the distribution, so the mixture's value equals the weighted average of the members' values — no approximation.
+- **VaR / CI (quantiles)** → **mixture-CDF inversion**, never an average of the members' quantiles (the quantile of a mixture is *not* the average of the quantiles). Each member's CDF is reconstructed from its bucket-boundary cumulative masses + its own var/ci anchors (`forecasting/quantiles.py`), the mixture CDF $\sum_m w_m F_m$ is formed, and it is inverted at the 1% / 5% / 95% levels.
+
+**Robustness.** A member that errors is dropped (member isolation); an ML member with no
+trained artifact self-reports a historical fallback and is dropped too, so the ensemble
+gracefully reduces to the available models rather than double-counting the baseline.
+
+**Why it's the default — and what it is *not*.** OOS validation (`scripts/validate_ensemble.py`,
+walk-forward via the real harness with per-fold ML retrain) showed it **does not beat the
+single best model on Brier** — it *ties* GARCH at h20 and slightly trails bootstrap at h60.
+Its value is being the **robust no-regret choice**: at inference you cannot know which single
+model is best for a given name/horizon, and the pool is **never the worst**, has the **best
+big-move (magnitude) discrimination** (h20 AUC ≈ 0.68 vs baselines ≤ 0.60), and stays **well
+calibrated** (pooled ECE ≈ 0.05 — better than either raw ML member). Weights are **equal**:
+skill-weighting via online stacking was tested and added nothing (the members' Briers cluster
+too tightly, and ~11 folds is too few to learn weights that generalize). Calibration note: the
+two ML members are already `CalibratedClassifierCV(cv=3)`-calibrated and the baselines are
+empirically calibrated; no extra calibration layer is applied to the pool (CCCV calibrates a
+*classifier*, not a probability pool, and the measured pooled ECE needs no correction).
+
+---
+
 ## 4. Side-by-side comparison
 
 | | Historical Sim | Monte Carlo (GBM/bootstrap/jump/GARCH) | ML (pooled) |

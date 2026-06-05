@@ -31,8 +31,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   baseline + calibrated ML overlay) + news summary → a structured research report
   with VaR, predictive intervals, calibration status, horizon-scaled big-move, and a
   horizon-trust caveat.
-- **`forecast`** — a single ticker/horizon scenario forecast from a chosen model
-  (`historical_sim`, `monte_carlo_*`, `ml_logistic`, `ml_lightgbm`).
+- **`forecast`** — a single ticker/horizon scenario forecast. Default `ensemble` — a
+  calibrated probability pool of all the models (historical + Monte-Carlo + GARCH + ML);
+  the robust no-regret default since you can't know a-priori which single model wins for
+  a given name/horizon. Any individual model is selectable via `--model`.
 - **Big-move signal** — `P(|r| > k)` with up/down tails at the horizon's inner `k`
   (5/10/15% for h20/h30/h60). This is ML's genuine niche: direction is ≈ efficient,
   magnitude/volatility is predictable. See [docs/models_explanation.md](docs/models_explanation.md).
@@ -73,9 +75,11 @@ The ML artifacts (~100 MB) are **not** in the repo (`outputs/models/` is gitigno
 A monthly **GitHub Actions** job (`.github/workflows/retrain.yml`) retrains the
 toolkit, runs a promote gate (`verify-models` — structural + a data-quality floor),
 and publishes a rolling `models-latest` release. Pull it with `make pull-models`; the
-app falls back to the historical-sim baseline when an artifact is absent. The toolkit
+app falls back to the historical-sim baseline when an artifact is absent. The ML toolkit
 is **logistic** (stable names) + **tuned lightgbm** (volatile names' big-move tails),
-at horizons **{20, 30, 60}**, isotonic-calibrated (`CalibratedClassifierCV(cv=3)`).
+at horizons **{20, 30, 60}**, isotonic-calibrated (`CalibratedClassifierCV(cv=3)`). The
+interactive default is the **`ensemble`** — a calibrated pool of these plus the
+Monte-Carlo / GARCH baselines (OOS-validated as the robust no-regret choice).
 
 ## Development
 

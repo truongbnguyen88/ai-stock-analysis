@@ -58,7 +58,7 @@ def run_forecast(
     ticker: str,
     horizon_days: int,
     *,
-    model_name: str = "historical_sim",
+    model_name: str = "ensemble",
     settings: Settings,
     registry: ProviderRegistry | None = None,
 ) -> ScenarioForecast:

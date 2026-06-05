@@ -188,13 +188,16 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "model": {
                     "type": "string",
                     "enum": list(MODEL_NAMES),
-                    "default": "historical_sim",
+                    "default": "ensemble",
                     "description": (
-                        "Forecast model: 'historical_sim' (empirical baseline, default), the two "
-                        "Monte-Carlo simulators 'monte_carlo_bootstrap' (fat-tail resampling; best "
-                        "at short horizons) and 'monte_carlo_garch' (GJR-GARCH-t conditional vol; "
-                        "validated best at horizons >=30d), or ML ('logistic'/'lightgbm' — need a "
-                        "trained artifact, else fall back to the baseline with a note)."
+                        "Forecast model. DEFAULT 'ensemble' — a calibrated probability pool of all "
+                        "the others (historical + bootstrap + GARCH + logistic + lightgbm); use it "
+                        "unless the user asks for a specific model or a comparison, because at "
+                        "inference you can't know which single model is best for this name. "
+                        "Individual models: 'historical_sim' (baseline), 'monte_carlo_bootstrap' "
+                        "(fat-tail resampling; short horizons), 'monte_carlo_garch' (conditional "
+                        "vol; best >=30d), ML 'logistic'/'lightgbm' (need a trained artifact, else "
+                        "fall back to the baseline with a note)."
                     ),
                 },
             },
@@ -422,7 +425,7 @@ class ToolExecutor:
     def _tool_run_forecast(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()
         horizon = int(args["horizon_days"])
-        model = str(args.get("model", "historical_sim"))
+        model = str(args.get("model", "ensemble"))
         # Route through the forecast pipeline so the agent can use any registered
         # model (baseline / Monte Carlo / pooled ML); ML falls back to the
         # baseline with a note when no trained artifact exists.

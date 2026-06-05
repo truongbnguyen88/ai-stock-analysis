@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from stock_agent.data.earnings import fetch_earnings_context
 from stock_agent.data.loader import PriceLoader
 from stock_agent.features.news_features import build_news_features
+from stock_agent.forecasting.base import ForecastModel
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.forecasting.ml import MLForecaster
 from stock_agent.forecasting.pooled import default_model_path
@@ -58,8 +59,10 @@ def run_analyze(
     snapshot = compute_snapshot(series)
     as_of = series.bars[-1].date
 
-    # Baseline forecasts (skip horizons lacking enough history).
-    model = HistoricalSimulation()
+    # Baseline forecasts (skip horizons lacking enough history). The report stays a
+    # transparent multi-model view (baseline + ML overlay); the ensemble is the default
+    # on the interactive surfaces (agent + `forecast` CLI), available here via --model.
+    model: ForecastModel = HistoricalSimulation()
     forecasts = []
     for h in horizons:
         try:

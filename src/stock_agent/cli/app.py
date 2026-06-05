@@ -75,7 +75,7 @@ def forecast(
     ] = 20,
     model: Annotated[
         str, typer.Option("--model", "-m", help=f"Forecaster: {MODEL_NAMES}")
-    ] = "historical_sim",
+    ] = "ensemble",
     all_models: Annotated[
         bool, typer.Option("--all-models", help="Run and compare all available models")
     ] = False,

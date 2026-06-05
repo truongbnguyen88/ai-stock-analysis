@@ -113,7 +113,7 @@ def test_tool_results_are_surfaced_for_charting() -> None:
     assert [inv.name for inv in result.tool_results] == ["run_forecast"]
     inv = result.tool_results[0]
     assert inv.input == {"ticker": "NVDA", "horizon_days": 20}
-    assert inv.result.get("model_name") == "historical_sim"  # the real tool result dict
+    assert inv.result.get("model_name") == "ensemble"  # the real tool result dict (default)
 
 
 def test_history_tool_numbers_stay_grounded_next_turn() -> None:
@@ -178,9 +178,9 @@ def test_persistent_fabrication_raises() -> None:
 
 def test_run_forecast_tool_routes_model_selection() -> None:
     ex = _executor(n_bars=260)  # enough history for Monte Carlo
-    # Default model is the baseline.
+    # Default model is the ensemble (robust pool of all the members).
     base = ex.execute("run_forecast", {"ticker": "NVDA", "horizon_days": 20})
-    assert base.get("model_name") == "historical_sim"
+    assert base.get("model_name") == "ensemble"
     # Monte Carlo needs no trained artifact — routing should pick it (one of the two
     # promoted variants; GARCH routes through the identical code path).
     mc = ex.execute(
