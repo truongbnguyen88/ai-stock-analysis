@@ -40,6 +40,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-04 | **XGBoost reconsidered** — heavy random-search tune (winner's-curse-guarded) + 3-way bake-off vs logistic/lightgbm (7-fold walk-forward, h20/30/60, with news), **raw then CCCV-calibrated** | **raw:** tuned-xgb looked best everywhere, lightgbm worst + poorly-calibrated (ECE 0.11–0.13). **calibrated (the fair test):** CCCV fixes lightgbm; all three converge & **logistic is nominally best at every h** (xgb last at h30/h60), all tied within fold std → xgb's raw edge was a **calibration artifact** | **Do NOT promote xgboost**; vindicates the original drop-xgboost call; logistic stays default |
 | 2026-06-04 | **Ensemble** — 5-member linear pool (historical + bootstrap + GARCH + logistic + lightgbm), **equal vs online-stacked** weights, walk-forward via the real harness (4 tickers, h20/60, per-fold ML retrain) | does **not** beat the best single member on Brier (h20 0.1688 vs GARCH 0.1680; h60 0.1319 vs bootstrap 0.1288); **skill-weighting (stacking) adds nothing** (members' Briers cluster, too few folds). BUT best **big-move AUC** (h20 0.68 vs baselines ≤0.60) at **good calibration** (ECE 0.054 ≪ ML's 0.06–0.09) | **Promoted (user call) as the interactive default** (agent + `forecast` CLI) — not a Brier win, but never worst + best magnitude discrimination at honest calibration + one default. Equal weights (stacking dropped). |
 | 2026-06-06 | **Conformal interval coverage** — split-conformal correction over the universe (pooled offline, per model × {20,30,60}), measured stated-vs-conformalized CI coverage | every model **under-covered**: a stated 90% CI really covered **82–86% (h20), 81–87% (h30), 76–81% (h60)** → conformal `q` (+0.04 to +0.16) fixed all to **90–91%** | **Ship conformal-calibrated CIs/VaR** at inference + in the monthly retrain. The intervals are now honest-coverage (marginal). |
+| 2026-06-06 | **Sequence × news (Task 8 × 10)** — price-only vs price+news pooled **LSTM**, fair same-window ablation (differ only by the news channel), walk-forward (16 tickers, 4 folds, h20/60) | news adds **no** skill to the sequence model: big-move ΔBrier **−0.005 (h20) / −0.022 (h60)**, ΔAUC **−0.02 / −0.04** (news better in only 0–25% of folds); direction is noise (~0.5 AUC, mixed). Price-only LSTM big-move AUC 0.65/0.75 (respectable, still doesn't beat the toolkit). | **Do not promote.** Settles the open question: the news-negative is an **INFORMATION ceiling, not a model-class limitation** — a temporal model handed the raw sentiment sequence finds nothing (slightly *hurts*, consistent with adding noise channels to a data-limited net). **Caveat:** only the per-ticker + market sentiment; the **topic streams (July) remain untested.** |
 
 ---
 
@@ -603,4 +604,28 @@ The intervals were systematically too narrow — worst at h60 (a "90%" interval 
 ```bash
 python -m stock_agent conformal-calibrate           # → outputs/models/conformal.json
 python -m stock_agent backtest --ticker NVDA --horizon 60   # see interval coverage in the report
+```
+
+---
+
+## 2026-06-06 — Sequence × news: the news-negative is an information ceiling, not model-class
+
+**Question.** Two priors said news doesn't help (tabular ML) and the LSTM doesn't beat the toolkit (on price). The remaining cell: news sentiment is *temporal* (spikes, decay, momentum) — structure a one-day tabular snapshot flattens. Does a **sequence model**, handed the raw sentiment sequence, extract signal the snapshot ML couldn't?
+
+**Method.** `scripts/validate_sequence_news.py`. Fair **same-window ablation**: a price-only LSTM and a price+news LSTM train on *identical* leakage-safe windows over full sliced history — differing **only** by the news channel (news features NaN→0 before GDELT coverage, real after). Walk-forward, embargoed; 16-ticker pool; folds {2024-10, 2025-04, 2025-10, 2026-01}; h20/h60. Headline targets mirror the tabular A/B: direction and big-move (the magnitude metric where there's real skill).
+
+**Result — news adds nothing; on the skill metric it slightly hurts.**
+
+| | big-move Brier (price → +news) | big-move AUC | folds news wins |
+|---|---|---|---|
+| **h20** | 0.2150 → 0.2202 (Δ **−0.005**) | 0.652 → 0.632 (Δ **−0.02**) | 25% |
+| **h60** | 0.1456 → 0.1679 (Δ **−0.022**) | 0.754 → 0.719 (Δ **−0.04**) | 0% |
+
+Direction was pure noise (AUC ~0.51–0.59, news-helps ~50% — and direction is the established-efficient target). The price-only LSTM's big-move AUC (0.65 / 0.75) is itself respectable — the model class is fine; news just adds no information.
+
+**Decision — do not promote.** This is the **third and decisive negative**: (1) sequence ⊀ tabular on price, (2) news ⊀ price-only on tabular, (3) news ⊀ price-only on the *sequence* model. A model class that *can* use temporal sentiment, given the raw sequence, finds nothing — and slightly degrades (extra noise channels on a short, data-limited training window). So the news-negative is an **information ceiling**, not a model-class limitation. **Caveat:** this is the per-ticker + market sentiment only; the **topic streams (AI/tech/healthcare/energy) are not yet pulled** — the July re-validation (`scripts/validate_news_features_full.py`, now also re-runnable through the sequence harness) is the remaining open door.
+
+**Reproduce.**
+```bash
+PYTHONPATH=src python scripts/validate_sequence_news.py
 ```
