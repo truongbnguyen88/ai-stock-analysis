@@ -25,12 +25,18 @@ from __future__ import annotations
 
 import random
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date as Date
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
+from stock_agent.features.news_history import (
+    NEWS_HISTORY_COLS,
+    NewsStore,
+    build_news_history_features,
+)
 from stock_agent.features.price_features import PRICE_FEATURE_COLS, build_price_feature_matrix
 from stock_agent.forecasting.buckets import assign_bucket, buckets_for_horizon, make_prob_buckets
 from stock_agent.forecasting.historical import HistoricalSimulation
@@ -45,6 +51,40 @@ _MODEL_NAME = "lstm_seq"
 _LOOKBACK = 60  # trading-day sequence length fed to the LSTM
 _N_BUCKETS = 6
 
+# Buzz ratios are heavy-tailed; log1p before the LSTM (matches the tabular news A/B).
+_BUZZ_COLS = frozenset(c for c in NEWS_HISTORY_COLS if c.endswith("buzz"))
+
+
+def _feature_frame(
+    series: PriceSeries,
+    *,
+    news_store: NewsStore | None = None,
+    news_cols: list[str] | None = None,
+    lag_days: int = 1,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Price features, optionally concatenated with leakage-safe news-history features.
+
+    ``news_cols=None`` with a store auto-selects the news columns that actually have data
+    (so the dormant topic streams don't add all-NaN inputs). Returns ``(frame, columns)``;
+    with ``news_store=None`` this is exactly the price-only matrix (path bit-identical).
+    """
+    feats = build_price_feature_matrix(series)[PRICE_FEATURE_COLS]
+    if news_store is None:
+        return feats, list(PRICE_FEATURE_COLS)
+    news = build_news_history_features(
+        series.ticker, pd.DatetimeIndex(feats.index), news_store, lag_days=lag_days
+    )
+    if news_cols is not None:
+        cols = news_cols
+    else:  # auto-select columns that actually have data (skip dormant topic streams)
+        cols = [c for c in NEWS_HISTORY_COLS if news[c].notna().any()]
+    news = news[cols].copy()
+    buzz = [c for c in cols if c in _BUZZ_COLS]
+    if buzz:
+        news[buzz] = np.log1p(news[buzz])
+    combined = pd.concat([feats, news], axis=1)
+    return combined, list(PRICE_FEATURE_COLS) + list(cols)
+
 
 def _seed_everything(seed: int) -> None:
     import torch
@@ -57,15 +97,22 @@ def _seed_everything(seed: int) -> None:
 
 
 def _ticker_sequences(
-    series: PriceSeries, *, horizon: int, lookback: int
+    series: PriceSeries,
+    *,
+    horizon: int,
+    lookback: int,
+    news_store: NewsStore | None = None,
+    news_cols: list[str] | None = None,
+    lag_days: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Leakage-safe ``(X[N, L, F], y[N])`` for one ticker.
 
     Each window ends at day ``t`` (features ≤ ``t``); the label is the bucket of
     the realized forward ``h``-day return at ``t`` (so ``t + h`` must exist). The
-    final ``horizon`` bars have no label and are skipped.
+    final ``horizon`` bars have no label and are skipped. With ``news_store`` the
+    feature dim ``F`` includes the (leakage-safe) news-history columns.
     """
-    feats = build_price_feature_matrix(series)[PRICE_FEATURE_COLS]
+    feats, _ = _feature_frame(series, news_store=news_store, news_cols=news_cols, lag_days=lag_days)
     closes = np.asarray(series.closes, dtype=float)
     n = len(feats)
     fwd = np.full(n, np.nan)
@@ -82,7 +129,7 @@ def _ticker_sequences(
         seqs.append(arr[t - lookback + 1 : t + 1])
         labels.append(assign_bucket(float(fwd[t]), buckets))
     if not seqs:
-        return np.empty((0, lookback, len(PRICE_FEATURE_COLS)), np.float32), np.empty(0, np.int64)
+        return np.empty((0, lookback, arr.shape[-1]), np.float32), np.empty(0, np.int64)
     return np.stack(seqs), np.asarray(labels, dtype=np.int64)
 
 
@@ -127,6 +174,9 @@ class SequenceModel:
     dropout: float = 0.0
     temperature: float = 1.0
     layernorm: bool = False
+    # News config (so inference rebuilds the SAME feature matrix). Empty list = price-only.
+    news_cols: list[str] = field(default_factory=list)
+    lag_days: int = 1
 
 
 def _build_net(
@@ -167,21 +217,40 @@ def train_sequence_model(
     dropout: float = 0.0,
     weight_decay: float = 0.0,
     layernorm: bool = False,
+    news_store: NewsStore | None = None,
+    news_cols: list[str] | None = None,
+    lag_days: int = 1,
 ) -> SequenceModel:
     """Train a pooled LSTM over the universe's leakage-safe feature sequences.
 
     Fixed-epoch trainer (no early stopping) used by the unit tests and simple
     callers; the tuning harness (``sequence_tune``) does its own early-stopped,
-    validation-selected, temperature-calibrated training.
+    validation-selected, temperature-calibrated training. Pass ``news_store`` to
+    append leakage-safe news-history features (``news_cols=None`` auto-selects the
+    columns with data); the chosen columns are recorded for inference.
     """
     import torch
     from torch import nn
 
     _seed_everything(seed)
+    # Resolve the news columns once (off the first usable series) so every ticker —
+    # and inference — uses an identical, stable feature layout.
+    resolved_cols: list[str] | None = None
+    if news_store is not None:
+        resolved_cols = news_cols
+        for s in series_list:
+            _, all_cols = _feature_frame(
+                s, news_store=news_store, news_cols=news_cols, lag_days=lag_days
+            )
+            resolved_cols = [c for c in all_cols if c not in PRICE_FEATURE_COLS]
+            break
     xs, ys = [], []
     for s in series_list:
         try:
-            x, y = _ticker_sequences(s, horizon=horizon, lookback=lookback)
+            x, y = _ticker_sequences(
+                s, horizon=horizon, lookback=lookback,
+                news_store=news_store, news_cols=resolved_cols, lag_days=lag_days,
+            )
         except ValueError:
             continue
         if len(x):
@@ -221,15 +290,18 @@ def train_sequence_model(
         n_features=X.shape[-1],
         dropout=dropout,
         layernorm=layernorm,
+        news_cols=resolved_cols or [],
+        lag_days=lag_days,
     )
 
 
 class SequenceForecaster:
     """``ForecastModel`` wrapping a trained :class:`SequenceModel` (one horizon)."""
 
-    def __init__(self, model: SequenceModel) -> None:
+    def __init__(self, model: SequenceModel, *, news_store: NewsStore | None = None) -> None:
         self.name = _MODEL_NAME
         self._model = model
+        self._news_store = news_store if model.news_cols else None
         self._net: Any = None  # lazily reconstructed torch module
 
     def _net_eval(self) -> tuple[Any, Any]:
@@ -253,8 +325,13 @@ class SequenceForecaster:
             raise ValueError(
                 f"model trained for horizon {self._model.horizon}, asked {horizon_days}"
             )
-        feats = build_price_feature_matrix(series)[PRICE_FEATURE_COLS]
-        if len(feats) < self._model.lookback:
+        feats, _ = _feature_frame(
+            series, news_store=self._news_store,
+            news_cols=self._model.news_cols or None, lag_days=self._model.lag_days,
+        )
+        # Too little history, or a news-trained model used without a store (feature dim
+        # mismatch) → safe unconditional fallback rather than a shape error.
+        if len(feats) < self._model.lookback or feats.shape[1] != self._model.n_features:
             return self._fallback(series, horizon_days, as_of)
 
         window = feats.to_numpy(dtype=np.float32)[-self._model.lookback :]
@@ -278,7 +355,10 @@ class SequenceForecaster:
                 b.probability for b in buckets if b.upper is not None and b.upper <= 0
             ),
             calibration_status="uncalibrated",
-            notes=f"Pooled LSTM (lookback {self._model.lookback}); experimental.",
+            notes=(
+                f"Pooled LSTM (lookback {self._model.lookback}, "
+                f"{'price+news' if self._model.news_cols else 'price-only'}); experimental."
+            ),
         )
 
     def _fallback(
