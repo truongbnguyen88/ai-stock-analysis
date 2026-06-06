@@ -21,7 +21,7 @@ format:  ## auto-format and apply safe lint fixes
 ui:  ## launch the Streamlit chat frontend (browser opens automatically)
 	PYTHONPATH=src streamlit run ui/chat_app.py
 
-pull-models:  ## download the latest CI-trained models from GitHub into outputs/models/
+pull-models:  ## download the latest CI-trained models + conformal.json into outputs/models/
 	@mkdir -p outputs/models
 	@REPO=$$(git config --get remote.origin.url | sed -E 's#.*github\.com[:/]##; s#\.git$$##'); \
 	URL="https://github.com/$$REPO/releases/download/models-latest/models.tar.gz"; \
@@ -31,7 +31,7 @@ pull-models:  ## download the latest CI-trained models from GitHub into outputs/
 	  exit 1; }
 	tar -xzf outputs/models/models.tar.gz -C outputs/models
 	@rm -f outputs/models/models.tar.gz
-	@echo "✓ Pulled latest models into outputs/models/"
+	@echo "✓ Pulled latest models + conformal.json into outputs/models/"
 
 verify-models:  ## structural sanity-check of the trained artifacts (CI promote gate)
 	PYTHONPATH=src python -m stock_agent verify-models

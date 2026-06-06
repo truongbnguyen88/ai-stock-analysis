@@ -9,12 +9,14 @@ walk-forward backtest (which stays a manual/occasional check).
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import pandas as pd
 
 from stock_agent.features.price_features import PRICE_FEATURE_COLS
 from stock_agent.forecasting.buckets import thresholds_for_horizon
+from stock_agent.forecasting.conformal_calibrate import CONFORMAL_FILE, ConformalArtifact
 from stock_agent.forecasting.pooled import PooledModel, default_model_path
 
 
@@ -82,4 +84,44 @@ def verify_artifacts(
                 problems.append(f"{tag}: no threshold produced a probability")
             elif any(not (0.0 <= p <= 1.0) for p in defined):
                 problems.append(f"{tag}: probability outside [0, 1]")
+    return problems
+
+
+def verify_conformal(
+    models_dir: Path,
+    *,
+    required_models: list[str],
+    horizons: list[int],
+    ci_level: float = 0.90,
+    min_coverage_after: float = 0.85,
+) -> list[str]:
+    """Return problems with the conformal interval-correction artifact (empty == OK).
+
+    Promote-gate check that ``conformal.json`` exists, claims the expected ``ci_level``,
+    and — for every required (model, horizon) — carries a finite ``q`` whose post-
+    correction OOS coverage reached ~target (``>= min_coverage_after``). A missing
+    artifact or a cell where conformal failed to achieve coverage (e.g. a degraded
+    calibration month) fails the gate, so a release never ships mis-sized served CIs.
+    """
+    path = models_dir / CONFORMAL_FILE
+    art = ConformalArtifact.load(path)
+    if art is None:
+        return [f"conformal: artifact missing ({CONFORMAL_FILE})"]
+    problems: list[str] = []
+    if abs(art.ci_level - ci_level) > 1e-6:
+        problems.append(f"conformal: ci_level {art.ci_level} != expected {ci_level}")
+    for model in required_models:
+        for horizon in horizons:
+            tag = f"conformal {model} h{horizon}"
+            entry = art.entries.get(model, {}).get(horizon)
+            if entry is None:
+                problems.append(f"{tag}: missing")
+                continue
+            if not math.isfinite(entry.q):
+                problems.append(f"{tag}: non-finite q")
+            if not (min_coverage_after <= entry.coverage_after <= 1.0 + 1e-9):
+                problems.append(
+                    f"{tag}: post-correction coverage {entry.coverage_after:.2f} "
+                    f"below {min_coverage_after:.2f}"
+                )
     return problems

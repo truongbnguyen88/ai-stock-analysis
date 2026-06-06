@@ -256,8 +256,9 @@ def verify_models(
     """
     import math
 
+    from stock_agent.forecasting.conformal_calibrate import CONFORMAL_FILE
     from stock_agent.forecasting.train_pooled import load_universe
-    from stock_agent.forecasting.verify import verify_artifacts
+    from stock_agent.forecasting.verify import verify_artifacts, verify_conformal
 
     settings = get_settings()
     models_dir = Path(settings.output_dir) / "models"
@@ -274,14 +275,26 @@ def verify_models(
         min_tickers=min_tickers,
         min_rows=settings.verify_min_rows,
     )
+    # Conformal interval-correction: verify if present (it's generated in CI right before
+    # this gate, so its absence/breakage there fails the publish); a local run without it
+    # just warns — served CIs fall back to un-conformalized with no error.
+    conformal_present = (models_dir / CONFORMAL_FILE).exists()
+    if conformal_present:
+        problems += verify_conformal(
+            models_dir,
+            required_models=["ensemble", "ml_logistic", "ml_lightgbm"],
+            horizons=list(_PROD_HORIZONS),
+        )
+
     if problems:
         typer.echo("✗ artifact verification FAILED:")
         for p in problems:
             typer.echo(f"  - {p}")
         raise typer.Exit(code=1)
     n = len(_PROD_MODELS) * len(_PROD_HORIZONS)
+    conf = "+ conformal" if conformal_present else "(no conformal.json — run conformal-calibrate)"
     typer.echo(
-        f"✓ verified {n} artifacts in {models_dir} "
+        f"✓ verified {n} artifacts {conf} in {models_dir} "
         f"(data-quality floor: >= {min_tickers} tickers, >= {settings.verify_min_rows:,} rows)"
     )
 

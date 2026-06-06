@@ -50,13 +50,19 @@ jobs:
       - name: Train calibrated toolkit
         run: python -m stock_agent train --all
 
+      - name: Conformal-calibrate prediction intervals
+        # Pooled split-conformal correction so served CIs/VaR have honest coverage.
+        # Tracks the freshly-trained models (~6 min) → outputs/models/conformal.json.
+        run: python -m stock_agent conformal-calibrate
+
       - name: Verify artifacts (promote gate)
+        # Gates BOTH the pooled models and the conformal artifact (present in CI).
         run: python -m stock_agent verify-models
 
       - name: Package models
         run: |
           cd outputs/models
-          tar -czf "$GITHUB_WORKSPACE/models.tar.gz" *.joblib
+          tar -czf "$GITHUB_WORKSPACE/models.tar.gz" *.joblib conformal.json
           ls -lh "$GITHUB_WORKSPACE/models.tar.gz"
 
       - name: Publish release
@@ -65,7 +71,7 @@ jobs:
         run: |
           DATE=$(date -u +%Y-%m-%d)
           SHA=$(git rev-parse --short HEAD)
-          NOTES="Calibrated pooled models (logistic + tuned lightgbm × 20/30/60), trained ${DATE} from ${SHA}. Pull with: make pull-models"
+          NOTES="Calibrated pooled models (logistic + tuned lightgbm × 20/30/60) + conformal interval-corrections (conformal.json), trained ${DATE} from ${SHA}. Pull with: make pull-models"
           # Rolling 'models-latest' (what `make pull-models` fetches) — recreate it.
           gh release delete models-latest --yes --cleanup-tag || true
           gh release create models-latest models.tar.gz --title "models-latest (${DATE})" --notes "${NOTES}"
