@@ -159,7 +159,7 @@ ai-stock-analysis/
 ├── tests/  (unit · integration · data · fixtures)
 ├── notebooks/                   # exploration only — no core logic
 ├── outputs/  (reports · experiments · models [+conformal.json] · news_sentiment — gitignored)
-└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST)
+└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST · app_enhancements)
 ```
 
 ## 6. Module responsibilities
