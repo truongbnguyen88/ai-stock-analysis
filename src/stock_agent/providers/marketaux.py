@@ -86,7 +86,10 @@ class MarketauxProvider:
 
     def get_company_news(self, ticker: str, start: Date, end: Date) -> NewsBundle:
         key = make_key(_NAME, "news", ticker.upper(), start, end)
-        return cached_model(self._cache, key, NewsBundle, lambda: self._fetch(ticker, start, end))
+        return cached_model(
+            self._cache, key, NewsBundle, lambda: self._fetch(ticker, start, end),
+            ttl=self._settings.cache_ttl_news_seconds,
+        )
 
     def close(self) -> None:
         self._http.close()

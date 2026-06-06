@@ -103,7 +103,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "get_news",
-        "description": "Recent news headlines (title, source, date, url) for a ticker.",
+        "description": (
+            "Recent news headlines (title, source, date, url) for a ticker, "
+            "ordered newest-first over the lookback window."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
@@ -372,7 +375,11 @@ class ToolExecutor:
     def _tool_get_news(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()
         days = int(args.get("days", 14))
-        bundle = NewsFetcher(self._registry).fetch(ticker, lookback_days=days, top_n=10)
+        # Newest-first: "pull news" prioritizes the latest headlines (vs relevance ranking,
+        # which summarize_news/get_news_sentiment keep for synthesis quality).
+        bundle = NewsFetcher(self._registry).fetch(
+            ticker, lookback_days=days, top_n=10, order="recency"
+        )
         return {
             "ticker": ticker,
             "articles": [

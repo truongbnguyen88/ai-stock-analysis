@@ -154,6 +154,7 @@ class AlphaVantageProvider:
                     }
                 ),
             ),
+            ttl=self._settings.cache_ttl_news_seconds,
         )
 
     def close(self) -> None:

@@ -44,15 +44,21 @@ class DiskCache:
     def _path(self, key: str) -> Path:
         return self.cache_dir / f"{key}.json"
 
-    def get(self, key: str) -> str | None:
-        """Return the cached value, or ``None`` if missing/expired/disabled."""
+    def get(self, key: str, *, ttl_override: int | None = None) -> str | None:
+        """Return the cached value, or ``None`` if missing/expired/disabled.
+
+        ``ttl_override`` lets a caller apply a shorter (or longer) freshness window than
+        the cache default — e.g. news uses a short TTL for recency while prices keep the
+        long default. ``None`` uses ``self.ttl_seconds``.
+        """
         if not self.enabled:
             return None
         path = self._path(key)
         if not path.exists():
             return None
         # Expire by file age. TTL <= 0 means "never expire".
-        if self.ttl_seconds > 0 and (time.time() - path.stat().st_mtime) > self.ttl_seconds:
+        ttl = self.ttl_seconds if ttl_override is None else ttl_override
+        if ttl > 0 and (time.time() - path.stat().st_mtime) > ttl:
             return None
         return path.read_text(encoding="utf-8")
 
@@ -67,14 +73,18 @@ class DiskCache:
         tmp.replace(path)  # atomic on POSIX; avoids torn reads
 
 
-def cached_model(cache: DiskCache, key: str, model_cls: type[T], producer: Callable[[], T]) -> T:
+def cached_model(
+    cache: DiskCache, key: str, model_cls: type[T], producer: Callable[[], T],
+    *, ttl: int | None = None,
+) -> T:
     """Return a cached model if present, else produce, cache, and return it.
 
     Centralizes the get -> deserialize / produce -> serialize -> set pattern so
     providers don't repeat it. ``producer`` performs the actual (cache-miss)
-    fetch + normalization and returns a pydantic model.
+    fetch + normalization and returns a pydantic model. ``ttl`` overrides the cache's
+    default freshness window for this call (e.g. a short window for recency-sensitive news).
     """
-    raw = cache.get(key)
+    raw = cache.get(key, ttl_override=ttl)
     if raw is not None:
         return model_cls.model_validate_json(raw)
     obj = producer()

@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     # ---- Provider behavior ----
     cache_dir: Path = Path(".cache")
     cache_ttl_seconds: int = 86_400
+    # News is recency-sensitive: a short TTL (1h) keeps "latest news" pulls fresh intra-day
+    # without hammering the news free tiers. Prices/earnings keep the long default above.
+    cache_ttl_news_seconds: int = 3_600
     rate_limit_buffer: bool = True
 
     # ---- App ----

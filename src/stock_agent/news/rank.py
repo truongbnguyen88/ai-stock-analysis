@@ -9,8 +9,11 @@ sorted by relevance (then recency), optionally truncated to ``top_n``.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from stock_agent.schemas.news import Article
+
+Order = Literal["relevance", "recency"]
 
 # Component weights (sum to 1.0).
 _W_RECENCY = 0.5
@@ -52,8 +55,15 @@ def rank_articles(
     now: datetime | None = None,
     lookback_days: int = 30,
     top_n: int | None = None,
+    order: Order = "relevance",
 ) -> list[Article]:
-    """Score, sort (desc), and optionally truncate articles by relevance."""
+    """Score, sort (desc), and optionally truncate articles.
+
+    ``order="relevance"`` (default) ranks by the relevance heuristic then recency — best
+    for synthesis/summarization (filters off-topic items). ``order="recency"`` ranks
+    strictly newest-first (relevance as tiebreak) — for "latest news" pulls where freshness
+    is the priority. Relevance is always computed and attached either way.
+    """
     now = now or datetime.now(UTC)
     scored: list[Article] = []
     for article in articles:
@@ -64,6 +74,8 @@ def rank_articles(
         )
         scored.append(article.model_copy(update={"relevance": round(score, 4)}))
 
-    # Sort by relevance, then recency; both descending. relevance is set above.
-    scored.sort(key=lambda a: (a.relevance or 0.0, _as_utc(a.published_at)), reverse=True)
+    if order == "recency":  # newest first; relevance breaks ties
+        scored.sort(key=lambda a: (_as_utc(a.published_at), a.relevance or 0.0), reverse=True)
+    else:  # relevance first; recency breaks ties
+        scored.sort(key=lambda a: (a.relevance or 0.0, _as_utc(a.published_at)), reverse=True)
     return scored[:top_n] if top_n is not None else scored

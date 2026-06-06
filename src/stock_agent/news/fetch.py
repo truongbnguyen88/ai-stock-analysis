@@ -12,7 +12,7 @@ from datetime import timedelta
 from stock_agent.logging_config import get_logger
 from stock_agent.news.clean import clean_articles
 from stock_agent.news.dedup import deduplicate
-from stock_agent.news.rank import rank_articles
+from stock_agent.news.rank import Order, rank_articles
 from stock_agent.providers.registry import ProviderRegistry
 from stock_agent.schemas.news import NewsBundle
 
@@ -33,8 +33,9 @@ class NewsFetcher:
         company_name: str | None = None,
         top_n: int | None = 25,
         end: Date | None = None,
+        order: Order = "relevance",
     ) -> NewsBundle:
-        """Return a cleaned, deduplicated, relevance-ranked ``NewsBundle``."""
+        """Return a cleaned, deduplicated, ranked ``NewsBundle`` (see ``rank_articles`` order)."""
         end = end or Date.today()
         start = end - timedelta(days=lookback_days)
 
@@ -47,6 +48,7 @@ class NewsFetcher:
             company_name=company_name,
             lookback_days=lookback_days,
             top_n=top_n,
+            order=order,
         )
         log.info(
             "news.fetch",
