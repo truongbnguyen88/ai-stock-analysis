@@ -139,26 +139,27 @@ ai-stock-analysis/
 │   ├── __main__.py              # python -m stock_agent
 │   ├── settings.py              # pydantic-settings (.env binding)
 │   ├── logging_config.py        # structlog
-│   ├── schemas/                 # market · news · forecast · report · earnings · synthesis
+│   ├── schemas/                 # market · news · forecast · report · earnings · synthesis · backtest (+ConformalReport)
 │   ├── providers/               # base(Protocols: price/news/earnings) · registry · av · finnhub · yfinance · marketaux · _cache
-│   ├── data/                    # loader · validation · earnings (context + cadence)
+│   ├── data/                    # loader · validation · earnings (context + cadence) · market_context (VIX)
 │   ├── indicators/              # trend · momentum · volatility · returns
-│   ├── features/                # price_features · news_features (display) · assembler
-│   ├── news/                    # fetch · dedup · rank · clean
+│   ├── features/                # price_features · news_features (display) · news_history (GDELT, leakage-safe) · assembler
+│   ├── news/                    # fetch · dedup · rank · clean · aggregate · gdelt_ingest (BigQuery)
 │   ├── llm/                     # client · prompts · news_summarizer (A) · synthesizer (C) · guards
-│   ├── forecasting/             # base · buckets · historical · monte_carlo · ml · pooled · train_pooled
+│   ├── forecasting/             # base · buckets · historical · monte_carlo · ml · pooled · train_pooled ·
+│   │                            #   ensemble · quantiles · conformal(+_calibrate · train_conformal) · large_move · verify · regime
 │   ├── backtesting/             # splitter · runner · metrics · calibration
 │   ├── reports/                 # builder · render_md
 │   ├── agent/                   # runtime · tools · prompts · guards
 │   ├── pipelines/               # analyze · forecast · backtest
-│   └── cli/                     # app.py (analyze · forecast · train · chat)
-├── configs/  (default.yaml · models.yaml · providers.yaml · universe.txt)
+│   └── cli/                     # app.py (analyze · forecast · backtest · train · conformal-calibrate · verify-models · ingest-news · chat)
+├── configs/  (default.yaml · models.yaml · providers.yaml · universe.txt · ticker_aliases.json)
 ├── ui/                          # chat_app.py (Streamlit frontend)
-├── scripts/                     # one-off tools (e.g. estimate_sentiment_cost.py)
+├── scripts/                     # one-off tools (cost est. · validate_news/ensemble/xgboost experiments)
 ├── tests/  (unit · integration · data · fixtures)
 ├── notebooks/                   # exploration only — no core logic
-├── outputs/  (reports · experiments · models — gitignored)
-└── docs/   (ARCHITECTURE.md · ROADMAP.md · TASKS.md)
+├── outputs/  (reports · experiments · models [+conformal.json] · news_sentiment — gitignored)
+└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST)
 ```
 
 ## 6. Module responsibilities

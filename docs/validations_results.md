@@ -38,7 +38,8 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-03 | **Task 9 — GJR-GARCH(1,1)-t** (`monte_carlo_garch`) vs bootstrap/historical, 12-ticker basket, h20/30/60 | ✅ **first model to beat the baselines on Brier** — tie h20, wins h30 (9/12) + h60 (10/12); also **highest big-move AUC at every horizon** (+0.04–0.06 → win is *earned* resolution, not just calibration) | **Promote** to the default MC comparison set; modest *real* edge at long horizons (forward vol mean-reversion) |
 | 2026-06-03 | **Task 10 — GDELT news features vs price-only** — single-split **then full walk-forward** (7 folds, 30 tickers, h20/30/60, both models, +retune control) | ❌ **no robust gain** — logistic nothing; lightgbm a faint negative-Brier lean (−0.001→−0.003, win 54–58%) but **within fold std** and the **retune control shows news ties retuned-price** (0.1886 vs 0.1887) → the gain is model-tuning, not news | **Do NOT promote**; keep ingest+features experimental (default-OFF); **information ceiling holds** (strongest test in repo) |
 | 2026-06-04 | **XGBoost reconsidered** — heavy random-search tune (winner's-curse-guarded) + 3-way bake-off vs logistic/lightgbm (7-fold walk-forward, h20/30/60, with news), **raw then CCCV-calibrated** | **raw:** tuned-xgb looked best everywhere, lightgbm worst + poorly-calibrated (ECE 0.11–0.13). **calibrated (the fair test):** CCCV fixes lightgbm; all three converge & **logistic is nominally best at every h** (xgb last at h30/h60), all tied within fold std → xgb's raw edge was a **calibration artifact** | **Do NOT promote xgboost**; vindicates the original drop-xgboost call; logistic stays default |
-| 2026-06-04 | **Ensemble** — 5-member linear pool (historical + bootstrap + GARCH + logistic + lightgbm), **equal vs online-stacked** weights, walk-forward via the real harness (4 tickers, h20/60, per-fold ML retrain) | does **not** beat the best single member on Brier (h20 0.1688 vs GARCH 0.1680; h60 0.1319 vs bootstrap 0.1288); **skill-weighting (stacking) adds nothing** (members' Briers cluster, too few folds). BUT best **big-move AUC** (h20 0.68 vs baselines ≤0.60) at **good calibration** (ECE 0.054 ≪ ML's 0.06–0.09) | **Promote (user call) as a robust all-rounder** — not a Brier win, but never worst + best magnitude discrimination at honest calibration + one default. Equal weights (stacking dropped). *Wiring pending.* |
+| 2026-06-04 | **Ensemble** — 5-member linear pool (historical + bootstrap + GARCH + logistic + lightgbm), **equal vs online-stacked** weights, walk-forward via the real harness (4 tickers, h20/60, per-fold ML retrain) | does **not** beat the best single member on Brier (h20 0.1688 vs GARCH 0.1680; h60 0.1319 vs bootstrap 0.1288); **skill-weighting (stacking) adds nothing** (members' Briers cluster, too few folds). BUT best **big-move AUC** (h20 0.68 vs baselines ≤0.60) at **good calibration** (ECE 0.054 ≪ ML's 0.06–0.09) | **Promoted (user call) as the interactive default** (agent + `forecast` CLI) — not a Brier win, but never worst + best magnitude discrimination at honest calibration + one default. Equal weights (stacking dropped). |
+| 2026-06-06 | **Conformal interval coverage** — split-conformal correction over the universe (pooled offline, per model × {20,30,60}), measured stated-vs-conformalized CI coverage | every model **under-covered**: a stated 90% CI really covered **82–86% (h20), 81–87% (h30), 76–81% (h60)** → conformal `q` (+0.04 to +0.16) fixed all to **90–91%** | **Ship conformal-calibrated CIs/VaR** at inference + in the monthly retrain. The intervals are now honest-coverage (marginal). |
 
 ---
 
@@ -576,4 +577,30 @@ PYTHONPATH=src python scripts/tune_validate_xgboost.py   # tune + calibrated 3-w
 **Reproduce.**
 ```bash
 PYTHONPATH=src python scripts/validate_ensemble.py   # equal + online-stacked, per-fold ML retrain
+```
+
+---
+
+## 2026-06-06 — Conformal interval coverage: every model's CI was too narrow
+
+**Question.** ECE says the bucket *probabilities* are honest — but is a stated **90% CI** actually a 90% interval out-of-sample? (For a prediction tool, an untrustworthy CI is worse than none.)
+
+**Method.** Split-conformal (`forecasting/conformal.py`): the backtest harness now records each OOS `(ci_low, ci_high, realized)` and reports stated-vs-conformalized coverage (`ConformalReport`). The served correction is **pooled offline** (`train_conformal.py`, CLI `conformal-calibrate`): build each model as-of a cutoff, forecast the held-out window over a 24-ticker basket, pool the (CI, realized) pairs → one `q` per (model, horizon).
+
+**Result — every model under-covered; conformal fixed all of them (full universe run):**
+
+| Horizon | stated 90% CI actually covered | after conformal `q` |
+|---|---|---|
+| h20 | 82–86% | **90%** (q ≈ +0.04–0.07) |
+| h30 | 81–87% | **90%** (q ≈ +0.04–0.07) |
+| h60 | **76–81%** | **91%** (q ≈ +0.10–0.16) |
+
+The intervals were systematically too narrow — worst at h60 (a "90%" interval really covering ~76%). The pooled `q` widened them to honest coverage everywhere, for every model (baselines + ML + ensemble).
+
+**Decision.** Ship conformal-calibrated CIs/VaR — applied at inference (`settings.conformal_intervals`, default on) and **recomputed in the monthly retrain** so it tracks the served models (proven end-to-end on CI run 27050677469: train → conformal-calibrate → verify-both → publish `conformal.json` → `make pull-models`). Caveat: coverage is **marginal** (pooled across tickers), not conditional per ticker; `var_95` is corrected exactly (= `ci_low`), `var_99` shares the same `q` (approximate at the 1% tail).
+
+**Reproduce.**
+```bash
+python -m stock_agent conformal-calibrate           # → outputs/models/conformal.json
+python -m stock_agent backtest --ticker NVDA --horizon 60   # see interval coverage in the report
 ```

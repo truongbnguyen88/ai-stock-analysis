@@ -56,13 +56,15 @@ make install            # = pip install -e ".[dev]"
 cp .env.example .env    # then fill in ANTHROPIC_API_KEY for LLM features
 
 # 3. Get models (pick one)
-make pull-models        # download the latest CI-trained artifacts (recommended)
+make pull-models        # download the latest CI-trained artifacts + conformal.json (recommended)
 #   …or train locally:
-python -m stock_agent train --all   # logistic + tuned lightgbm × {20,30,60}, calibrated
+python -m stock_agent train --all            # logistic + tuned lightgbm × {20,30,60}, calibrated
+python -m stock_agent conformal-calibrate    # (optional) honest-coverage CIs/VaR → conformal.json
 
 # 4. Run
 python -m stock_agent analyze  --ticker NVDA --days 90
-python -m stock_agent forecast --ticker MSFT --horizon 30 --model lightgbm
+python -m stock_agent forecast --ticker MSFT --horizon 30           # default model = ensemble
+python -m stock_agent forecast --ticker MSFT --horizon 30 --model monte_carlo_garch  # or pick one
 python -m stock_agent backtest --ticker AAPL
 python -m stock_agent chat                 # conversational agent (CLI)
 make ui                                     # Streamlit chat frontend

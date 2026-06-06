@@ -41,9 +41,9 @@ makes the models directly comparable in reports and backtests. Its key fields:
 | `buckets` | Six probabilities over forward-return ranges (sum to 1) |
 | `expected_return` | $\mathbb{E}[r]$ over the horizon (fractional) |
 | `upside_prob` / `downside_prob` | $P(r>0)$ / $P(r<0)$ |
-| `var_95`, `var_99` | Value-at-Risk: the 5th / 1st percentile of return (typically negative) |
-| `ci_low`, `ci_high` | 90% predictive interval (5th–95th percentile) |
-| `calibration_status` | `calibrated` for the served ML artifacts (isotonic CV baked in), `unknown` for the unconditional baselines |
+| `var_95`, `var_99` | Value-at-Risk: the 5th / 1st percentile of return (typically negative). **Conformally corrected** at inference when `conformal.json` is present (§3.8). |
+| `ci_low`, `ci_high` | 90% predictive interval (5th–95th percentile). **Conformally calibrated** to honest OOS coverage when `conformal.json` is present (§3.8). |
+| `calibration_status` | `calibrated` for the served ML artifacts (isotonic CV baked in), `unknown` for the unconditional baselines (note: probability calibration ≠ interval coverage — the latter is the conformal layer) |
 | `notes` | Model caveats (e.g. fallback, sparse data, jump applied) |
 
 ### The six buckets
@@ -800,6 +800,28 @@ too tightly, and ~11 folds is too few to learn weights that generalize). Calibra
 two ML members are already `CalibratedClassifierCV(cv=3)`-calibrated and the baselines are
 empirically calibrated; no extra calibration layer is applied to the pool (CCCV calibrates a
 *classifier*, not a probability pool, and the measured pooled ECE needs no correction).
+
+---
+
+## 3.8 Conformal prediction intervals — honest CI/VaR coverage
+
+ECE (above) calibrates the *bucket probabilities*; **split conformal** calibrates the
+*prediction interval* — a different, stronger guarantee. A model's stated 90% CI is its
+*belief*; out-of-sample it may cover more or less. `forecasting/conformal.py` corrects it:
+
+- **Nonconformity score** $E = \max(\text{lo}-y,\; y-\text{hi})$ — how far the realized $y$ fell outside $[\text{lo}, \text{hi}]$ (negative when inside).
+- **Correction** $q$ = the finite-sample $(1-\alpha)$ quantile of the calibration scores; the conformalized interval is $[\text{lo}-q,\; \text{hi}+q]$, which has **$\ge 1-\alpha$ marginal coverage**, distribution-free and finite-sample.
+
+It's computed **offline and pooled** (`train_conformal.py`, CLI `conformal-calibrate`): each
+model is built as-of a cutoff, forecast across a held-out window over the universe, and the
+$(\text{CI}, \text{realized})$ pairs are pooled into one stable $q$ per (model, horizon) →
+`outputs/models/conformal.json`. At inference `pipelines.forecast` applies $q$ to the served
+CI and VaR (config-gated `settings.conformal_intervals`; no-op if the artifact is absent), and
+it's recomputed each monthly retrain so it tracks the served models. The measured effect: every
+model under-covered (a "90%" CI really covered ~76–87%, worst at h60) → conformal fixed all to
+~90–91%. Caveat: coverage is **marginal** (pooled across tickers), not conditional per ticker;
+`var_95` (= the 5% lower quantile = `ci_low`) is corrected exactly, `var_99` shares the same $q$
+(approximate at the 1% tail). See validations_results.md.
 
 ---
 
