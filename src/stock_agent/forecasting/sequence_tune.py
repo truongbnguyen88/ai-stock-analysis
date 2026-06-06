@@ -27,13 +27,19 @@ from typing import Any
 
 import numpy as np
 
-from stock_agent.features.price_features import PRICE_FEATURE_COLS, build_price_feature_matrix
+from stock_agent.features.news_history import NewsStore
+from stock_agent.features.price_features import PRICE_FEATURE_COLS
 from stock_agent.forecasting.buckets import (
     assign_bucket,
     buckets_for_horizon,
     thresholds_for_horizon,
 )
-from stock_agent.forecasting.sequence import SequenceModel, _build_net, _Standardizer
+from stock_agent.forecasting.sequence import (
+    SequenceModel,
+    _build_net,
+    _feature_frame,
+    _Standardizer,
+)
 from stock_agent.logging_config import get_logger
 from stock_agent.schemas.market import PriceSeries
 
@@ -41,14 +47,16 @@ log = get_logger(__name__)
 
 
 def _ticker_windows(
-    series: PriceSeries, *, horizon: int, lookback: int, stride: int = 1
+    series: PriceSeries, *, horizon: int, lookback: int, stride: int = 1,
+    news_store: NewsStore | None = None, news_cols: list[str] | None = None, lag_days: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[Date]]:
     """``(X[N,L,F], bucket[N], fwd[N], end_dates[N])`` for one ticker, leakage-safe.
 
     ``stride`` subsamples overlapping windows (every ``stride``-th day) to bound the
-    pooled training size for the heavy nets — the windows stay leakage-safe.
+    pooled training size for the heavy nets — the windows stay leakage-safe. With
+    ``news_store`` the feature dim ``F`` includes the leakage-safe news-history columns.
     """
-    feats = build_price_feature_matrix(series)[PRICE_FEATURE_COLS]
+    feats, _ = _feature_frame(series, news_store=news_store, news_cols=news_cols, lag_days=lag_days)
     closes = np.asarray(series.closes, dtype=float)
     dates = list(series.dates)
     n = len(feats)
@@ -64,7 +72,7 @@ def _ticker_windows(
         fwd.append(r)
         ed.append(dates[t])
     if not X:
-        empty = np.empty((0, lookback, len(PRICE_FEATURE_COLS)), np.float32)
+        empty = np.empty((0, lookback, arr.shape[-1]), np.float32)
         return empty, np.empty(0, np.int64), np.empty(0, np.float64), []
     return np.stack(X), np.asarray(yb, np.int64), np.asarray(fwd, np.float64), ed
 
@@ -79,16 +87,34 @@ class _Split:
     Yva: np.ndarray  # validation bucket labels (for NLL / temperature)
     scaler: _Standardizer
     n_features: int
+    Xte: np.ndarray  # held-out TEST windows (val_end < end ≤ test_end)
+    fte: np.ndarray  # test realized forward returns
+    news_cols: list[str]  # the resolved news columns (empty == price-only)
 
 
 def _assemble_split(
     series_list: list[PriceSeries], *, horizon: int, lookback: int, train_end: Date,
-    val_end: Date, stride: int = 1,
+    val_end: Date, stride: int = 1, test_end: Date | None = None,
+    news_store: NewsStore | None = None, lag_days: int = 1,
 ) -> _Split:
-    """Pool windows into train (label ≤ train_end) and val (train_end < end ≤ val_end)."""
-    Xtr, Ytr, ftr, Xva, fva, Yva = [], [], [], [], [], []
+    """Pool windows into train (≤ train_end), val (≤ val_end), test (≤ test_end), by end-date.
+
+    With ``news_store`` the news columns are resolved ONCE (off the first usable series) so
+    every ticker — train, val, test — shares an identical feature layout.
+    """
+    news_cols: list[str] | None = None
+    if news_store is not None:
+        for s in series_list:
+            _, all_cols = _feature_frame(s, news_store=news_store, lag_days=lag_days)
+            news_cols = [c for c in all_cols if c not in PRICE_FEATURE_COLS]
+            break
+
+    Xtr, Ytr, ftr, Xva, fva, Yva, Xte, fte = [], [], [], [], [], [], [], []
     for s in series_list:
-        X, yb, fwd, ed = _ticker_windows(s, horizon=horizon, lookback=lookback, stride=stride)
+        X, yb, fwd, ed = _ticker_windows(
+            s, horizon=horizon, lookback=lookback, stride=stride,
+            news_store=news_store, news_cols=news_cols, lag_days=lag_days,
+        )
         if not len(X):
             continue
         ed_arr = np.array(ed)
@@ -102,10 +128,15 @@ def _assemble_split(
                 Xva.append(X[i])
                 fva.append(fwd[i])
                 Yva.append(yb[i])
+            elif test_end is None or end <= test_end:
+                Xte.append(X[i])
+                fte.append(fwd[i])
     if not Xtr or not Xva:
         raise ValueError("empty train or val split")
     Xtr_a = np.stack(Xtr)
     scaler = _Standardizer.fit(Xtr_a)
+    n_feat = Xtr_a.shape[-1]
+    Xte_s = scaler.transform(np.stack(Xte)) if Xte else np.empty((0, lookback, n_feat), np.float32)
     return _Split(
         Xtr=scaler.transform(Xtr_a),
         Ytr=np.asarray(Ytr, np.int64),
@@ -114,7 +145,10 @@ def _assemble_split(
         fva=np.asarray(fva, np.float64),
         Yva=np.asarray(Yva, np.int64),
         scaler=scaler,
-        n_features=Xtr_a.shape[-1],
+        n_features=n_feat,
+        Xte=Xte_s,
+        fte=np.asarray(fte, np.float64),
+        news_cols=news_cols or [],
     )
 
 
@@ -146,6 +180,19 @@ def _big_move_auc(probs: np.ndarray, fwd: np.ndarray, k: float) -> float | None:
     if y.min() == y.max():
         return None
     return float(roc_auc_score(y, pred))
+
+
+def _predict_probs(model: SequenceModel, X: np.ndarray) -> np.ndarray:
+    """Temperature-scaled softmax probabilities for pre-scaled windows ``X``."""
+    import torch
+
+    net = _build_net(model.n_features, model.hidden, model.layers, model.dropout, model.layernorm)
+    net.load_state_dict(model.state_dict)
+    net.eval()
+    with torch.no_grad():
+        logits = net(torch.from_numpy(X.astype(np.float32))).numpy() / model.temperature
+    z = logits - logits.max(axis=1, keepdims=True)
+    return np.asarray(np.exp(z) / np.exp(z).sum(axis=1, keepdims=True))
 
 
 def _fit_temperature(logits: np.ndarray, y: np.ndarray) -> float:
@@ -244,6 +291,28 @@ def _train_config(
         dropout=cfg.dropout, temperature=temperature, layernorm=cfg.layernorm,
     )
     return model, cal_brier, val_auc, train_auc
+
+
+def deep_config_grid() -> list[_Config]:
+    """A careful DEEP-LSTM grid (3–4 layers, wide hidden, LayerNorm + dropout).
+
+    LayerNorm + dropout + early stopping are what make the deep stacks trainable on the
+    short news-covered window; the sweep is ranked by calibrated validation Brier.
+    """
+    out: list[_Config] = []
+    for hidden in (128, 256):
+        for layers in (3, 4):
+            for dropout in (0.3,):
+                out.append(_Config(
+                    hidden=hidden, layers=layers, lookback=60, lr=1e-3, weight_decay=1e-4,
+                    dropout=dropout, layernorm=True, batch_size=512, max_epochs=60, patience=8,
+                ))
+    # one wider-lookback, lower-lr deep variant
+    out.append(_Config(
+        hidden=192, layers=3, lookback=90, lr=5e-4, weight_decay=1e-4,
+        dropout=0.4, layernorm=True, batch_size=512, max_epochs=60, patience=8,
+    ))
+    return out
 
 
 def _sample_configs(n: int, seed: int) -> list[_Config]:
