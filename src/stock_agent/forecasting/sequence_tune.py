@@ -299,18 +299,19 @@ def deep_config_grid() -> list[_Config]:
     LayerNorm + dropout + early stopping are what make the deep stacks trainable on the
     short news-covered window; the sweep is ranked by calibrated validation Brier.
     """
+    # lr 3e-4 + dropout 0.2: gentler than 1e-3/0.3 (deep LSTMs converge better at low lr);
+    # the lower lr gets more epochs/patience so early-stopping doesn't cut it short.
     out: list[_Config] = []
     for hidden in (128, 256):
         for layers in (3, 4):
-            for dropout in (0.3,):
-                out.append(_Config(
-                    hidden=hidden, layers=layers, lookback=60, lr=1e-3, weight_decay=1e-4,
-                    dropout=dropout, layernorm=True, batch_size=512, max_epochs=60, patience=8,
-                ))
-    # one wider-lookback, lower-lr deep variant
+            out.append(_Config(
+                hidden=hidden, layers=layers, lookback=60, lr=3e-4, weight_decay=1e-4,
+                dropout=0.2, layernorm=True, batch_size=512, max_epochs=100, patience=10,
+            ))
+    # one wider-lookback deep variant (same lr/dropout)
     out.append(_Config(
-        hidden=192, layers=3, lookback=90, lr=5e-4, weight_decay=1e-4,
-        dropout=0.4, layernorm=True, batch_size=512, max_epochs=60, patience=8,
+        hidden=192, layers=3, lookback=90, lr=3e-4, weight_decay=1e-4,
+        dropout=0.2, layernorm=True, batch_size=512, max_epochs=100, patience=10,
     ))
     return out
 
