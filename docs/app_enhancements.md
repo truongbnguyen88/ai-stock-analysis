@@ -10,10 +10,10 @@
 > 3. Include a **multi-ticker** capability (news analysis + model predictions for several
 >    tickers at once) — Enhancement B; the showcase (A) advertises it.
 
-Two enhancements, related: **B** adds the multi-ticker capability; **A** is the launch
-screen that makes it (and everything else) discoverable. Recommended order: **A.1–A.2**
-(useful, low-risk) → **B** (the new feature) → **A.3–A.4** (animation polish) so the
-showcase can feature a capability that actually works when clicked.
+Three enhancements, related: **B** adds multi-ticker; **C** adds topic/theme news; **A** is
+the launch screen that makes them (and everything else) discoverable. Recommended order:
+**A.1–A.2** (useful, low-risk) → **B** → **C** (the new agent features) → **A.3–A.4**
+(animation polish) so the showcase can feature capabilities that actually work when clicked.
 
 ---
 
@@ -154,11 +154,79 @@ comparable result the UI can table/chart.
 
 ---
 
+## Enhancement C — Topic / theme news ("pull news about robotics")
+
+### Objective
+Let the agent pull + analyze news by **theme**, not just by ticker — e.g. *"pull and analyze
+recent news related to robotics"* returns only robotics news. Themes: AI, AI infrastructure,
+AI energy, AI memory, EVs, robotics, semiconductors, … (extensible).
+
+### Current limitation
+All news tools are **ticker/symbol-scoped** — `get_company_news` queries
+Finnhub/Marketaux/AV by symbol; there is no theme-scoped live news path. *(The GDELT
+**BigQuery** pipeline in `news/gdelt_ingest.py` produces topic **sentiment features** for
+modeling — offline daily aggregates, not live article headlines — so it does NOT serve this.)*
+
+### Design
+- **Primary source = GDELT DOC 2.0 API** (live, free, no key, theme-aware):
+  `api.gdeltproject.org/api/v2/doc/doc?query=…&mode=ArtList&sort=DateDesc&timespan=Nd&format=json`
+  → article-level (title, url, domain, seendate, language, tone), newest-first. **Secondary =
+  Marketaux `search`** (keyword news). Both behind the provider abstraction (official APIs —
+  **no scraping**). New module `providers/gdelt_doc.py` — do **not** reuse the BigQuery
+  `gdelt_ingest` (that's the offline feature path).
+- **Topic registry (config-driven)** `news/topics.py`: each theme → a query spec (keywords +
+  optional GDELT theme codes + language filter), e.g. `robotics → ["robotics","humanoid
+  robot","automation"]`, `ai_memory → ["HBM","high bandwidth memory","AI memory"]`,
+  `ai_infra → ["AI data center","GPU cluster","AI accelerator"]`, `ev → ["electric
+  vehicle","EV","battery"]`. Curated for **precision**; free-form fallback for unlisted
+  themes (agent passes the phrase; optional LLM keyword expansion).
+- **Provider Protocol** `TopicNewsProvider.get_topic_news(query, start, end, *, top_n)` →
+  `NewsBundle`; registry `get_topic_news` chains providers; reuse clean/dedup/rank
+  (newest-first, like the get_news change).
+- **Agent tools**: `get_topic_news(topic, days)` (headlines) + `analyze_topic_news(topic,
+  days)` (LLM synthesis of themes/risks/catalysts + topic **sentiment from article tone** —
+  numbers from data, narrative from LLM). The LLM extracts the theme and routes here (vs the
+  ticker tools) when the user names a sector/theme rather than a company.
+
+### Bounds & constraints
+- Precision: prefer the registry keyword set + GDELT theme codes; English-only; dedup; cap top_n.
+- **No scraping** (GDELT DOC + Marketaux are official APIs); cache via the short news TTL
+  (`cache_ttl_news_seconds`); respect GDELT DOC rate limits (~1/s) — key the cache by
+  (topic, window). Invariants: sentiment from tone (not LLM); non-advisory; no recommendation.
+- **Transparency:** surface the resolved query/keywords so the user sees what "robotics" matched.
+
+### UI
+- Topic result → headline list + a topic-sentiment line; add a showcase card *"Analyze a
+  theme's news (robotics, EV, AI memory…)"* (ties to Enhancement A).
+
+### Agent prompt
+- Teach routing: company/ticker → ticker news tools; **sector/theme phrase → topic tools**.
+  List known themes; allow free-form. Version bump + integration assertions.
+
+### Risks
+- **Topic precision** (keyword over/under-match) — curated registry + theme codes + a relevance
+  pass; show the resolved query for transparency.
+- **GDELT DOC noise** (foreign/low-quality) — language + domain filters + dedup.
+- **Rate limits** — cache; bound `maxrecords`.
+
+### Build steps
+- [ ] **C.1** `news/topics.py` registry (theme → query spec) + test (resolution + free-form fallback).
+- [ ] **C.2** `providers/gdelt_doc.py` GDELT DOC client + `get_topic_news` (normalize → NewsBundle,
+      newest-first, language/dedup) + fixture-based normalization test (no live calls).
+- [ ] **C.3** Registry `get_topic_news` chain + `TopicNewsProvider` Protocol + fallback test.
+- [ ] **C.4** *(optional)* Marketaux `search` as a secondary topic provider.
+- [ ] **C.5** Agent tools `get_topic_news` / `analyze_topic_news` + `TOOL_SCHEMAS` + routing
+      prompt update (theme vs ticker) + version bump + integration test.
+- [ ] **C.6** UI rendering (headlines + topic sentiment) + showcase capability entry (ties A↔C).
+
+---
+
 ## Combined build order (recommended)
 1. **A.1, A.2** — capabilities data + interactive cards (discoverable + useful immediately).
-2. **B.1 → B.6** — the multi-ticker feature (so the showcase card works when clicked).
-3. **A.3, A.4** — typewriter animation + polish.
-4. **A.5 / extras** — optional.
+2. **B.1 → B.6** — the multi-ticker feature.
+3. **C.1 → C.6** — topic/theme news (shares the news/provider + ranking layer).
+4. **A.3, A.4** — typewriter animation + polish (showcase can now feature B & C, both working).
+5. **A.5 / extras** — optional.
 
 ## Notes
 - Keep `ui/` thin (presentation only); business logic stays in `agent/`/`pipelines/` per
