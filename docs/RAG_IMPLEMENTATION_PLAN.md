@@ -102,6 +102,179 @@ The LLM must not override model-generated outputs.
 
 ---
 
+# Cost-Efficient RAG Design Requirements
+
+A key goal of this project is to learn and implement RAG while keeping operational costs low.
+
+The design should prioritize:
+
+## Local-First Architecture
+
+Whenever practical:
+
+- Process documents locally
+- Chunk documents locally
+- Generate embeddings locally
+- Store vectors locally
+- Perform retrieval locally
+
+The only component that should require paid LLM calls is the final synthesis and report generation stage.
+
+Preferred architecture:
+
+text Documents     ↓ Chunking (local)     ↓ Embeddings (local)     ↓ Vector Database (local)     ↓ Retrieval (local)     ↓ LLM Synthesis     ↓ Research Report 
+
+---
+
+## Embedding Cost Optimization
+
+When evaluating embedding solutions:
+
+### Preferred MVP Option
+
+Local embedding models:
+
+- BGE-small
+- BGE-base
+- E5-small
+- E5-base
+
+Benefits:
+
+- zero recurring cost
+- good retrieval quality
+- educational value
+- privacy-friendly
+
+### Optional Premium Option
+
+Support OpenAI embeddings through a provider abstraction layer.
+
+The implementation should allow switching between:
+
+text Local Embeddings OpenAI Embeddings Future Providers 
+
+without changing retrieval code.
+
+---
+
+## Vector Database Cost Optimization
+
+Prefer local vector databases.
+
+Evaluate:
+
+- ChromaDB
+- FAISS
+- LanceDB
+
+MVP should not require:
+
+- Pinecone
+- Weaviate Cloud
+- managed vector databases
+
+unless there is a compelling technical reason.
+
+---
+
+## Retrieval Cost Optimization
+
+Retrieval should be performed locally.
+
+Requirements:
+
+- similarity search should not require LLM calls
+- metadata filtering should not require LLM calls
+- reranking should be optional
+
+Only retrieved chunks should be passed to the LLM.
+
+---
+
+## Context Window Optimization
+
+Do not pass excessive context to the LLM.
+
+Requirements:
+
+- retrieve only top-k chunks
+- deduplicate overlapping chunks
+- avoid sending entire filings
+- keep prompts compact
+
+Claude should propose sensible defaults for:
+
+- chunk size
+- chunk overlap
+- retrieval count (top-k)
+
+to balance answer quality and token consumption.
+
+---
+
+## Document Processing Strategy
+
+Embeddings should be generated only once during ingestion.
+
+Avoid:
+
+text Query → Re-embed all documents → Search 
+
+Prefer:
+
+text Ingestion → Embed once → Store vectors  Query → Embed question → Retrieve vectors → Generate answer 
+
+---
+
+## Research Report Optimization
+
+The system should avoid unnecessary LLM calls.
+
+Preferred workflow:
+
+text Technical Analysis + Probability Forecast + Retrieved Evidence     ↓ Single Synthesis Call     ↓ Research Memo 
+
+Avoid:
+
+text Multiple summarization calls Multiple rewrite calls Multiple analysis calls unless explicitly requested.
+
+---
+
+## Cost Analysis Deliverable
+
+When proposing the architecture, include:
+
+### Estimated Costs
+
+1. Initial document ingestion
+2. Embedding generation
+3. Retrieval
+4. Report generation
+
+Compare:
+
+- fully local setup
+- OpenAI embedding setup
+- hybrid setup
+
+### Recommended MVP
+
+Claude should explicitly recommend the most cost-efficient MVP architecture for a personal learning project running on:
+
+- MacBook Pro M2
+- Local development environment
+
+The recommendation should balance:
+
+- learning value
+- implementation complexity
+- retrieval quality
+- token cost
+- operational cost
+
+---
+
 # RAG Architecture
 
 ## Document Sources
