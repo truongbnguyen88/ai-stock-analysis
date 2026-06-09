@@ -194,6 +194,48 @@ def test_run_forecast_tool_routes_model_selection() -> None:
     assert ml.get("model_name") == "ml_lightgbm"
 
 
+def test_batch_and_topic_tools_are_registered_and_prompt_documents_them() -> None:
+    # Enhancements B & C: the new tools must be exposed to the model AND described in
+    # the system prompt's routing guidance, or the LLM can never select them.
+    from stock_agent.agent.prompts.agent import SYSTEM, VERSION
+    from stock_agent.agent.tools import TOOL_SCHEMAS
+
+    names = {t["name"] for t in TOOL_SCHEMAS}
+    assert {"compare_forecasts", "compare_news", "get_topic_news", "analyze_topic_news"} <= names
+    for tool in ("compare_forecasts", "compare_news", "get_topic_news", "analyze_topic_news"):
+        assert tool in SYSTEM, tool
+    assert VERSION == "agent.v14"  # bumped for the batch + topic-tool guidance
+
+
+def test_agent_loop_runs_compare_forecasts_and_surfaces_it() -> None:
+    # End-to-end: the model requests compare_forecasts, the executor runs it, and
+    # the structured comparison is surfaced on AgentResult for the UI to chart.
+    script = [
+        ToolResponse(
+            text="",
+            tool_uses=[
+                ToolUse(
+                    id="1",
+                    name="compare_forecasts",
+                    input={
+                        "tickers": ["NVDA", "MSFT"],
+                        "horizon_days": 20,
+                        "model": "historical_sim",
+                    },
+                )
+            ],
+            stop_reason="tool_use",
+            assistant_content=[],
+        ),
+        _final("Compared NVDA and MSFT over twenty trading days."),  # no decimals
+    ]
+    result = run_agent("compare NVDA and MSFT", llm=FakeToolLLM(script), executor=_executor())
+    assert "compare_forecasts" in result.tool_calls
+    inv = result.tool_results[0]
+    assert inv.name == "compare_forecasts"
+    assert [row["ticker"] for row in inv.result["rows"]] == ["NVDA", "MSFT"]
+
+
 def _executor_with_news() -> ToolExecutor:
     bars = [
         PriceBar(

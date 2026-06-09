@@ -123,6 +123,63 @@ def test_calibration_reliability_chart() -> None:
     assert list(spec.data.columns) == ["predicted", "realized"]
 
 
+# ---- multi-ticker comparisons (Enhancement B) ---------------------------------
+def test_compare_forecasts_grouped_by_ticker() -> None:
+    r = {
+        "horizon_days": 20,
+        "model": "ensemble",
+        "rows": [
+            {"ticker": "NVDA", "upside_prob": 0.6, "prob_large_move": 0.3},
+            {"ticker": "MSFT", "upside_prob": 0.55, "prob_large_move": 0.2},
+            {"ticker": "BADX", "error": "no data"},  # skipped, no chart rows
+        ],
+    }
+    spec = _spec_titled(charts_for([_Inv("compare_forecasts", r)]), "forecast comparison")
+    assert spec.kind == "grouped_bar"
+    assert spec.color == "metric"
+    assert set(spec.data["ticker"]) == {"NVDA", "MSFT"}  # errored row excluded
+    assert set(spec.data["metric"]) == {"P(up)", "P(big move)"}
+    assert spec.y_is_percent
+
+
+def test_compare_news_grouped_by_ticker() -> None:
+    r = {
+        "days": 14,
+        "rows": [
+            {"ticker": "NVDA", "pct_positive": 0.5, "pct_negative": 0.2},
+            {"ticker": "AMD", "pct_positive": 0.4, "pct_negative": 0.3},
+        ],
+    }
+    spec = _spec_titled(charts_for([_Inv("compare_news", r)]), "sentiment comparison")
+    assert spec.kind == "grouped_bar"
+    assert set(spec.data["sentiment"]) == {"Positive", "Negative"}
+    assert set(spec.data["ticker"]) == {"NVDA", "AMD"}
+
+
+def test_compare_all_errored_yields_no_chart() -> None:
+    r = {"horizon_days": 20, "model": "ensemble", "rows": [{"ticker": "X", "error": "no data"}]}
+    assert charts_for([_Inv("compare_forecasts", r)]) == []
+
+
+def test_topic_news_insight_counts() -> None:
+    r = {
+        "topic": "robotics",
+        "bullish": [{"point": "a"}, {"point": "b"}],
+        "bearish": [{"point": "c"}],
+        "risks": [],
+        "catalysts": [],
+        "topic_sentiment": None,
+    }
+    spec = _spec_titled(charts_for([_Inv("analyze_topic_news", r)]), "insights")
+    counts = dict(zip(spec.data["category"], spec.data["count"], strict=True))
+    assert counts == {"Bullish": 2, "Bearish": 1, "Risks": 0, "Catalysts": 0}
+
+
+def test_topic_news_no_insights_yields_no_chart() -> None:
+    r = {"topic": "robotics", "error": "no news found for this theme in the window"}
+    assert charts_for([_Inv("analyze_topic_news", r)]) == []
+
+
 # ---- dedup + ordering ---------------------------------------------------------
 def test_duplicate_calls_are_deduped() -> None:
     r: dict[str, Any] = {

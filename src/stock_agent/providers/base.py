@@ -95,6 +95,22 @@ class NewsProvider(Provider, Protocol):
 
 
 @runtime_checkable
+class TopicNewsProvider(Provider, Protocol):
+    """Supplies theme/keyword-scoped news (not ticker-scoped) — Enhancement C.
+
+    ``query`` is a search expression (keywords/phrases), e.g. built by
+    ``news.topics.gdelt_query_expression`` — distinct from the symbol-scoped
+    ``NewsProvider.get_company_news``.
+    """
+
+    def get_topic_news(
+        self, query: str, start: Date, end: Date, *, top_n: int = 25
+    ) -> NewsBundle:
+        """Return newest-first articles matching ``query`` within [start, end]."""
+        ...
+
+
+@runtime_checkable
 class FundamentalsProvider(Provider, Protocol):
     """Supplies company fundamentals.
 

@@ -26,6 +26,7 @@ from stock_agent.providers.base import (
     Provider,
     ProviderError,
     ProviderUnavailable,
+    TopicNewsProvider,
 )
 from stock_agent.schemas.market import PriceSeries
 from stock_agent.schemas.news import Article, NewsBundle
@@ -130,6 +131,39 @@ class ProviderRegistry:
             raise last_error
         return NewsBundle(ticker=ticker, articles=collected)
 
+    # ---- topic news: failover -------------------------------------------------
+    def get_topic_news(
+        self, query: str, start: Date, end: Date, *, top_n: int = 25
+    ) -> NewsBundle:
+        """Return theme/keyword news from the first topic provider that succeeds.
+
+        Failover (not merge): the topic providers are heterogeneous (GDELT DOC,
+        later Marketaux search), so we take the first usable source's results
+        rather than blending two different query semantics.
+        """
+        chain = self._chain(self._settings.topic_priority, TopicNewsProvider)  # type: ignore[type-abstract]
+        if not chain:
+            raise ProviderUnavailable("registry", "no topic-news providers available")
+        last_error: ProviderError | None = None
+        for provider in chain:
+            try:
+                bundle = provider.get_topic_news(query, start, end, top_n=top_n)
+                log.info(
+                    "provider.topic_news_ok", provider=provider.name, n=len(bundle), query=query
+                )
+                return bundle
+            except ProviderError as exc:
+                log.warning(
+                    "provider.topic_news_failed",
+                    provider=provider.name,
+                    query=query,
+                    error=str(exc),
+                )
+                last_error = exc
+                continue
+        assert last_error is not None
+        raise last_error
+
     # ---- earnings: failover ---------------------------------------------------
     def get_earnings_dates(self, ticker: str) -> list[Date]:
         """Return earnings announcement dates from the first provider that succeeds."""
@@ -169,6 +203,7 @@ def build_default_registry(settings: Settings) -> ProviderRegistry:
     from stock_agent.providers._cache import DiskCache
     from stock_agent.providers.alpha_vantage import AlphaVantageProvider
     from stock_agent.providers.finnhub import FinnhubProvider
+    from stock_agent.providers.gdelt_doc import GdeltDocProvider
     from stock_agent.providers.marketaux import MarketauxProvider
     from stock_agent.providers.yfinance_provider import YFinanceProvider
 
@@ -178,5 +213,6 @@ def build_default_registry(settings: Settings) -> ProviderRegistry:
         FinnhubProvider(settings=settings, cache=cache),
         MarketauxProvider(settings=settings, cache=cache),
         AlphaVantageProvider(settings=settings, cache=cache),
+        GdeltDocProvider(settings=settings, cache=cache),  # keyless topic/theme news
     ]
     return ProviderRegistry(providers, settings)

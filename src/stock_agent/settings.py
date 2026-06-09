@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     provider_price_priority: str = "yfinance,alpha_vantage"
     provider_news_priority: str = "finnhub,marketaux,alpha_vantage"
     provider_earnings_priority: str = "yfinance"  # earnings dates (keyless, unlimited)
+    # Theme/keyword news (Enhancement C). GDELT DOC is keyless and theme-aware;
+    # it leads the chain (Marketaux 'search' can be added as a secondary later).
+    provider_topic_priority: str = "gdelt_doc"
 
     # ---- Provider behavior ----
     cache_dir: Path = Path(".cache")
@@ -132,6 +135,11 @@ class Settings(BaseSettings):
     def news_priority(self) -> list[str]:
         """Ordered news-provider fallback chain (highest priority first)."""
         return _split_csv(self.provider_news_priority)
+
+    @property
+    def topic_priority(self) -> list[str]:
+        """Ordered topic-news provider fallback chain (highest priority first)."""
+        return _split_csv(self.provider_topic_priority)
 
     def require(self, attr: str, *, capability: str) -> str:
         """Return a required secret/value or raise a clear, actionable error.
