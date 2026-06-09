@@ -201,10 +201,17 @@ def test_batch_and_topic_tools_are_registered_and_prompt_documents_them() -> Non
     from stock_agent.agent.tools import TOOL_SCHEMAS
 
     names = {t["name"] for t in TOOL_SCHEMAS}
-    assert {"compare_forecasts", "compare_news", "get_topic_news", "analyze_topic_news"} <= names
-    for tool in ("compare_forecasts", "compare_news", "get_topic_news", "analyze_topic_news"):
+    expected = {
+        "compare_forecasts",
+        "compare_news",
+        "get_topic_news",
+        "analyze_topic_news",
+        "conditional_outlook",
+    }
+    assert expected <= names
+    for tool in expected:
         assert tool in SYSTEM, tool
-    assert VERSION == "agent.v14"  # bumped for the batch + topic-tool guidance
+    assert VERSION == "agent.v15"  # batch + topic + conditional-outlook guidance
 
 
 def test_agent_loop_runs_compare_forecasts_and_surfaces_it() -> None:

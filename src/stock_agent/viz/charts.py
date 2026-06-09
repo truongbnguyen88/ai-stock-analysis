@@ -277,6 +277,32 @@ def _compare_news_chart(r: dict[str, Any]) -> ChartSpec | None:
     )
 
 
+def _conditional_chart(r: dict[str, Any]) -> ChartSpec | None:
+    """Mean forward return after a driver shock vs the unconditional baseline (#7)."""
+    if not _ok(r):
+        return None
+    base = r.get("baseline")
+    cond = r.get("conditional")
+    if not base:
+        return None
+    rows: list[dict[str, Any]] = []
+    if cond:
+        rows.append({"scenario": "After driver shock", "mean_return": cond["mean"]})
+    rows.append({"scenario": "Baseline (all days)", "mean_return": base["mean"]})
+    target, driver = r.get("target", "?"), r.get("driver", "?")
+    htxt = f", {r['horizon_days']}-day" if r.get("horizon_days") is not None else ""
+    return ChartSpec(
+        title=f"{target} forward return after {driver} shocks vs baseline{htxt}",
+        kind="bar",
+        data=pd.DataFrame(rows),
+        x="scenario",
+        y="mean_return",
+        x_sort=tuple(row["scenario"] for row in rows),
+        y_is_percent=True,
+        caption="Conditional vs baseline mean forward return (descriptive, not a forecast).",
+    )
+
+
 def _topic_news_chart(r: dict[str, Any]) -> ChartSpec | None:
     """Theme news insight counts, mirroring the per-ticker summary chart.
 
@@ -299,6 +325,7 @@ _SINGLE: dict[str, Any] = {
     "compare_forecasts": _compare_forecasts_chart,
     "compare_news": _compare_news_chart,
     "analyze_topic_news": _topic_news_chart,
+    "conditional_outlook": _conditional_chart,
 }
 
 

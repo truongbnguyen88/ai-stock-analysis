@@ -280,6 +280,52 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "conditional_outlook",
+        "description": (
+            "LEAKAGE-SAFE HISTORICAL CONDITIONAL linking a market driver to a stock — the honest "
+            "way to ask 'how might <news theme> affect <stock>'. Map the news theme to a DRIVER "
+            "proxy ticker (oil->USO or XLE, defense->ITA, broad vol/risk-off->^VIX, rates->TLT, "
+            "gold->GLD, semis->SMH), then this returns how the TARGET's forward return over the "
+            "next horizon historically distributed on days AFTER the driver moved >= shock_pct "
+            "over a trailing window, vs its baseline (mean, median, P(up), the lift). DESCRIPTIVE "
+            "history, NOT a forecast or causal claim: overlapping windows make events "
+            "autocorrelated, so weigh effective_independent_events and low_confidence. Numbers "
+            "from price history only; you narrate, non-advisory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Stock to study, e.g. DAL."},
+                "driver": {
+                    "type": "string",
+                    "description": "Proxy ticker for the theme, e.g. USO (oil) / ITA (defense).",
+                },
+                "shock_pct": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Driver move size (percent) that defines an event (1–50).",
+                },
+                "event_window_days": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Trailing trading days the driver move is measured over (1–60).",
+                },
+                "horizon_days": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Target forward-return horizon in trading days (1–60).",
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["both", "up", "down"],
+                    "default": "both",
+                    "description": "Driver move direction defining the event.",
+                },
+            },
+            "required": ["target", "driver"],
+        },
+    },
+    {
         "name": "compare_news",
         "description": (
             "Compare NEWS across SEVERAL tickers in a single call — per ticker: numeric sentiment "
@@ -656,6 +702,36 @@ class ToolExecutor:
             horizon_days=horizon, model=model, rows=rows, skipped=skipped
         )
         return comparison.model_dump(mode="json")
+
+    # ---- conditional event study (news -> price bridge, #7) ------------------
+    def _tool_conditional_outlook(self, args: dict[str, Any]) -> dict[str, Any]:
+        target = str(args["target"]).upper()
+        driver = str(args["driver"]).upper()
+        shock_pct = int(args.get("shock_pct", 5))
+        event_window = int(args.get("event_window_days", 5))
+        horizon = int(args.get("horizon_days", 10))
+        direction = str(args.get("direction", "both"))
+        if direction not in ("both", "up", "down"):
+            return {"error": "direction must be 'both', 'up', or 'down'"}
+        if not (1 <= shock_pct <= 50):
+            return {"error": "shock_pct must be 1–50 (percent)"}
+        if not (1 <= event_window <= 60):
+            return {"error": "event_window_days must be 1–60"}
+        if not (1 <= horizon <= 60):
+            return {"error": "horizon_days must be 1–60"}
+        from stock_agent.pipelines.conditional import run_conditional_study
+
+        study = run_conditional_study(
+            target,
+            driver,
+            shock_pct=shock_pct / 100.0,
+            event_window_days=event_window,
+            horizon_days=horizon,
+            direction=direction,  # type: ignore[arg-type]
+            settings=self._settings,
+            registry=self._registry,
+        )
+        return study.model_dump(mode="json")
 
     def _news_row(self, ticker: str, days: int) -> TickerNewsRow:
         """One ticker's news/sentiment row; empty/failed fetch becomes an ``error`` row."""

@@ -180,6 +180,26 @@ def test_topic_news_no_insights_yields_no_chart() -> None:
     assert charts_for([_Inv("analyze_topic_news", r)]) == []
 
 
+def test_conditional_outlook_chart_compares_to_baseline() -> None:
+    r = {
+        "target": "DAL",
+        "driver": "USO",
+        "horizon_days": 10,
+        "conditional": {"mean": -0.03, "prob_up": 0.4},
+        "baseline": {"mean": 0.005, "prob_up": 0.55},
+    }
+    spec = _spec_titled(charts_for([_Inv("conditional_outlook", r)]), "vs baseline")
+    assert spec.kind == "bar"
+    assert list(spec.data["scenario"]) == ["After driver shock", "Baseline (all days)"]
+    assert spec.y_is_percent
+
+
+def test_conditional_outlook_no_events_charts_baseline_only() -> None:
+    r = {"target": "DAL", "driver": "USO", "conditional": None, "baseline": {"mean": 0.01}}
+    spec = _spec_titled(charts_for([_Inv("conditional_outlook", r)]), "vs baseline")
+    assert list(spec.data["scenario"]) == ["Baseline (all days)"]
+
+
 # ---- dedup + ordering ---------------------------------------------------------
 def test_duplicate_calls_are_deduped() -> None:
     r: dict[str, Any] = {
