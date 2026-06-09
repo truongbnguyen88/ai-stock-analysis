@@ -126,6 +126,25 @@ class Settings(BaseSettings):
     chat_history_dir: Path = Path("outputs/chat_history")
     chat_history_retention_days: int = 30
 
+    # ---- RAG (SEC-grounded equity research; see docs/RAG_TODO.md) ----
+    # Optional OpenAI key — only needed if embedding_provider="openai".
+    openai_api_key: str | None = None
+    # SEC EDGAR fair-access requires a descriptive User-Agent with contact, e.g.
+    # "Jane Doe jane@example.com". Required only for LIVE downloads (tests use fixtures).
+    sec_user_agent: str | None = None
+    # Embeddings: local fastembed/BGE by default (no torch, $0); "openai" swaps the
+    # backend behind the same Embedder Protocol with no retrieval-code change.
+    embedding_provider: Literal["local", "openai"] = "local"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    # Chunking + retrieval defaults (balance answer quality vs token cost).
+    rag_chunk_tokens: int = 900  # target chunk size (section-aware; never crosses a section)
+    rag_chunk_overlap: float = 0.15  # fractional overlap between adjacent chunks
+    rag_top_k: int = 8  # chunks retrieved per query (deduped before synthesis)
+    # Local storage (all under the gitignored data/ tree). Raw is never overwritten.
+    documents_dir: Path = Path("data/raw")  # downloaded filings
+    processed_dir: Path = Path("data/processed")  # parsed text + chunks
+    vector_store_dir: Path = Path("data/vectorstore")  # persistent Chroma store
+
     @property
     def earnings_priority(self) -> list[str]:
         """Ordered earnings-provider fallback chain (highest priority first)."""
