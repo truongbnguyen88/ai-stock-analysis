@@ -5,6 +5,7 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 ## Orientation (read before non-trivial work)
 - Architecture, layers, module responsibilities, agent design → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Scope tiers + ordered build plan → [docs/ROADMAP.md](docs/ROADMAP.md)
+- RAG layer (SEC-grounded research assistant): plan → [docs/RAG_IMPLEMENTATION_PLAN.md](docs/RAG_IMPLEMENTATION_PLAN.md); ordered build steps + locked decisions → [docs/RAG_TODO.md](docs/RAG_TODO.md)
 - Always know which **roadmap step** you are on; if unclear, ask before coding.
 
 ## Non-negotiable invariants
@@ -21,6 +22,7 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 - Forecast models implement the common interface in `forecasting/base.py` (`ForecastModel` Protocol: a `name` attr + `forecast(series, *, horizon_days, as_of) -> ScenarioForecast`).
 - LLM calls → `llm/` (Role A summarizer) or `agent/` (Role B router) only. Both pass through their `guards.py`.
 - `pipelines/` and `cli/` stay thin — orchestration only, no business logic.
+- **RAG layer** (see RAG_TODO.md): `providers/sec_edgar.py` (EDGAR **official API**, not scraping — Protocol, throttled, cached) → `documents/` (download/parse/section-detect, normalized to `schemas/documents.py`) → `rag/` (chunk/embed/store/retrieve; embeddings + vector store each behind a Protocol — local `fastembed`/BGE default, Chroma default) → `research/` (single grounded synthesis call). `rag/` retrieval does **no LLM calls**; the only paid LLM call is the final memo synthesis. Embeddings are computed **once at ingestion**, never per query over the corpus.
 
 ## How to execute a roadmap step
 1. State the step number + its bracketed deliverable.
@@ -53,7 +55,8 @@ Markdown docs render on the GitHub website via **MathJax** (`$…$` inline, `$$�
 - **Forecasting:** probabilities sum to 1; baseline reproducible under fixed seed.
 - **Backtesting:** splitter never overlaps train/test; embargo respected; calibration math vs known cases.
 - **LLM / agent:** output schema conformance; anti-forecast guard rejects LLM-emitted numbers; agent numeric-grounding guard rejects fabricated figures; citations reference real fetched URLs.
-- All tests deterministic: seed everything, mock all network + LLM (`FakeProvider`, canned LLM responses). No live API calls in tests.
+- **RAG:** parsing/section-detection golden fixtures; chunking preserves section boundaries + carries metadata (no tiny/giant chunks); embeddings via a deterministic `FakeEmbedder` (**never download a model in CI**); vector store uses a temp dir; retrieval filter correctness + empty-retrieval → "Insufficient evidence found."; the synthesis **citation guard** rejects any cited source/chunk not in the retrieved set. SEC download tested against **recorded EDGAR fixtures** (no live calls).
+- All tests deterministic: seed everything, mock all network + LLM (`FakeProvider`, `FakeEmbedder`, canned LLM responses). No live API calls in tests.
 
 ## Cost-efficiency rules (generation + runtime)
 **During development (token budget):**
@@ -77,6 +80,11 @@ make typecheck    # mypy
 python -m stock_agent analyze  --ticker NVDA --days 90
 python -m stock_agent forecast --ticker MSFT --horizon 20
 python -m stock_agent chat
+# RAG (see RAG_TODO.md — built incrementally P1→P8):
+python -m stock_agent documents download-sec --ticker NVDA --forms 10-K 10-Q
+python -m stock_agent documents ingest --ticker NVDA        # parse→chunk→embed→store (local, $0)
+python -m stock_agent rag query --ticker NVDA --question "What AI growth drivers did management cite?"
+python -m stock_agent research --ticker NVDA                # technicals + forecast + news + RAG → memo
 ```
 (If a target doesn't exist yet, it's a Phase 0 deliverable — create it.)
 
