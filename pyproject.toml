@@ -95,6 +95,16 @@ plugins = ["pydantic.mypy"]
 module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*"]
 ignore_missing_imports = true
 
+# The experimental LSTM forecaster subclasses torch.nn.Module. torch is an OPTIONAL
+# extra ([sequence]); it is absent from [dev]/CI, so nn.Module resolves to Any there
+# and strict mode's disallow_subclassing_any fires — `make check` then passes locally
+# (torch installed) but fails in CI (torch absent). The module is torch-gated at
+# runtime (its tests are collect-ignored without torch), so relax just this one check
+# for it, keeping mypy environment-independent.
+[[tool.mypy.overrides]]
+module = ["stock_agent.forecasting.sequence"]
+disallow_subclassing_any = false
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
