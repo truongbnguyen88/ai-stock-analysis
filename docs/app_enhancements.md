@@ -80,14 +80,14 @@ multiple tickers** (← Enhancement B).
   check = manual `make ui` smoke.
 
 ### Build steps
-- [ ] **A.1** `ui/capabilities.py` (dataclass + curated list) + `tests/unit/test_capabilities.py`
+- [x] **A.1** `ui/capabilities.py` (dataclass + curated list) + `tests/unit/test_capabilities.py`
       (non-empty; each `example` has `{ticker}`; titles/icons present).
-- [ ] **A.2** Empty-state **interactive cards**: centered `st.button` grid in
+- [x] **A.2** Empty-state **interactive cards**: centered `st.button` grid in
       `if not st.session_state.messages:`; click → `pending_prompt` + `rerun`. (Delivers the
       useful half, zero animation risk.)
-- [ ] **A.3** Animated **typewriter centerpiece** (`components.html`) above the cards,
+- [x] **A.3** Animated **typewriter centerpiece** (`components.html`) above the cards,
       cycling the capability headlines; theme-aware, fixed height.
-- [ ] **A.4** Polish: `prefers-reduced-motion` fallback, responsive wrap, copy pass.
+- [x] **A.4** Polish: `prefers-reduced-motion` fallback, responsive wrap, copy pass.
 - [ ] **A.5** *(optional)* bidirectional custom component so the typewriter item itself is
       clickable (defer unless wanted).
 
@@ -143,14 +143,14 @@ comparable result the UI can table/chart.
   (they're real tool outputs) — add fixtures.
 
 ### Build steps
-- [ ] **B.1** `schemas/comparison.py` (per-ticker forecast/news comparison models) + conformance test.
-- [ ] **B.2** `compare_forecasts` tool + handler (loop `run_forecast`, cap N) + `TOOL_SCHEMAS`
+- [x] **B.1** `schemas/comparison.py` (per-ticker forecast/news comparison models) + conformance test.
+- [x] **B.2** `compare_forecasts` tool + handler (loop `run_forecast`, cap N) + `TOOL_SCHEMAS`
       entry + unit test (cap enforced; numbers present; schema conforms).
-- [ ] **B.3** `compare_news` tool + handler (loop news/sentiment, cap N) + `TOOL_SCHEMAS` + test.
-- [ ] **B.4** UI comparison rendering in `ui/charts.py` (grouped bars/table) + chart unit test.
-- [ ] **B.5** Agent prompt update (batch tools, cap, non-advisory) + version bump + the
+- [x] **B.3** `compare_news` tool + handler (loop news/sentiment, cap N) + `TOOL_SCHEMAS` + test.
+- [x] **B.4** UI comparison rendering in `ui/charts.py` (grouped bars/table) + chart unit test.
+- [x] **B.5** Agent prompt update (batch tools, cap, non-advisory) + version bump + the
       integration assertions in `tests/integration/test_agent_runtime.py`.
-- [ ] **B.6** Add the "compare multiple tickers" entry to `ui/capabilities.py` (ties A↔B).
+- [x] **B.6** Add the "compare multiple tickers" entry to `ui/capabilities.py` (ties A↔B).
 
 ---
 
@@ -210,14 +210,14 @@ modeling — offline daily aggregates, not live article headlines — so it does
 - **Rate limits** — cache; bound `maxrecords`.
 
 ### Build steps
-- [ ] **C.1** `news/topics.py` registry (theme → query spec) + test (resolution + free-form fallback).
-- [ ] **C.2** `providers/gdelt_doc.py` GDELT DOC client + `get_topic_news` (normalize → NewsBundle,
+- [x] **C.1** `news/topics.py` registry (theme → query spec) + test (resolution + free-form fallback).
+- [x] **C.2** `providers/gdelt_doc.py` GDELT DOC client + `get_topic_news` (normalize → NewsBundle,
       newest-first, language/dedup) + fixture-based normalization test (no live calls).
-- [ ] **C.3** Registry `get_topic_news` chain + `TopicNewsProvider` Protocol + fallback test.
+- [x] **C.3** Registry `get_topic_news` chain + `TopicNewsProvider` Protocol + fallback test.
 - [ ] **C.4** *(optional)* Marketaux `search` as a secondary topic provider.
-- [ ] **C.5** Agent tools `get_topic_news` / `analyze_topic_news` + `TOOL_SCHEMAS` + routing
+- [x] **C.5** Agent tools `get_topic_news` / `analyze_topic_news` + `TOOL_SCHEMAS` + routing
       prompt update (theme vs ticker) + version bump + integration test.
-- [ ] **C.6** UI rendering (headlines + topic sentiment) + showcase capability entry (ties A↔C).
+- [x] **C.6** UI rendering (headlines + topic sentiment) + showcase capability entry (ties A↔C).
 
 ---
 

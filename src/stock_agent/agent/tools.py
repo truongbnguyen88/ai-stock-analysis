@@ -14,6 +14,7 @@ from __future__ import annotations
 import concurrent.futures
 from collections.abc import Callable
 from datetime import date as Date
+from datetime import timedelta
 from typing import Any
 
 from stock_agent.backtesting.calibration import calibration_label
@@ -26,11 +27,20 @@ from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import TextLLM
 from stock_agent.llm.news_summarizer import summarize_news
 from stock_agent.logging_config import get_logger
-from stock_agent.news.fetch import NewsFetcher
+from stock_agent.news.fetch import NewsFetcher, TopicNewsFetcher
+from stock_agent.news.topics import ResolvedTopic, gdelt_query_expression, list_topics
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.schemas.backtest import BacktestResult
+from stock_agent.schemas.comparison import (
+    ForecastComparison,
+    HeadlineRef,
+    NewsComparison,
+    TickerForecastRow,
+    TickerNewsRow,
+)
+from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.settings import Settings
 
 
@@ -56,6 +66,34 @@ _BACKTEST_MODELS: tuple[str, ...] = (
 )
 _BT_MIN_HORIZON, _BT_MAX_HORIZON = 5, 60
 _BT_TIMEOUT_S = 45.0  # wall-clock backstop; argument bounds keep typical runs ~seconds
+
+# Multi-ticker batch tools (Enhancement B). Each ticker is N forecasts (ensemble =
+# several members) or N news fetches, so cap the list and bound the wall-clock time.
+# Beyond the cap, extra tickers are truncated (reported in ``skipped``) rather than
+# rejected, so a slightly-too-long request still returns a useful comparison.
+_MAX_TICKERS = 6
+_COMPARE_TIMEOUT_S = 90.0
+
+# Curated theme slugs surfaced to the model (free-form themes also work).
+_KNOWN_TOPICS_DESC = ", ".join(list_topics())
+
+
+def _parse_tickers(args: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """Normalize the ``tickers`` arg -> (kept, skipped) honoring the cap.
+
+    Accepts a JSON list or a comma-separated string; upper-cases, drops blanks,
+    de-duplicates preserving order, then truncates to ``_MAX_TICKERS``.
+    """
+    raw = args.get("tickers", [])
+    items = raw.split(",") if isinstance(raw, str) else list(raw)
+    seen: set[str] = set()
+    tickers: list[str] = []
+    for item in items:
+        sym = str(item).strip().upper()
+        if sym and sym not in seen:
+            seen.add(sym)
+            tickers.append(sym)
+    return tickers[:_MAX_TICKERS], tickers[_MAX_TICKERS:]
 
 
 def _run_with_timeout(fn: Callable[[], Any], timeout_s: float) -> Any:
@@ -205,6 +243,151 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
             },
             "required": ["ticker", "horizon_days"],
+        },
+    },
+    {
+        "name": "compare_forecasts",
+        "description": (
+            "Compare MODEL FORECASTS across SEVERAL tickers at one horizon in a single call — "
+            "per ticker: expected return, P(up)/P(down), VaR95, CI, and P(big move). Use this "
+            "(instead of calling run_forecast repeatedly) when the user names 2+ tickers or asks "
+            "to compare/rank names by forecast. Numbers come from the chosen model only; you "
+            f"narrate the comparison (NON-ADVISORY — no 'buy X over Y'). Up to {_MAX_TICKERS} "
+            "tickers; extras are returned in 'skipped'. A ticker with no data comes back with an "
+            "'error' field instead of numbers — report it and continue."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tickers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": f"2–{_MAX_TICKERS} ticker symbols, e.g. ['NVDA','MSFT','AMD'].",
+                },
+                "horizon_days": {
+                    "type": "integer",
+                    "default": 20,
+                    "description": "Forecast horizon in trading days (same for every ticker).",
+                },
+                "model": {
+                    "type": "string",
+                    "enum": list(MODEL_NAMES),
+                    "default": "ensemble",
+                    "description": "Forecast model applied to every ticker (DEFAULT 'ensemble').",
+                },
+            },
+            "required": ["tickers"],
+        },
+    },
+    {
+        "name": "conditional_outlook",
+        "description": (
+            "LEAKAGE-SAFE HISTORICAL CONDITIONAL linking a market driver to a stock — the honest "
+            "way to ask 'how might <news theme> affect <stock>'. Map the news theme to a DRIVER "
+            "proxy ticker (oil->USO or XLE, defense->ITA, broad vol/risk-off->^VIX, rates->TLT, "
+            "gold->GLD, semis->SMH), then this returns how the TARGET's forward return over the "
+            "next horizon historically distributed on days AFTER the driver moved >= shock_pct "
+            "over a trailing window, vs its baseline (mean, median, P(up), the lift). DESCRIPTIVE "
+            "history, NOT a forecast or causal claim: overlapping windows make events "
+            "autocorrelated, so weigh effective_independent_events and low_confidence. Numbers "
+            "from price history only; you narrate, non-advisory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "Stock to study, e.g. DAL."},
+                "driver": {
+                    "type": "string",
+                    "description": "Proxy ticker for the theme, e.g. USO (oil) / ITA (defense).",
+                },
+                "shock_pct": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Driver move size (percent) that defines an event (1–50).",
+                },
+                "event_window_days": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Trailing trading days the driver move is measured over (1–60).",
+                },
+                "horizon_days": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Target forward-return horizon in trading days (1–60).",
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["both", "up", "down"],
+                    "default": "both",
+                    "description": "Driver move direction defining the event.",
+                },
+            },
+            "required": ["target", "driver"],
+        },
+    },
+    {
+        "name": "compare_news",
+        "description": (
+            "Compare NEWS across SEVERAL tickers in a single call — per ticker: numeric sentiment "
+            "(average, % positive/negative; from Alpha Vantage scores) and the newest headlines. "
+            "Use when the user names 2+ tickers and asks about news/sentiment. You write the "
+            "cross-ticker narrative (themes, divergences) — NON-ADVISORY (no 'buy X over Y'); the "
+            f"sentiment numbers come from the data, not you. Up to {_MAX_TICKERS} tickers; extras "
+            "are returned in 'skipped'. A ticker with no news comes back with an 'error' field."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "tickers": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": f"2–{_MAX_TICKERS} ticker symbols, e.g. ['NVDA','MSFT','AMD'].",
+                },
+                "days": {
+                    "type": "integer",
+                    "default": 14,
+                    "description": "News lookback window in days (same for every ticker).",
+                },
+            },
+            "required": ["tickers"],
+        },
+    },
+    {
+        "name": "get_topic_news",
+        "description": (
+            "Recent news by THEME/SECTOR rather than by ticker — e.g. 'robotics', 'EVs', "
+            "'AI memory', 'semiconductors'. Returns newest-first headlines (title, source, date, "
+            "url) plus the resolved keywords so the match is transparent. Route here when the user "
+            "names a sector/theme/topic (not a single company). Known themes: "
+            f"{_KNOWN_TOPICS_DESC}; any other phrase works as a free-form search (lower precision)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "Theme/sector phrase, e.g. 'robotics' or 'AI data centers'.",
+                },
+                "days": {"type": "integer", "default": 14},
+            },
+            "required": ["topic"],
+        },
+    },
+    {
+        "name": "analyze_topic_news",
+        "description": (
+            "Qualitative SYNTHESIS of a theme's recent news: overview, key themes, "
+            "bullish/bearish drivers, risks, and catalysts (each cited), for a sector/theme rather "
+            "than a single ticker. Use for 'analyze <theme> news'. Surfaces the resolved query for "
+            "transparency. Qualitative only — contains no probabilities."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {"type": "string", "description": "Theme/sector phrase, e.g. 'robotics'."},
+                "days": {"type": "integer", "default": 14},
+            },
+            "required": ["topic"],
         },
     },
     {
@@ -449,6 +632,239 @@ class ToolExecutor:
         # agent can't say "99% VaR" without a false-positive grounding violation.
         # Add them explicitly so standard statistical labels are always grounded.
         result["var_confidence_levels_pct"] = [90, 95, 99]
+        return result
+
+    # ---- multi-ticker comparison (Enhancement B) -----------------------------
+    @staticmethod
+    def _large_move_from_forecast(forecast: ScenarioForecast) -> tuple[float | None, int | None]:
+        """P(|r|>k) at the horizon's inner positive bucket edge (None if no buckets).
+
+        Reuses the same bucket-boundary logic as ``get_large_move`` so the batch
+        magnitude number is consistent with the single-ticker tool.
+        """
+        valid_pcts = sorted(
+            {round(b.lower * 100) for b in forecast.buckets if b.lower is not None and b.lower > 0}
+        )
+        if not valid_pcts:
+            return None, None
+        thr_pct = valid_pcts[0]
+        breakdown = large_move_breakdown(forecast, threshold=thr_pct / 100.0)
+        return breakdown.prob_large_move, thr_pct
+
+    def _forecast_row(self, ticker: str, horizon: int, model: str) -> TickerForecastRow:
+        """One ticker's forecast row; a per-ticker failure becomes an ``error`` row."""
+        try:
+            forecast = run_forecast(
+                ticker, horizon, model_name=model, settings=self._settings, registry=self._registry
+            )
+        except (ProviderError, ValueError, KeyError) as exc:
+            return TickerForecastRow(ticker=ticker, error=f"{type(exc).__name__}: {exc}")
+        prob_lm, thr_pct = self._large_move_from_forecast(forecast)
+        return TickerForecastRow(
+            ticker=ticker,
+            horizon_days=forecast.horizon_days,
+            model_name=forecast.model_name,
+            expected_return=forecast.expected_return,
+            upside_prob=forecast.upside_prob,
+            downside_prob=forecast.downside_prob,
+            var_95=forecast.var_95,
+            ci_low=forecast.ci_low,
+            ci_high=forecast.ci_high,
+            prob_large_move=prob_lm,
+            large_move_threshold_pct=thr_pct,
+            notes=forecast.notes,
+        )
+
+    def _tool_compare_forecasts(self, args: dict[str, Any]) -> dict[str, Any]:
+        tickers, skipped = _parse_tickers(args)
+        if len(tickers) < 2:
+            return {
+                "error": "compare_forecasts needs at least 2 tickers; use run_forecast for one."
+            }
+        horizon = int(args.get("horizon_days", 20))
+        model = str(args.get("model", "ensemble"))
+        if model not in MODEL_NAMES:
+            return {"error": f"unknown model '{model}'; choose from {list(MODEL_NAMES)}"}
+
+        def _build() -> list[TickerForecastRow]:
+            return [self._forecast_row(t, horizon, model) for t in tickers]
+
+        try:
+            rows = _run_with_timeout(_build, _COMPARE_TIMEOUT_S)
+        except TimeoutError:
+            return {
+                "error": (
+                    f"comparison exceeded {int(_COMPARE_TIMEOUT_S)}s; "
+                    "try fewer tickers or a shorter horizon."
+                )
+            }
+        comparison = ForecastComparison(
+            horizon_days=horizon, model=model, rows=rows, skipped=skipped
+        )
+        return comparison.model_dump(mode="json")
+
+    # ---- conditional event study (news -> price bridge, #7) ------------------
+    def _tool_conditional_outlook(self, args: dict[str, Any]) -> dict[str, Any]:
+        target = str(args["target"]).upper()
+        driver = str(args["driver"]).upper()
+        shock_pct = int(args.get("shock_pct", 5))
+        event_window = int(args.get("event_window_days", 5))
+        horizon = int(args.get("horizon_days", 10))
+        direction = str(args.get("direction", "both"))
+        if direction not in ("both", "up", "down"):
+            return {"error": "direction must be 'both', 'up', or 'down'"}
+        if not (1 <= shock_pct <= 50):
+            return {"error": "shock_pct must be 1–50 (percent)"}
+        if not (1 <= event_window <= 60):
+            return {"error": "event_window_days must be 1–60"}
+        if not (1 <= horizon <= 60):
+            return {"error": "horizon_days must be 1–60"}
+        from stock_agent.pipelines.conditional import run_conditional_study
+
+        study = run_conditional_study(
+            target,
+            driver,
+            shock_pct=shock_pct / 100.0,
+            event_window_days=event_window,
+            horizon_days=horizon,
+            direction=direction,  # type: ignore[arg-type]
+            settings=self._settings,
+            registry=self._registry,
+        )
+        return study.model_dump(mode="json")
+
+    def _news_row(self, ticker: str, days: int) -> TickerNewsRow:
+        """One ticker's news/sentiment row; empty/failed fetch becomes an ``error`` row."""
+        try:
+            # Newest-first (like get_news): the comparison prioritizes the latest headlines.
+            bundle = NewsFetcher(self._registry).fetch(
+                ticker, lookback_days=days, top_n=25, order="recency"
+            )
+        except (ProviderError, ValueError, KeyError) as exc:
+            return TickerNewsRow(ticker=ticker, error=f"{type(exc).__name__}: {exc}")
+        if not bundle.articles:
+            return TickerNewsRow(ticker=ticker, error="no news found in the window")
+        # Numeric sentiment from Alpha Vantage scores (no LLM — keeps the batch cheap).
+        feats = build_news_features(bundle, llm=None, use_llm_sentiment=False)
+        headlines = [
+            HeadlineRef(
+                title=a.title,
+                source=a.source,
+                published=a.published_at.date(),
+                url=str(a.url),
+            )
+            for a in bundle.articles[:5]  # newest-first; cap for a compact comparison
+        ]
+        return TickerNewsRow(
+            ticker=ticker,
+            article_count=int(feats["article_count"]),
+            avg_sentiment=feats["avg_sentiment"],
+            pct_positive=feats["pct_positive"],
+            pct_negative=feats["pct_negative"],
+            sentiment_source="alpha_vantage",
+            top_headlines=headlines,
+        )
+
+    def _tool_compare_news(self, args: dict[str, Any]) -> dict[str, Any]:
+        tickers, skipped = _parse_tickers(args)
+        if len(tickers) < 2:
+            return {"error": "compare_news needs at least 2 tickers; use get_news for one."}
+        days = int(args.get("days", 14))
+
+        def _build() -> list[TickerNewsRow]:
+            return [self._news_row(t, days) for t in tickers]
+
+        try:
+            rows = _run_with_timeout(_build, _COMPARE_TIMEOUT_S)
+        except TimeoutError:
+            return {
+                "error": (
+                    f"comparison exceeded {int(_COMPARE_TIMEOUT_S)}s; try fewer tickers."
+                )
+            }
+        return NewsComparison(days=days, rows=rows, skipped=skipped).model_dump(mode="json")
+
+    # ---- topic / theme news (Enhancement C) ----------------------------------
+    @staticmethod
+    def _topic_meta(resolved: ResolvedTopic) -> dict[str, Any]:
+        """Transparency block: what the theme phrase actually resolved to."""
+        return {
+            "topic": resolved.label,
+            "known_topic": resolved.known,
+            "keywords": list(resolved.keywords),
+            "resolved_query": gdelt_query_expression(resolved),
+        }
+
+    @staticmethod
+    def _topic_sentiment(articles: list[Any]) -> dict[str, Any] | None:
+        """Average article tone over the articles that carry a score (None if none do).
+
+        GDELT DOC ArtList supplies no per-article tone, so this is typically None —
+        reported honestly rather than fabricated. Numbers come from the data only.
+        """
+        scored = [a.sentiment for a in articles if a.sentiment is not None]
+        if not scored:
+            return None
+        return {
+            "avg_tone": sum(scored) / len(scored),
+            "tone_coverage": len(scored) / len(articles),
+            "n_scored": len(scored),
+        }
+
+    def _tool_get_topic_news(self, args: dict[str, Any]) -> dict[str, Any]:
+        topic = str(args["topic"])
+        days = int(args.get("days", 14))
+        resolved, bundle = TopicNewsFetcher(self._registry).fetch(
+            topic,
+            lookback_days=days,
+            top_n=10,
+            llm=self._llm,
+            expand=self._settings.news_topic_expansion,
+        )
+        result = self._topic_meta(resolved)
+        result["days"] = days
+        result["articles"] = [
+            {
+                "title": a.title,
+                "source": a.source,
+                "published": a.published_at.date().isoformat(),
+                "url": str(a.url),
+            }
+            for a in bundle.articles
+        ]
+        return result
+
+    def _tool_analyze_topic_news(self, args: dict[str, Any]) -> dict[str, Any]:
+        if self._llm is None:
+            return {"error": "topic-news analysis unavailable (no LLM configured)"}
+        topic = str(args["topic"])
+        days = int(args.get("days", 14))
+        resolved, bundle = TopicNewsFetcher(self._registry).fetch(
+            topic,
+            lookback_days=days,
+            top_n=25,
+            llm=self._llm,
+            expand=self._settings.news_topic_expansion,
+        )
+        result = self._topic_meta(resolved)
+        result["days"] = days
+        result["article_count"] = len(bundle.articles)
+        if not bundle.articles:
+            result["error"] = "no news found for this theme in the window"
+            return result
+        summary = summarize_news(
+            bundle, self._llm, reflection_iterations=self._settings.news_reflection_iterations
+        )
+        result.update(summary.model_dump(mode="json"))
+        # Topic sentiment, in preference order, all DATA-derived (never the LLM):
+        #   1. GDELT ToneChart aggregate tone for the resolved keywords,
+        #   2. mean per-article tone if the source carried any, else None.
+        end = Date.today()
+        start = end - timedelta(days=days)
+        tone = self._registry.get_topic_tone(resolved.keywords, start, end)
+        result["topic_sentiment"] = (
+            tone if tone is not None else self._topic_sentiment(bundle.articles)
+        )
         return result
 
     def _tool_get_large_move(self, args: dict[str, Any]) -> dict[str, Any]:

@@ -78,6 +78,14 @@ class Settings(BaseSettings):
     provider_price_priority: str = "yfinance,alpha_vantage"
     provider_news_priority: str = "finnhub,marketaux,alpha_vantage"
     provider_earnings_priority: str = "yfinance"  # earnings dates (keyless, unlimited)
+    # Theme/keyword news (Enhancement C). GDELT DOC is keyless and theme-aware so it
+    # leads; Marketaux 'search' is the secondary (needs a key, skipped if absent) so
+    # the chain fails over when GDELT is unavailable.
+    provider_topic_priority: str = "gdelt_doc,marketaux"
+    # Expand a FREE-FORM topic phrase into OR-able search keywords via the LLM
+    # (curated registry themes are left untouched). Improves recall on ad-hoc
+    # themes; best-effort, so it never blocks a search. Off => exact phrase only.
+    news_topic_expansion: bool = True
 
     # ---- Provider behavior ----
     cache_dir: Path = Path(".cache")
@@ -132,6 +140,11 @@ class Settings(BaseSettings):
     def news_priority(self) -> list[str]:
         """Ordered news-provider fallback chain (highest priority first)."""
         return _split_csv(self.provider_news_priority)
+
+    @property
+    def topic_priority(self) -> list[str]:
+        """Ordered topic-news provider fallback chain (highest priority first)."""
+        return _split_csv(self.provider_topic_priority)
 
     def require(self, attr: str, *, capability: str) -> str:
         """Return a required secret/value or raise a clear, actionable error.

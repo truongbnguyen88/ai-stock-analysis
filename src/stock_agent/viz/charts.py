@@ -214,6 +214,107 @@ def _backtest_chart(r: dict[str, Any]) -> ChartSpec | None:
     )
 
 
+# ---- multi-ticker comparisons (Enhancement B) ---------------------------------
+def _compare_forecasts_chart(r: dict[str, Any]) -> ChartSpec | None:
+    """Grouped bars across tickers: P(up) and P(big move) per name (errored rows skipped)."""
+    if not _ok(r):
+        return None
+    rows: list[dict[str, Any]] = []
+    for row in r.get("rows") or []:
+        if row.get("error"):
+            continue
+        ticker = row.get("ticker")
+        up, big = row.get("upside_prob"), row.get("prob_large_move")
+        if up is not None:
+            rows.append({"ticker": ticker, "metric": "P(up)", "probability": up})
+        if big is not None:
+            rows.append({"ticker": ticker, "metric": "P(big move)", "probability": big})
+    if not rows:
+        return None
+    horizon = r.get("horizon_days")
+    htxt = f", {horizon}-day" if horizon is not None else ""
+    return ChartSpec(
+        title=f"Forecast comparison ({r.get('model', 'model')}{htxt})",
+        kind="grouped_bar",
+        data=pd.DataFrame(rows),
+        x="ticker",
+        y="probability",
+        color="metric",
+        x_sort=tuple(dict.fromkeys(row["ticker"] for row in rows)),
+        y_is_percent=True,
+        caption="P(up) and P(|return|>k) per ticker — from the model, not the assistant.",
+    )
+
+
+def _compare_news_chart(r: dict[str, Any]) -> ChartSpec | None:
+    """Grouped bars across tickers: positive vs negative article share per name."""
+    if not _ok(r):
+        return None
+    rows: list[dict[str, Any]] = []
+    for row in r.get("rows") or []:
+        if row.get("error"):
+            continue
+        ticker = row.get("ticker")
+        pos, neg = row.get("pct_positive"), row.get("pct_negative")
+        if pos is None or neg is None:
+            continue
+        rows.append({"ticker": ticker, "sentiment": "Positive", "share": pos})
+        rows.append({"ticker": ticker, "sentiment": "Negative", "share": neg})
+    if not rows:
+        return None
+    days = r.get("days")
+    dtxt = f", last {days}d" if days is not None else ""
+    return ChartSpec(
+        title=f"News sentiment comparison{dtxt}",
+        kind="grouped_bar",
+        data=pd.DataFrame(rows),
+        x="ticker",
+        y="share",
+        color="sentiment",
+        x_sort=tuple(dict.fromkeys(row["ticker"] for row in rows)),
+        y_is_percent=True,
+        caption="Positive vs negative article share per ticker (from sentiment scores).",
+    )
+
+
+def _conditional_chart(r: dict[str, Any]) -> ChartSpec | None:
+    """Mean forward return after a driver shock vs the unconditional baseline (#7)."""
+    if not _ok(r):
+        return None
+    base = r.get("baseline")
+    cond = r.get("conditional")
+    if not base:
+        return None
+    rows: list[dict[str, Any]] = []
+    if cond:
+        rows.append({"scenario": "After driver shock", "mean_return": cond["mean"]})
+    rows.append({"scenario": "Baseline (all days)", "mean_return": base["mean"]})
+    target, driver = r.get("target", "?"), r.get("driver", "?")
+    htxt = f", {r['horizon_days']}-day" if r.get("horizon_days") is not None else ""
+    return ChartSpec(
+        title=f"{target} forward return after {driver} shocks vs baseline{htxt}",
+        kind="bar",
+        data=pd.DataFrame(rows),
+        x="scenario",
+        y="mean_return",
+        x_sort=tuple(row["scenario"] for row in rows),
+        y_is_percent=True,
+        caption="Conditional vs baseline mean forward return (descriptive, not a forecast).",
+    )
+
+
+def _topic_news_chart(r: dict[str, Any]) -> ChartSpec | None:
+    """Theme news insight counts, mirroring the per-ticker summary chart.
+
+    Topic synthesis (analyze_topic_news) carries the same bullish/bearish/risks/
+    catalysts structure as a ticker summary, so reuse that builder. Headlines and
+    the (usually source-absent) topic tone line render as text, not a chart.
+    """
+    if not _ok(r):
+        return None
+    return _news_insights_chart(r)
+
+
 # Single-result builders (run_forecast is special-cased to group across models).
 _SINGLE: dict[str, Any] = {
     "get_large_move": _large_move_chart,
@@ -221,6 +322,10 @@ _SINGLE: dict[str, Any] = {
     "summarize_news": _news_insights_chart,
     "get_calibration": _calibration_chart,
     "run_backtest": _backtest_chart,
+    "compare_forecasts": _compare_forecasts_chart,
+    "compare_news": _compare_news_chart,
+    "analyze_topic_news": _topic_news_chart,
+    "conditional_outlook": _conditional_chart,
 }
 
 
