@@ -1,0 +1,35 @@
+name: CI
+
+# Quality gate: lint + typecheck + test on every push to main and every PR.
+# Mirrors the local `make check` so a change can't merge red. Keyless — the test
+# suite mocks all network + LLM calls (FakeProvider / canned responses), so no
+# secrets are required.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel an in-flight run when a new commit is pushed to the same ref (saves CI
+# minutes on rapid PR iterations); never cancels main.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # matches the retrain workflow + local dev env
+          cache: pip
+
+      - name: Install package + dev tooling
+        run: pip install -e ".[dev]"
+
+      - name: Lint + typecheck + test (make check)
+        run: make check
