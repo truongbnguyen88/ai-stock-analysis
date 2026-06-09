@@ -23,6 +23,8 @@ htmlcov/
 # Project runtime artifacts
 .cache/
 outputs/
+# RAG: raw SEC filings, parsed text, and the local vector store (large/binary)
+data/
 
 # OS / editor
 .DS_Store
