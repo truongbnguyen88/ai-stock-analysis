@@ -133,13 +133,13 @@ class ProviderRegistry:
 
     # ---- topic news: failover -------------------------------------------------
     def get_topic_news(
-        self, query: str, start: Date, end: Date, *, top_n: int = 25
+        self, keywords: Sequence[str], start: Date, end: Date, *, top_n: int = 25
     ) -> NewsBundle:
         """Return theme/keyword news from the first topic provider that succeeds.
 
-        Failover (not merge): the topic providers are heterogeneous (GDELT DOC,
-        later Marketaux search), so we take the first usable source's results
-        rather than blending two different query semantics.
+        Failover (not merge): topic providers are heterogeneous (GDELT DOC,
+        Marketaux search) and each builds its own native query from ``keywords``,
+        so we take the first usable source rather than blending query semantics.
         """
         chain = self._chain(self._settings.topic_priority, TopicNewsProvider)  # type: ignore[type-abstract]
         if not chain:
@@ -147,22 +147,47 @@ class ProviderRegistry:
         last_error: ProviderError | None = None
         for provider in chain:
             try:
-                bundle = provider.get_topic_news(query, start, end, top_n=top_n)
+                bundle = provider.get_topic_news(keywords, start, end, top_n=top_n)
                 log.info(
-                    "provider.topic_news_ok", provider=provider.name, n=len(bundle), query=query
+                    "provider.topic_news_ok",
+                    provider=provider.name,
+                    n=len(bundle),
+                    keywords=list(keywords),
                 )
                 return bundle
             except ProviderError as exc:
                 log.warning(
                     "provider.topic_news_failed",
                     provider=provider.name,
-                    query=query,
+                    keywords=list(keywords),
                     error=str(exc),
                 )
                 last_error = exc
                 continue
         assert last_error is not None
         raise last_error
+
+    def get_topic_tone(
+        self, keywords: Sequence[str], start: Date, end: Date
+    ) -> dict[str, object] | None:
+        """Aggregate topic sentiment from the first topic provider that supports it.
+
+        ``get_topic_tone`` is an OPTIONAL capability (only GDELT exposes it today),
+        so we probe via ``getattr`` rather than the Protocol. Returns ``None`` when
+        no provider supports it or all fail — tone is best-effort context, never fatal.
+        """
+        chain = self._chain(self._settings.topic_priority, TopicNewsProvider)  # type: ignore[type-abstract]
+        for provider in chain:
+            fn = getattr(provider, "get_topic_tone", None)
+            if not callable(fn):
+                continue
+            try:
+                tone: dict[str, object] | None = fn(keywords, start, end)
+                return tone
+            except ProviderError as exc:
+                log.warning("provider.topic_tone_failed", provider=provider.name, error=str(exc))
+                continue
+        return None
 
     # ---- earnings: failover ---------------------------------------------------
     def get_earnings_dates(self, ticker: str) -> list[Date]:

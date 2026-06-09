@@ -14,6 +14,7 @@ from stock_agent.providers.gdelt_doc import (
     GdeltDocProvider,
     _articles_from_payload,
     _parse_seendate,
+    _tone_from_payload,
 )
 from stock_agent.settings import Settings
 
@@ -89,14 +90,50 @@ def test_fetch_via_mock_transport(tmp_path: Path) -> None:
 
     provider = _provider(tmp_path, handler)
     bundle = provider.get_topic_news(
-        "(robotics OR \"humanoid robot\")", date(2026, 5, 25), date(2026, 6, 1), top_n=25
+        ["robotics", "humanoid robot"], date(2026, 5, 25), date(2026, 6, 1), top_n=25
     )
     assert len(bundle) == 2
     assert seen["params"]["mode"] == "ArtList"
     assert seen["params"]["sort"] == "DateDesc"
     assert seen["params"]["startdatetime"] == "20260525000000"
+    # Provider builds its OWN native query from the keywords (phrases quoted, OR-joined).
+    assert seen["params"]["query"] == '(robotics OR "humanoid robot")'
 
 
 def test_keyless_provider_is_available(tmp_path: Path) -> None:
     provider = GdeltDocProvider(Settings(_env_file=None), DiskCache(tmp_path, 100))
     assert provider.available() is True
+
+
+# ---- topic tone (ToneChart, #3) ----------------------------------------------
+_TONE_PAYLOAD = {
+    "tonechart": [{"bin": -10, "count": 2}, {"bin": 0, "count": 6}, {"bin": 5, "count": 2}]
+}
+
+
+def test_tone_from_payload_weighted_mean() -> None:
+    tone = _tone_from_payload(_TONE_PAYLOAD)
+    assert tone is not None
+    assert tone["avg_tone"] == -1.0  # (-10*2 + 0*6 + 5*2) / 10
+    assert tone["n_articles"] == 10
+    assert tone["label"] == "roughly neutral"
+
+
+def test_tone_from_payload_empty_is_none() -> None:
+    assert _tone_from_payload({"tonechart": []}) is None
+    assert _tone_from_payload({"nope": 1}) is None
+
+
+def test_get_topic_tone_via_mock_transport(tmp_path: Path) -> None:
+    seen: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["mode"] = req.url.params.get("mode")
+        return httpx.Response(200, json={"tonechart": [{"bin": 4, "count": 5}]})
+
+    provider = _provider(tmp_path, handler)
+    tone = provider.get_topic_tone(["robotics"], date(2026, 5, 25), date(2026, 6, 1))
+    assert tone is not None
+    assert seen["mode"] == "ToneChart"
+    assert tone["avg_tone"] == 4.0
+    assert tone["label"] == "net positive"

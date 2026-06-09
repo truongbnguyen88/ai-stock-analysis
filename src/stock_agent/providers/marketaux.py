@@ -9,17 +9,27 @@ Response: {"data": [{title, description, snippet, url, source, published_at, ...
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date as Date
 from datetime import datetime
 from typing import Any
 
 from stock_agent.providers._cache import DiskCache, cached_model, make_key
 from stock_agent.providers._http import HttpJson
+from stock_agent.providers.base import ProviderUnavailable
 from stock_agent.schemas.news import Article, NewsBundle
 from stock_agent.settings import Settings
 
 _NAME = "marketaux"
 _URL = "https://api.marketaux.com/v1/news/all"
+
+
+def _build_search(keywords: Sequence[str]) -> str:
+    """Marketaux ``search`` expression: ``robotics | "humanoid robot"`` (OR via ``|``)."""
+    terms = [f'"{k}"' if " " in k else k for k in keywords if k.strip()]
+    if not terms:
+        raise ProviderUnavailable(_NAME, "empty keyword set")
+    return " | ".join(terms)
 
 
 def _parse_dt(value: str) -> datetime:
@@ -88,6 +98,35 @@ class MarketauxProvider:
         key = make_key(_NAME, "news", ticker.upper(), start, end)
         return cached_model(
             self._cache, key, NewsBundle, lambda: self._fetch(ticker, start, end),
+            ttl=self._settings.cache_ttl_news_seconds,
+        )
+
+    # ---- topic/theme news (Enhancement C — secondary topic provider) ---------
+    def _fetch_topic(self, search: str, start: Date, end: Date) -> NewsBundle:
+        token = self._settings.require("marketaux_api_key", capability="Marketaux topic news")
+        payload = self._http.get(
+            _URL,
+            params={
+                "search": search,
+                "published_after": start.isoformat(),
+                "published_before": end.isoformat(),
+                "language": "en",
+                "api_token": token,
+            },
+        )
+        if not isinstance(payload, dict):
+            return NewsBundle(ticker=search, articles=[])
+        # Reuse the company-news normalizer (same payload shape); subject = the search.
+        return _articles_from_payload(search, payload)
+
+    def get_topic_news(
+        self, keywords: Sequence[str], start: Date, end: Date, *, top_n: int = 25
+    ) -> NewsBundle:
+        """Return theme/keyword news via Marketaux ``search`` (failover for GDELT)."""
+        search = _build_search(keywords)
+        key = make_key(_NAME, "topic", search, start, end)
+        return cached_model(
+            self._cache, key, NewsBundle, lambda: self._fetch_topic(search, start, end),
             ttl=self._settings.cache_ttl_news_seconds,
         )
 

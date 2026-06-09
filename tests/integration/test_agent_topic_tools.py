@@ -8,6 +8,7 @@ any network.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 
 from stock_agent.agent.tools import ToolExecutor
@@ -19,16 +20,22 @@ from stock_agent.settings import Settings
 class FakeTopicProvider:
     name = "gdelt_doc"
 
-    def __init__(self, bundle: NewsBundle) -> None:
+    def __init__(self, bundle: NewsBundle, tone: dict[str, object] | None = None) -> None:
         self._bundle = bundle
+        self._tone = tone
 
     def available(self) -> bool:
         return True
 
     def get_topic_news(
-        self, query: str, start: date, end: date, *, top_n: int = 25
+        self, keywords: Sequence[str], start: date, end: date, *, top_n: int = 25
     ) -> NewsBundle:
         return self._bundle
+
+    def get_topic_tone(
+        self, keywords: Sequence[str], start: date, end: date
+    ) -> dict[str, object] | None:
+        return self._tone
 
 
 class FakeLLM:
@@ -72,8 +79,13 @@ def _summary_payload() -> str:
     )
 
 
-def _executor(*, llm: FakeLLM | None = None, bundle: NewsBundle | None = None) -> ToolExecutor:
-    provider = FakeTopicProvider(bundle if bundle is not None else _bundle())
+def _executor(
+    *,
+    llm: FakeLLM | None = None,
+    bundle: NewsBundle | None = None,
+    tone: dict[str, object] | None = None,
+) -> ToolExecutor:
+    provider = FakeTopicProvider(bundle if bundle is not None else _bundle(), tone=tone)
     registry = ProviderRegistry(
         [provider], Settings(_env_file=None, provider_topic_priority="gdelt_doc")
     )
@@ -105,9 +117,16 @@ def test_analyze_topic_news_synthesizes_and_reports_transparency() -> None:
     assert r["overview"].startswith("Robotics startups")
     assert r["resolved_query"].startswith("(")
     assert r["article_count"] == 2
-    # No per-article tone from this source -> sentiment honestly reported as None.
+    # No tone provided here -> sentiment honestly reported as None (not fabricated).
     assert r["topic_sentiment"] is None
     assert r["bullish"][0]["sources"] == [f"{_ARTICLE_URL}/0"]  # citation preserved
+
+
+def test_analyze_topic_news_reports_gdelt_tone_when_available() -> None:
+    tone = {"avg_tone": -3.2, "n_articles": 40, "label": "net negative"}
+    llm = FakeLLM(_summary_payload())
+    r = _executor(llm=llm, tone=tone).execute("analyze_topic_news", {"topic": "robotics"})
+    assert r["topic_sentiment"] == tone  # real GDELT ToneChart number surfaced
 
 
 def test_analyze_topic_news_without_llm_errors() -> None:

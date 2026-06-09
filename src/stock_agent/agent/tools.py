@@ -14,6 +14,7 @@ from __future__ import annotations
 import concurrent.futures
 from collections.abc import Callable
 from datetime import date as Date
+from datetime import timedelta
 from typing import Any
 
 from stock_agent.backtesting.calibration import calibration_label
@@ -738,7 +739,11 @@ class ToolExecutor:
         topic = str(args["topic"])
         days = int(args.get("days", 14))
         resolved, bundle = TopicNewsFetcher(self._registry).fetch(
-            topic, lookback_days=days, top_n=10
+            topic,
+            lookback_days=days,
+            top_n=10,
+            llm=self._llm,
+            expand=self._settings.news_topic_expansion,
         )
         result = self._topic_meta(resolved)
         result["days"] = days
@@ -759,7 +764,11 @@ class ToolExecutor:
         topic = str(args["topic"])
         days = int(args.get("days", 14))
         resolved, bundle = TopicNewsFetcher(self._registry).fetch(
-            topic, lookback_days=days, top_n=25
+            topic,
+            lookback_days=days,
+            top_n=25,
+            llm=self._llm,
+            expand=self._settings.news_topic_expansion,
         )
         result = self._topic_meta(resolved)
         result["days"] = days
@@ -771,8 +780,15 @@ class ToolExecutor:
             bundle, self._llm, reflection_iterations=self._settings.news_reflection_iterations
         )
         result.update(summary.model_dump(mode="json"))
-        # Topic sentiment from article tone when available (else None — never fabricated).
-        result["topic_sentiment"] = self._topic_sentiment(bundle.articles)
+        # Topic sentiment, in preference order, all DATA-derived (never the LLM):
+        #   1. GDELT ToneChart aggregate tone for the resolved keywords,
+        #   2. mean per-article tone if the source carried any, else None.
+        end = Date.today()
+        start = end - timedelta(days=days)
+        tone = self._registry.get_topic_tone(resolved.keywords, start, end)
+        result["topic_sentiment"] = (
+            tone if tone is not None else self._topic_sentiment(bundle.articles)
+        )
         return result
 
     def _tool_get_large_move(self, args: dict[str, Any]) -> dict[str, Any]:

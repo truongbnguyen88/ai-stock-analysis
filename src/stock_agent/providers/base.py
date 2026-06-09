@@ -11,6 +11,7 @@ registry catches them to drive fallback; callers get a predictable surface.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date as Date
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
@@ -98,15 +99,16 @@ class NewsProvider(Provider, Protocol):
 class TopicNewsProvider(Provider, Protocol):
     """Supplies theme/keyword-scoped news (not ticker-scoped) — Enhancement C.
 
-    ``query`` is a search expression (keywords/phrases), e.g. built by
-    ``news.topics.gdelt_query_expression`` — distinct from the symbol-scoped
+    Takes the resolved ``keywords`` (phrases) and builds its OWN native query
+    syntax internally, so heterogeneous providers (GDELT ``OR`` vs Marketaux
+    ``|``) can share the chain. Distinct from the symbol-scoped
     ``NewsProvider.get_company_news``.
     """
 
     def get_topic_news(
-        self, query: str, start: Date, end: Date, *, top_n: int = 25
+        self, keywords: Sequence[str], start: Date, end: Date, *, top_n: int = 25
     ) -> NewsBundle:
-        """Return newest-first articles matching ``query`` within [start, end]."""
+        """Return newest-first articles matching any of ``keywords`` within [start, end]."""
         ...
 
 

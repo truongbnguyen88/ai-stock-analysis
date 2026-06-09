@@ -17,6 +17,8 @@ supplies it) — never inferred here, per the numbers-vs-narrative invariant.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from datetime import date as Date
 from typing import Any
@@ -29,6 +31,19 @@ from stock_agent.schemas.news import Article, NewsBundle
 _NAME = "gdelt_doc"
 _URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _MAX_RECORDS_CAP = 250  # GDELT DOC hard limit
+
+
+def _build_query(keywords: Sequence[str]) -> str:
+    """GDELT DOC query: ``(kw1 OR "kw two")`` — phrases quoted, OR-joined.
+
+    Self-contained (no import from ``news.topics``) so the provider layer stays
+    below the news layer per the dependency direction.
+    """
+    terms = [f'"{k}"' if " " in k else k for k in keywords if k.strip()]
+    if not terms:
+        raise ProviderUnavailable(_NAME, "empty keyword set")
+    expr = " OR ".join(terms)
+    return f"({expr})" if len(terms) > 1 else expr
 
 
 def _parse_seendate(value: str) -> datetime | None:
@@ -78,6 +93,43 @@ def _articles_from_payload(
     return out
 
 
+def _tone_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Aggregate topic sentiment from a GDELT ``ToneChart`` histogram. Pure function.
+
+    ToneChart returns ``{"tonechart": [{"bin": <tone>, "count": <n>}, ...]}``; we
+    return the article-count-weighted mean tone (GDELT's ~[-100, +100] scale, where
+    <0 is negative coverage). ``None`` if the histogram is empty/malformed. This is
+    a DATA-derived number (not LLM), satisfying the numbers-vs-narrative invariant.
+    """
+    chart = payload.get("tonechart")
+    if not isinstance(chart, list):
+        return None
+    total = 0.0
+    weighted = 0.0
+    for entry in chart:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            tone = float(entry["bin"])
+            count = float(entry.get("count", 0))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if count <= 0:
+            continue
+        total += count
+        weighted += tone * count
+    if total <= 0:
+        return None
+    avg = weighted / total
+    label = "net positive" if avg > 1 else "net negative" if avg < -1 else "roughly neutral"
+    return {
+        "avg_tone": round(avg, 3),
+        "n_articles": int(total),
+        "label": label,
+        "scale": "GDELT article tone (~ -100..+100; <0 = negative coverage, >0 = positive)",
+    }
+
+
 class GdeltDocProvider:
     """``TopicNewsProvider`` backed by the GDELT DOC 2.0 API (keyless)."""
 
@@ -120,9 +172,10 @@ class GdeltDocProvider:
         return NewsBundle(ticker=query, articles=articles)
 
     def get_topic_news(
-        self, query: str, start: Date, end: Date, *, top_n: int = 25
+        self, keywords: Sequence[str], start: Date, end: Date, *, top_n: int = 25
     ) -> NewsBundle:
-        """Return newest-first topic articles for ``query`` within [start, end]."""
+        """Return newest-first topic articles for ``keywords`` within [start, end]."""
+        query = _build_query(keywords)
         key = make_key(_NAME, "topic", query, start, end, top_n, self._language)
         return cached_model(
             self._cache,
@@ -131,6 +184,39 @@ class GdeltDocProvider:
             lambda: self._fetch(query, start, end, top_n),
             ttl=self._settings.cache_ttl_news_seconds,
         )
+
+    def _fetch_tone(self, query: str, start: Date, end: Date) -> dict[str, Any] | None:
+        payload = self._http.get(
+            _URL,
+            params={
+                "query": query,
+                "mode": "ToneChart",
+                "format": "json",
+                "startdatetime": f"{start.strftime('%Y%m%d')}000000",
+                "enddatetime": f"{end.strftime('%Y%m%d')}235959",
+            },
+        )
+        if not isinstance(payload, dict):
+            return None
+        return _tone_from_payload(payload)
+
+    def get_topic_tone(
+        self, keywords: Sequence[str], start: Date, end: Date
+    ) -> dict[str, Any] | None:
+        """Aggregate topic sentiment (weighted mean article tone) for ``keywords``.
+
+        Optional capability beyond ``TopicNewsProvider`` — the registry calls it
+        only when present. Cached under the short news TTL (caches misses as well).
+        """
+        query = _build_query(keywords)
+        key = make_key(_NAME, "tone", query, start, end)
+        raw = self._cache.get(key, ttl_override=self._settings.cache_ttl_news_seconds)
+        if raw is not None:
+            cached: dict[str, Any] | None = json.loads(raw)
+            return cached
+        tone = self._fetch_tone(query, start, end)
+        self._cache.set(key, json.dumps(tone))  # cache the miss too (null)
+        return tone
 
     def close(self) -> None:
         self._http.close()
