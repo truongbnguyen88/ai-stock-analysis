@@ -5,7 +5,7 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 ## Orientation (read before non-trivial work)
 - Architecture, layers, module responsibilities, agent design → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Scope tiers + ordered build plan → [docs/ROADMAP.md](docs/ROADMAP.md)
-- RAG layer (SEC-grounded research assistant): plan → [docs/RAG_IMPLEMENTATION_PLAN.md](docs/RAG_IMPLEMENTATION_PLAN.md); ordered build steps + locked decisions → [docs/RAG_TODO.md](docs/RAG_TODO.md)
+- RAG layer (SEC-grounded research assistant): plan → [docs/RAG_IMPLEMENTATION_PLAN.md](docs/RAG_IMPLEMENTATION_PLAN.md); ordered build steps + locked decisions → [docs/RAG_TODO.md](docs/RAG_TODO.md); concepts/theory → [docs/rag_concepts.md](docs/rag_concepts.md); per-phase build journal → [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md)
 - Always know which **roadmap step** you are on; if unclear, ask before coding.
 
 ## Non-negotiable invariants
@@ -31,6 +31,7 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 4. Run `make check` (lint + typecheck + test) before declaring done.
 5. Do not start the next step until the current one is green.
 - Respect phase gates: never wrap a pipeline in an `agent/` tool before that pipeline exists (agent phases 4.5 / 6.5 come after their dependencies).
+- **RAG phases:** when a RAG_TODO phase (P-N) lands green, in the same change (a) mark it `[x]` in [docs/RAG_TODO.md](docs/RAG_TODO.md), and (b) **append a section to [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md)** explaining that phase's mechanism (role, key files, how it works step-by-step, how the next phase uses it, key decisions). The notes doc is the learning archive — keep it complete and current.
 
 ## Code style (project-specific)
 - **Comment for the next maintainer, not the parser.** Explain *why* and any non-obvious math/finance assumption (e.g. annualization factor, RSI smoothing choice, embargo length, bootstrap block size). Skip comments that merely restate the code.
