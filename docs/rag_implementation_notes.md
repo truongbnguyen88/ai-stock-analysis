@@ -5,7 +5,7 @@
 > each phase lands. Companion to [RAG_TODO.md](RAG_TODO.md) (the ordered checklist)
 > and [rag_concepts.md](rag_concepts.md) (the theory). Updated as P3→P8 ship.
 >
-> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6 ✅ · P7–P8 pending.
+> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6 ✅ · P7 ✅ · P8 pending.
 
 ---
 
@@ -399,6 +399,44 @@ to a 384-d unit vector retrieved the correct MD&A/Risk-Factor chunks, and the st
 score matched a hand-computed `q·d` to 6 decimals — confirming `embed → ANN(cosine) →
 1 − distance` is exactly cosine similarity through the real Chroma store.
 
-## P7–P8 — pending
+## P7 — Grounded question answering
 
-Appended as each lands: **P7** grounded QA · **P8** research memo.
+**Role.** The first (and only) paid LLM call in the RAG read path: one call turns a question +
+the retrieved `EvidenceSet` (P6) into a **cited** `GroundedAnswer`. This is where the
+numbers-vs-narrative + non-hallucination invariants are enforced — the model may *summarize and
+cite* the filings, never invent facts, figures, or sources.
+
+**Key files.** `research/synthesis.py` (the call + guards), `research/prompts.py` (versioned
+`research.v1`), `schemas/research.py` (`GroundedAnswer`, `SourceCitation`); CLI `rag query
+--answer`; tests `tests/unit/test_research_synthesis.py`.
+
+**How it works (step by step).**
+1. **Empty short-circuit.** `evidence.is_empty` → return "Insufficient evidence found."
+   (`insufficient_evidence=True`) with **no LLM call** — honest refusal + don't pay to answer
+   from nothing.
+2. **Seed the number-grounding set** from the source chunk texts (`NumberGrounding.add_from`),
+   so the only figures the answer may state are ones written in the filings.
+3. **One LLM call.** `build_user` numbers the evidence `[1..N]` (each = citation label + chunk
+   text); the prompt requires answering ONLY from those sources, citing inline `[n]`, inventing
+   no numbers, and setting `insufficient_evidence` if the sources don't cover the question. The
+   model returns a JSON object (`answer`, `citations`, `insufficient_evidence`), parsed leniently.
+4. **Citation guard.** Collect every cited marker — inline `[n]` in the answer text *and* the
+   `citations` list — and reject any outside `[1..N]` (a fabricated source). This is the
+   "cited ⊆ retrieved" invariant.
+5. **Number guard.** `grounding.ungrounded(answer)` flags any percentage/decimal not traceable to
+   a source (bare integers like years/counts are intentionally ignored).
+6. **One retry, then raise.** If either guard fires, append a corrective note naming exactly what
+   was wrong and call once more; if it still fails, raise `ResearchGuardError` rather than emit an
+   ungrounded answer. On success, resolve each marker → `SourceCitation(marker, chunk_id, label)`.
+
+**Key decisions.** Prompt lives in `research/` (not `rag/prompts.py` as the TODO sketched) so
+`rag/` stays LLM-free per its invariant, and it sits beside the call it serves (mirrors
+`llm/prompts/synthesis.py` ↔ `llm/synthesizer.py`). Citations are **numbered markers** resolved
+back to real `chunk_id`s — the answer can only point at chunks that were actually retrieved, which
+is what makes every claim auditable. Reused `NumberGrounding` (built for the forecast synthesizer)
+rather than a second number checker. The whole path is tested with a canned `TextLLM` — CI makes
+no API call; the real call is exercised only via `rag query --answer`.
+
+## P8 — pending
+
+Appended when it lands: **P8** integrated research memo.

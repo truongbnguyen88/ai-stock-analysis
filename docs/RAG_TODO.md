@@ -158,12 +158,16 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       end-to-end ingest→retrieve, idempotent re-ingest. Validated on the real corpus (NVDA+AVGO →
       2062 chunks; query→cosine top-k verified `score == q·d` exactly).
 
-### P7 — Grounded question answering
-- [ ] `rag/prompts.py` (versioned) + `research/synthesis.py` (single call: question +
-      retrieved evidence → cited answer) + **citation guard** in the synthesis path
-      (cited sources ⊆ retrieved set; numbers grounded; "Insufficient evidence found."
-      on empty). CLI `rag query` gains `--answer`. Tests: canned-LLM schema conformance,
-      citation guard rejects fabricated source, empty-evidence message, no invented numbers.
+### P7 — Grounded question answering ✅
+- [x] `research/prompts.py` (versioned `research.v1`; placed in `research/` not `rag/` to keep
+      `rag/` LLM-free) + `research/synthesis.py` `answer_question(question, evidence, *, llm)` —
+      the single grounded call → `GroundedAnswer` (`schemas/research.py`). **Citation guard**:
+      every cited marker (inline `[n]` *and* the `citations` list) must be a retrieved source
+      `[1..N]`. **Number grounding** (reuses `NumberGrounding`): seeded from the source texts, no
+      invented figures. One corrective retry, then raise. Empty evidence → "Insufficient evidence
+      found." with **no LLM call**. CLI `rag query --answer`. Tests (canned `TextLLM`): citation
+      resolution, empty-no-call, fabricated-citation retry→raise & retry→recover, invented-number
+      retry→raise, grounded-number pass, LLM-signaled insufficiency, inline-marker out-of-range.
 
 ### P8 — Integrated research memo
 - [ ] `research/memo.py` + CLI `research --ticker` — gather technicals (`compute_snapshot`)
