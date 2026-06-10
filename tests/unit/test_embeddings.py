@@ -126,8 +126,8 @@ def test_voyage_embedder_uses_input_type_and_default_model() -> None:
     assert e.embed_query("query") == [0.5, 0.6]
     # Voyage's asymmetric input_type: "document" for passages, "query" for searches.
     assert client.calls == [
-        ("voyage-finance-2", "document", ["risk factors"]),
-        ("voyage-finance-2", "query", ["query"]),
+        ("voyage-4", "document", ["risk factors"]),
+        ("voyage-4", "query", ["query"]),
     ]
     assert e.dim == 1024  # known dim, no model load
 

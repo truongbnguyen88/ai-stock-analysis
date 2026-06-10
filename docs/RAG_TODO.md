@@ -126,7 +126,7 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
 ### P4 — Embeddings ✅
 - [x] `rag/embeddings.py` — `Embedder` Protocol (`name`, `dim`, `embed_documents`,
       `embed_query`); `FastEmbedEmbedder` (default, lazy onnxruntime/BGE) + `OpenAIEmbedder`
-      (opt-in) + `VoyageEmbedder` (opt-in, `voyage-finance-2`, finance-tuned + `input_type`
+      (opt-in) + `VoyageEmbedder` (opt-in, default `voyage-4` + `input_type`
       asymmetry) + `FakeEmbedder` (deterministic unit-vector test double, reused by P5/P6) +
       `build_embedder(settings)`. Deps as **extras** (`[rag]` fastembed, `[openai]`, `[voyage]`)
       — NOT core, so CI never installs them or downloads a model; `fastembed.*`/`openai.*`/

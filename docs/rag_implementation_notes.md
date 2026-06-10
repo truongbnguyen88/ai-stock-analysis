@@ -260,9 +260,10 @@ sit behind it:
 - **`OpenAIEmbedder`** (opt-in) — `text-embedding-3-small` (1536-d). Checks the API key
   *before* importing `openai` so a missing key gives the clear settings error; `dim` comes
   from a known-dims table (no model load).
-- **`VoyageEmbedder`** (opt-in) — `voyage-finance-2` (1024-d), Anthropic's recommended
-  provider, finance-tuned for SEC text. Uses Voyage's asymmetric `input_type` (`"document"`
-  for passages, `"query"` for searches); separate `VOYAGE_API_KEY`, independent billing.
+- **`VoyageEmbedder`** (opt-in) — default `voyage-4` (1024-d), Anthropic's recommended
+  provider (200M-token free pool); `voyage-finance-2` is the finance-tuned A/B alternative.
+  Uses Voyage's asymmetric `input_type` (`"document"` vs `"query"`); separate
+  `VOYAGE_API_KEY`, independent billing.
 - **`FakeEmbedder`** — deterministic, dependency-free: hashes text to a fixed-dim **unit
   vector** (so dot product = cosine). Same text → same vector. It lives in the module (not the
   tests) because P5/P6 reuse it as their embedder double, mirroring `providers/fake.py`.
