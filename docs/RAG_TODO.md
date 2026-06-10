@@ -161,6 +161,25 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       cited. Tests: section assembly, numbers-grounding + citation guards on the memo,
       single-LLM-call assertion, Markdown export.
 
+### P9 — Maturity / go-live (post-MVP)
+> Begins only **after P8 is green**. The MVP is built + tested on local `fastembed` (free,
+> unlimited) — these are the steps to take it to production scale + paid-quality embeddings
+> once the pipeline (esp. chunking) is settled. A growing list; sub-milestones added over time.
+- [ ] **9a — Switch embeddings to `voyage-4`.** Flip `embedding_provider` from `local` →
+      `voyage` (`pip install -e ".[voyage]"`, set `VOYAGE_API_KEY`) and do the **final, one-time
+      paid ingestion** of the settled corpus against the 200M-token free pool. Embed-once: don't
+      switch until chunking is locked, so the free pool isn't burned on re-embeds. (Optionally A/B
+      `voyage-4` vs `voyage-finance-2` first — see 9e.)
+- [ ] **9b — Bulk historical download.** Pull 2–3 yrs of 10-K/10-Q/8-K for the full universe
+      (deferred from P1; free, idempotent) once the download/metadata format is stable.
+- [ ] **9c — Quarterly refresh scheduling.** Cron/CI (reuse the retrain-workflow pattern) to
+      pull newly-filed documents + incrementally ingest them each quarter.
+- [ ] **9d — Embedding spend guard.** `rag_max_embed_tokens` setting: estimate tokens before
+      embedding and refuse/cap a run over the limit — a client-side hard ceiling independent of
+      the provider dashboard.
+- [ ] **9e — Retrieval-quality A/B.** Compare `fastembed` vs `voyage-4` vs `voyage-finance-2`
+      on a small labeled query set (recall@k / MRR) to lock the production embedder.
+
 ---
 
 ## Cost (full 141-ticker universe)
