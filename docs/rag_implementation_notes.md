@@ -260,12 +260,15 @@ sit behind it:
 - **`OpenAIEmbedder`** (opt-in) — `text-embedding-3-small` (1536-d). Checks the API key
   *before* importing `openai` so a missing key gives the clear settings error; `dim` comes
   from a known-dims table (no model load).
+- **`VoyageEmbedder`** (opt-in) — `voyage-finance-2` (1024-d), Anthropic's recommended
+  provider, finance-tuned for SEC text. Uses Voyage's asymmetric `input_type` (`"document"`
+  for passages, `"query"` for searches); separate `VOYAGE_API_KEY`, independent billing.
 - **`FakeEmbedder`** — deterministic, dependency-free: hashes text to a fixed-dim **unit
   vector** (so dot product = cosine). Same text → same vector. It lives in the module (not the
   tests) because P5/P6 reuse it as their embedder double, mirroring `providers/fake.py`.
 
-`build_embedder(settings)` selects local vs OpenAI by `settings.embedding_provider` — and
-because both backends are lazy, the selector neither loads a model nor builds a client.
+`build_embedder(settings)` selects local / OpenAI / Voyage by `settings.embedding_provider` —
+and because every backend is lazy, the selector neither loads a model nor builds a client.
 
 **Cost/CI discipline baked in.** Documents are embedded **once at ingestion**; a search
 embeds only the one query string (§3.1). The heavy backends are **extras**, not core deps —

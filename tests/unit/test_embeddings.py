@@ -17,6 +17,7 @@ from stock_agent.rag.embeddings import (
     FakeEmbedder,
     FastEmbedEmbedder,
     OpenAIEmbedder,
+    VoyageEmbedder,
     build_embedder,
 )
 from stock_agent.settings import MissingSettingError, Settings
@@ -53,6 +54,12 @@ def test_build_embedder_openai() -> None:
     e = build_embedder(Settings(_env_file=None, embedding_provider="openai"))
     assert isinstance(e, OpenAIEmbedder)
     assert e.name == "openai"
+
+
+def test_build_embedder_voyage() -> None:
+    e = build_embedder(Settings(_env_file=None, embedding_provider="voyage"))
+    assert isinstance(e, VoyageEmbedder)
+    assert e.name == "voyage"
 
 
 # ---- OpenAIEmbedder via an injected fake client ------------------------------
@@ -93,6 +100,40 @@ def test_openai_embedder_with_fake_client() -> None:
 def test_openai_embedder_requires_key() -> None:
     # No injected client + no key -> the settings error fires before any import.
     e = OpenAIEmbedder(Settings(_env_file=None))
+    with pytest.raises(MissingSettingError):
+        e.embed_documents(["x"])
+
+
+# ---- VoyageEmbedder via an injected fake client ------------------------------
+class _FakeVoyageResult:
+    def __init__(self, embeddings: list[list[float]]) -> None:
+        self.embeddings = embeddings
+
+
+class _FakeVoyageClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, list[str]]] = []
+
+    def embed(self, texts: list[str], *, model: str, input_type: str) -> _FakeVoyageResult:
+        self.calls.append((model, input_type, list(texts)))
+        return _FakeVoyageResult([[0.5, 0.6] for _ in texts])
+
+
+def test_voyage_embedder_uses_input_type_and_default_model() -> None:
+    client = _FakeVoyageClient()
+    e = VoyageEmbedder(Settings(_env_file=None), client=client)
+    assert e.embed_documents(["risk factors"]) == [[0.5, 0.6]]
+    assert e.embed_query("query") == [0.5, 0.6]
+    # Voyage's asymmetric input_type: "document" for passages, "query" for searches.
+    assert client.calls == [
+        ("voyage-finance-2", "document", ["risk factors"]),
+        ("voyage-finance-2", "query", ["query"]),
+    ]
+    assert e.dim == 1024  # known dim, no model load
+
+
+def test_voyage_embedder_requires_key() -> None:
+    e = VoyageEmbedder(Settings(_env_file=None))
     with pytest.raises(MissingSettingError):
         e.embed_documents(["x"])
 

@@ -77,6 +77,11 @@ rag = [
 openai = [
     "openai>=1.0",
 ]
+# Optional Voyage AI embedding backend (Anthropic's recommended provider; voyage-finance-2
+# is finance-tuned). Off by default. Install with `pip install -e ".[voyage]"` and set VOYAGE_API_KEY.
+voyage = [
+    "voyageai>=0.2",
+]
 
 [project.scripts]
 # Console entry point. The real CLI app arrives in Phase 4 (cli/app.py); until
@@ -105,7 +110,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*", "fastembed.*", "openai.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*", "fastembed.*", "openai.*", "voyageai.*"]
 ignore_missing_imports = true
 
 # The experimental LSTM forecaster subclasses torch.nn.Module. torch is an OPTIONAL
