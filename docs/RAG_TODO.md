@@ -81,26 +81,28 @@ cli:                       `documents download-sec` · `documents ingest` · `ra
   `vector_store_dir: Path = data/vectorstore`
 - **`.gitignore`: add `data/`** (raw filings + vectorstore are large/binary — never commit).
 
-Dependencies (add to `pyproject`): `chromadb`, `fastembed`; `openai` (optional, for the
-OpenAI embedder). HTML→text reuses the present `lxml`. Heavy model loads are **lazy-imported**
-so module import stays cheap and CI stays fast.
+Dependencies follow the repo's **add-deps-when-first-needed** convention (not all in P0):
+`fastembed` lands in **P4**, `chromadb` in **P5**, `openai` (optional embedder) in P4. HTML→text
+reuses the present `lxml`. Heavy model loads are **lazy-imported** so import stays cheap + CI fast.
 
 ---
 
 ## Phases (each: state the step, smallest vertical slice, tests in the same change, `make check` green)
 
-### P0 — Scaffolding & config
-- [ ] Add deps (`chromadb`, `fastembed`), `settings` fields above, `.gitignore data/`,
-      empty `documents/`, `rag/`, `research/` packages, and `schemas/documents.py` +
-      `schemas/retrieval.py` (models only). Test: schema conformance + settings defaults.
+### P0 — Scaffolding & config ✅
+- [x] `settings` fields above, `.gitignore data/`, empty `documents/`, `rag/`, `research/`
+      packages, and `schemas/documents.py` + `schemas/retrieval.py` (models only). Deps deferred
+      to the phase that needs them. Test: schema conformance + settings defaults. *(PR #3)*
 
-### P1 — SEC document download
-- [ ] `providers/sec_edgar.py` — EDGAR client (CIK lookup via `company_tickers.json`,
-      submissions index, filing download) behind a Protocol; throttle + `DiskCache`; UA from
-      settings. `documents/ticker_cik.py`, `documents/download.py`, `documents/manifest.py`
-      (raw never overwritten; storage layout per the plan). CLI `documents download-sec`
-      (`--ticker` / `--all` / `--forms` / `--limit`). Tests: ticker→CIK mapping, download
-      via mocked EDGAR responses, manifest idempotency, rate-limit handling.
+### P1 — SEC document download ✅
+- [x] `providers/sec_edgar.py` — EDGAR client (CIK via `company_tickers.json`, submissions
+      index, filing download); throttle (≤10 rps) + `DiskCache`; UA from settings. `HttpJson`
+      gained headers + `get_text`. `documents/ticker_cik.py` (ticker normalization + universe),
+      `documents/download.py` (raw never overwritten, idempotent), `documents/manifest.py`.
+      `schemas/documents.py` += `FilingRef`. CLI `documents download-sec`
+      (`--ticker` / `--all` / `--forms` / `--limit`). Tests (+23): CIK + filing parsers, fetch
+      via mocked EDGAR responses, UA header, download idempotency / raw-preservation / manifest,
+      CLI arg handling — all offline. *(feat/rag-p1-sec-download)*
 
 ### P2 — Parsing
 - [ ] `documents/parsers.py` — SEC HTML/TXT → normalized text + **section detection**

@@ -19,6 +19,35 @@ from pydantic import BaseModel, Field
 DocumentType = Literal["10-K", "10-Q", "8-K"]
 DocumentSource = Literal["SEC"]
 
+_SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
+
+
+class FilingRef(BaseModel):
+    """A pointer to one SEC filing from the EDGAR submissions index (pre-download).
+
+    ``cik`` is the zero-padded 10-digit form; ``accession_number`` keeps its dashes
+    (e.g. ``0000320193-24-000123``). ``url`` builds the EDGAR archive path, which uses
+    the CIK as a bare integer and the accession with dashes stripped.
+    """
+
+    ticker: str
+    cik: str
+    form: DocumentType
+    filing_date: Date
+    accession_number: str
+    primary_document: str  # the primary filing file, e.g. "aapl-20240928.htm"
+
+    @property
+    def url(self) -> str:
+        """Absolute URL of the primary document on EDGAR."""
+        acc = self.accession_number.replace("-", "")
+        return f"{_SEC_ARCHIVES}/{int(self.cik)}/{acc}/{self.primary_document}"
+
+    @property
+    def document_id(self) -> str:
+        """Stable id for this filing (ticker:form:date:accession)."""
+        return f"{self.ticker}:{self.form}:{self.filing_date.isoformat()}:{self.accession_number}"
+
 
 class DocumentMetadata(BaseModel):
     """Provenance for one source document — the basis for every citation."""
