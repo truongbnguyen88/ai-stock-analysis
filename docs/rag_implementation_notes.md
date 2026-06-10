@@ -146,6 +146,14 @@ EDGAR section anchors**, so each section is a citeable retrieval unit. Pure + fa
    **Fail-soft:** empty → `""`; plain text (no `<`) → normalized as-is; unparseable HTML →
    regex tag-strip fallback (never raises). lxml decodes entities for free
    (`&nbsp;` → space, `&rsquo;` → ').
+   - **Inline-XBRL handling (real-filing fix).** All modern filings are iXBRL XHTML with an XML
+     declaration; `lxml.html.fromstring` rejects a *str* carrying an encoding declaration, so we
+     **strip the leading `<?xml …?>`** before parsing — otherwise it raised and we fell into the
+     dumb regex fallback (one giant line, no sections, XBRL junk leaked). We also **skip the
+     `ix:hidden`/`ix:header`/… metadata** (non-displayed facts) while keeping the visible
+     `ix:nonFraction`/`ix:nonNumeric` facts. Found by validating against real NVDA/AVGO/TSLA
+     10-Ks (synthetic fixtures missed it); after the fix each real 10-K parses into ~47 sections
+     incl. Item 1A / Item 7. Regression-tested with a synthetic iXBRL fixture (offline).
 
 **Mechanism 2 — `detect_sections` (text → labeled sections).** Filings are organized by
 standardized **Item** headers (`Item 1A. Risk Factors`, `Item 7. MD&A`, 8-K `Item 2.02.`).
