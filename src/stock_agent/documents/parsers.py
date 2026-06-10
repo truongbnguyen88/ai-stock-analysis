@@ -138,6 +138,20 @@ def detect_sections(text: str) -> list[Section]:
     return sections
 
 
+def is_bare_item_header(label: str) -> bool:
+    """True if ``label`` is a *bare* EDGAR item header (``"Item 5."``, ``"Item 1C"``) — the
+    item number with no section title following it.
+
+    A bare header is the signature of a **table-of-contents / running-header line**: there the
+    item number and title sit in separate cells, so only the number lands on the header line.
+    A real section heading keeps the title on the same line (``"Item 3. Legal Proceedings"``).
+    P3 uses this (plus a short-body guard) to drop TOC stubs without dropping genuine short
+    sections — note 8-K items also render bare-header, so the body-length guard is required.
+    """
+    match = _ITEM_RE.match(label)
+    return match is not None and not label[match.end() :].strip()
+
+
 def parse_metadata(raw: Mapping[str, object]) -> DocumentMetadata:
     """Build ``DocumentMetadata`` from a ``metadata.json`` sidecar (extra keys ignored)."""
     return DocumentMetadata.model_validate(raw)

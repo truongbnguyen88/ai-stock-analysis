@@ -225,6 +225,16 @@ overlap (see [rag_concepts.md](rag_concepts.md) §4.6).
   `< min_chunk_words` (15) words is dropped — this removes P2's header-only table-of-contents
   duplicates (`Item 1A.` ≈ 2 words) and trivial cover lines, and guarantees no degenerately
   tiny chunk. A section shorter than `target` but above the floor becomes one clean chunk.
+- **TOC-stub dedup (real-corpus refinement).** Some table-of-contents lines survive the 15-word
+  floor: the TOC renders the item number and title in separate cells, so a stub like
+  `Item 5.\nMarket for Registrant's Common Equity…\n33` (title + page number, ~17 words) slips
+  through. These are exactly the sections whose **label is a *bare* item header** (no title) —
+  `parsers.is_bare_item_header`. But 8-K *content* items render bare-header too (the number on
+  its own line) and are real, so the rule needs a body guard: drop only when **bare header AND
+  body < `toc_stub_max_words` (25)**. The live corpus shows a clean empty gap — TOC stubs ≤ 17
+  words, the shortest real bare-header section (an 8-K incorporation-by-reference) 38 words — so
+  25 separates them with zero false drops (validated: 21 stubs removed across 149 filings, every
+  real section kept).
 - **Metadata carry-through.** Each window becomes a `DocumentChunk` via
   `DocumentChunk.from_metadata(...)`, copying the filing's flat metadata (ticker / type /
   date / source / url) onto the chunk and stamping the section label. `chunk_index` is a

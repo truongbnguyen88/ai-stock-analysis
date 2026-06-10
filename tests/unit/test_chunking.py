@@ -99,6 +99,41 @@ def test_toc_and_trivial_sections_are_dropped() -> None:
     assert chunks and all(c.section == "Item 1A. Risk Factors" for c in chunks)
 
 
+def test_toc_stub_bare_header_short_body_dropped() -> None:
+    # Bare item header ("Item 5.") + short body (title + page number) = a table-of-contents
+    # line that survives the 15-word floor (17 words) but is real noise -> dropped.
+    toc = (
+        "Item 5.\nMarket for Registrant's Common Equity Related Stockholder Matters "
+        "and Issuer Purchases of Equity Securities\n33"
+    )
+    sections = [
+        Section(label="Item 5.", text=toc),
+        Section(label="Item 1A. Risk Factors", text="Item 1A. Risk Factors " + _numbered("r", 60)),
+    ]
+    chunks = chunk_sections(sections, _meta(), chunk_tokens=_TOK, chunk_overlap=_OVL)
+    assert chunks and all(c.section == "Item 1A. Risk Factors" for c in chunks)
+
+
+def test_real_bare_header_section_with_prose_is_kept() -> None:
+    # 8-K items render the number on its own line (bare header) but carry real prose; the
+    # word guard keeps them — only short bare-header stubs are TOC noise.
+    body = "Item 8.01\nOther Events.\n" + _numbered("w", 40)  # 44 words >= toc-stub threshold
+    sections = [Section(label="Item 8.01", text=body)]
+    chunks = chunk_sections(sections, _meta(), chunk_tokens=_TOK, chunk_overlap=_OVL)
+    assert chunks and chunks[0].section == "Item 8.01"
+
+
+def test_titled_short_section_is_kept() -> None:
+    # Real short section: the label carries a title (not bare), so it is never a TOC stub.
+    body = (
+        "Item 3. Legal Proceedings Please see Note 12 of the Notes to the "
+        "Consolidated Financial Statements included in this report."
+    )
+    sections = [Section(label="Item 3. Legal Proceedings", text=body)]
+    chunks = chunk_sections(sections, _meta(), chunk_tokens=_TOK, chunk_overlap=_OVL)
+    assert chunks and chunks[0].section == "Item 3. Legal Proceedings"
+
+
 def test_no_item_fallback_section_has_none_section() -> None:
     chunks = _chunk(_numbered("w", 60), label="")  # detect_sections' no-item fallback
     assert all(c.section is None for c in chunks)
