@@ -147,11 +147,16 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       score==cosine; gated `RUN_VECTORSTORE_TESTS` Chroma test: persistence + InMemory parity.
       Validated on the real corpus (201 NVDA+AVGO chunks: persist, filter, retrieve).
 
-### P6 — Retrieval + ingest pipeline
-- [ ] `rag/retriever.py` (filters + top-k + chunk dedup, NO LLM) + `rag/pipeline.py`
-      (`ingest_ticker` once; `retrieve` for queries) + CLI `documents ingest` and
-      `rag query --ticker --question`. Returns chunks + scores + citations. Tests: filter
-      correctness, dedup, empty-retrieval path, end-to-end ingest→retrieve with FakeEmbedder.
+### P6 — Retrieval + ingest pipeline ✅
+- [x] `rag/retriever.py` — `Retriever(embedder, store)`: embed query → over-fetch (`top_k×4`) →
+      **dedup by normalized text** (kills verbatim boilerplate repeated across years/overlap) →
+      `top_k` → `EvidenceSet`. NO LLM. `rag/pipeline.py` — `iter_filing_dirs` +
+      `ingest_ticker(...)` (parse→chunk→embed→`store.add`; idempotent via upsert) → `IngestResult`.
+      CLI `documents ingest --ticker/--all` and `rag query --ticker --question` (chunks + scores +
+      citations; "no evidence" path). Tests (FakeEmbedder + InMemoryVectorStore): top-k/score
+      order, dedup, empty-retrieval, filter pass-through, citations; ingest from a tmp filing dir,
+      end-to-end ingest→retrieve, idempotent re-ingest. Validated on the real corpus (NVDA+AVGO →
+      2062 chunks; query→cosine top-k verified `score == q·d` exactly).
 
 ### P7 — Grounded question answering
 - [ ] `rag/prompts.py` (versioned) + `research/synthesis.py` (single call: question +

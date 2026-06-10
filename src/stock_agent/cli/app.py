@@ -6,6 +6,7 @@ Commands: analyze (Phase 4), forecast (Phase 5), chat (Phase 4.5).
 
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
@@ -22,8 +23,13 @@ from stock_agent.pipelines.analyze import run_analyze
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.providers._cache import DiskCache
 from stock_agent.providers.sec_edgar import SecEdgarProvider
+from stock_agent.rag.embeddings import build_embedder
+from stock_agent.rag.pipeline import ingest_ticker
+from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.schemas.documents import DocumentType
+from stock_agent.schemas.retrieval import ChunkFilter
 from stock_agent.settings import get_settings
 
 app = typer.Typer(
@@ -595,3 +601,71 @@ def download_sec(
             f"{sym}: downloaded {len(r.downloaded)}, skipped {len(r.skipped)}, "
             f"errors {len(r.errors)}"
         )
+
+
+def _ingest_tickers(download_all: bool, ticker: str | None, universe: Path) -> list[str]:
+    """Resolve the ticker list for an ingest run (shared --ticker/--all logic)."""
+    if download_all:
+        return load_universe(universe)
+    if ticker:
+        return [normalize_ticker(ticker)]
+    typer.echo("Provide --ticker SYMBOL or --all.")
+    raise typer.Exit(code=1)
+
+
+@documents_app.command("ingest")
+def ingest(
+    ticker: Annotated[
+        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
+    ] = None,
+    ingest_all: Annotated[
+        bool, typer.Option("--all", help="Ingest every ticker in the universe file")
+    ] = False,
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file used with --all")
+    ] = Path("configs/universe.txt"),
+) -> None:
+    """Parse → chunk → embed → store downloaded filings into the vector store ([rag] extra)."""
+    settings = get_settings()
+    configure_logging(settings)
+    embedder = build_embedder(settings)
+    store = build_vector_store(settings)
+    for sym in _ingest_tickers(ingest_all, ticker, universe):
+        result = ingest_ticker(
+            sym,
+            documents_dir=settings.documents_dir,
+            embedder=embedder,
+            store=store,
+            chunk_tokens=settings.rag_chunk_tokens,
+            chunk_overlap=settings.rag_chunk_overlap,
+        )
+        typer.echo(f"{sym}: {result.filings} filings → {result.chunks} chunks ingested")
+
+
+# ---- rag (SEC-grounded retrieval) --------------------------------------------
+rag_app = typer.Typer(add_completion=False, help="Query the ingested SEC corpus (RAG).")
+app.add_typer(rag_app, name="rag")
+
+
+@rag_app.command("query")
+def rag_query(
+    question: Annotated[str, typer.Option("--question", "-q", help="Natural-language question")],
+    ticker: Annotated[
+        str | None, typer.Option("--ticker", "-t", help="Scope to one ticker")
+    ] = None,
+    top_k: Annotated[
+        int | None, typer.Option("--top-k", help="Chunks to return (default settings.rag_top_k)")
+    ] = None,
+) -> None:
+    """Retrieve the most relevant SEC chunks for a question (no LLM; citations + scores)."""
+    settings = get_settings()
+    configure_logging(settings)
+    retriever = Retriever(build_embedder(settings), build_vector_store(settings))
+    where = ChunkFilter(ticker=normalize_ticker(ticker)) if ticker else None
+    evidence = retriever.retrieve(question, top_k=top_k or settings.rag_top_k, where=where)
+    if evidence.is_empty:
+        typer.echo("No matching evidence found. Ingest first: documents ingest --ticker SYM")
+        raise typer.Exit(code=1)
+    for i, rc in enumerate(evidence.chunks, start=1):
+        typer.echo(f"\n[{i}] {rc.citation_label()}  (score {rc.score:.3f})")
+        typer.echo(textwrap.shorten(rc.chunk.text, width=280))
