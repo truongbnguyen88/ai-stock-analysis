@@ -104,12 +104,15 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       via mocked EDGAR responses, UA header, download idempotency / raw-preservation / manifest,
       CLI arg handling — all offline. *(feat/rag-p1-sec-download)*
 
-### P2 — Parsing
-- [ ] `documents/parsers.py` — SEC HTML/TXT → normalized text + **section detection**
-      (10-K/10-Q Item anchors: 1A Risk Factors, 7 MD&A; 8-K item headers). Emit
-      `Document` + `DocumentMetadata` (ticker, type, source, source_url, filing_date,
-      section, document_id, ingested_at). Tests: golden HTML fixture → expected sections +
-      metadata; malformed/edge filings fail soft.
+### P2 — Parsing ✅
+- [x] `documents/parsers.py` — `html_to_text` (lxml; drops script/style/head, decodes
+      entities + nbsp, block-aware newlines; fail-soft tag-strip + plain-text passthrough) +
+      `detect_sections` (EDGAR Item anchors: 10-K/10-Q `1A`/`7`, 8-K decimal `2.02`; preamble;
+      single-section fallback) + `parse_metadata` (sidecar → `DocumentMetadata`, extras ignored)
+      + `load_filing` → `ParsedFiling` (metadata + text + `Section`s; `to_document()`). `Section`
+      is the P3 chunking unit. Tests (+11): noise-strip/entities/block-breaks/malformed,
+      Risk-Factors + MD&A + 8-K sections, metadata, end-to-end load. *(known: TOC repeats Item
+      headers → short dup sections, deferred to P3 dedup.)* `lxml.*` added to mypy overrides.
 
 ### P3 — Chunking
 - [ ] `rag/chunking.py` — PURE section-aware chunker (~`rag_chunk_tokens`, ~`overlap`,
