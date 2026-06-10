@@ -138,6 +138,7 @@ document vectors are only comparable in the *same* embedding space.
 The sequence view makes the request/response order — and the two exit paths — explicit:
 
 ```mermaid
+%%{init: {"sequence": {"mirrorActors": false}}}%%
 sequenceDiagram
   participant U as User
   participant R as Retriever
