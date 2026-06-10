@@ -35,8 +35,8 @@ _OPENAI_DEFAULT_MODEL = "text-embedding-3-small"
 
 # Voyage models output 1024-d by default. Current lineup (the voyage-4 family is
 # newest, with a 200M-token free allotment; the domain "-2" models — finance/law/code
-# — have 50M free). voyage-finance-2 is tuned for financial text (SEC filings), so it's
-# the natural default for this corpus; switch via the constructor for an A/B after P8.
+# — have 50M free). Default = voyage-4 (newest, cheap, 200M free covers our corpus);
+# voyage-finance-2 is the finance-tuned alternative to A/B against after P8.
 _VOYAGE_DIMS = {
     "voyage-4-large": 1024,
     "voyage-4": 1024,
@@ -47,7 +47,7 @@ _VOYAGE_DIMS = {
     "voyage-law-2": 1024,
     "voyage-code-2": 1024,
 }
-_VOYAGE_DEFAULT_MODEL = "voyage-finance-2"
+_VOYAGE_DEFAULT_MODEL = "voyage-4"
 
 
 @runtime_checkable
@@ -198,12 +198,13 @@ class OpenAIEmbedder:
 
 
 class VoyageEmbedder:
-    """Voyage AI embeddings (opt-in). Default ``voyage-finance-2`` (1024-d).
+    """Voyage AI embeddings (opt-in). Default ``voyage-4`` (1024-d).
 
-    Voyage is Anthropic's recommended embedding provider; ``voyage-finance-2`` is
-    tuned for financial text, which suits SEC filings. Uses Voyage's ``input_type``
-    asymmetry — ``"document"`` for passages, ``"query"`` for searches — which lifts
-    retrieval quality. Charges a ``VOYAGE_API_KEY`` (independent of Anthropic/OpenAI).
+    Voyage is Anthropic's recommended embedding provider. ``voyage-4`` is the newest
+    general model (200M-token free pool, then $0.06/1M); pass ``model="voyage-finance-2"``
+    to A/B the finance-tuned variant. Uses Voyage's ``input_type`` asymmetry —
+    ``"document"`` for passages, ``"query"`` for searches — which lifts retrieval
+    quality. Charges a ``VOYAGE_API_KEY`` (independent of Anthropic/OpenAI).
     """
 
     name = "voyage"
@@ -253,8 +254,8 @@ def build_embedder(settings: Settings) -> Embedder:
 
     ``local`` (default) -> ``FastEmbedEmbedder(settings.embedding_model)``;
     ``openai`` -> ``OpenAIEmbedder`` (text-embedding-3-small); ``voyage`` ->
-    ``VoyageEmbedder`` (voyage-finance-2). None loads a model or a client here (all
-    lazy), so this is cheap and offline.
+    ``VoyageEmbedder`` (voyage-4). None loads a model or a client here (all lazy),
+    so this is cheap and offline.
     """
     if settings.embedding_provider == "openai":
         return OpenAIEmbedder(settings)
