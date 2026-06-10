@@ -5,7 +5,7 @@
 > each phase lands. Companion to [RAG_TODO.md](RAG_TODO.md) (the ordered checklist)
 > and [rag_concepts.md](rag_concepts.md) (the theory). Updated as P3→P8 ship.
 >
-> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4–P8 pending.
+> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5–P8 pending.
 
 ---
 
@@ -240,7 +240,54 @@ floor are the two heuristics most worth revisiting once we see real filings.
 
 ---
 
-## P4–P8 — pending
+## P4 — Embeddings
 
-Appended as each lands: **P4** embeddings · **P5** vector store · **P6** retrieval ·
-**P7** grounded QA · **P8** research memo.
+**Role.** Turn chunk/query **text into dense vectors** so "relevance" becomes "closeness"
+(see [rag_concepts.md](rag_concepts.md) §4.1–4.3). This is the first phase with a real
+external model; everything downstream (store, retrieve) operates on these vectors.
+
+**Key file.** `rag/embeddings.py`.
+
+**The Protocol (one seam, swappable backends).** `Embedder` declares `name`, `dim`,
+`embed_documents(texts) → list[list[float]]`, `embed_query(text) → list[float]`. Document
+vs query is split because retrieval models (BGE/E5) prepend a **query instruction** for
+search — so the *same* model embeds passages and queries differently. Three implementations
+sit behind it:
+- **`FastEmbedEmbedder`** (default) — local `BAAI/bge-small-en-v1.5` (384-d) via `fastembed`,
+  which runs **onnxruntime, not torch** (so it can't trigger the macOS torch+lightgbm OpenMP
+  segfault). `embed_query` routes through fastembed's `query_embed` (the BGE prefix) when
+  present. The model **loads lazily on first `embed`**, so constructing it is free.
+- **`OpenAIEmbedder`** (opt-in) — `text-embedding-3-small` (1536-d). Checks the API key
+  *before* importing `openai` so a missing key gives the clear settings error; `dim` comes
+  from a known-dims table (no model load).
+- **`FakeEmbedder`** — deterministic, dependency-free: hashes text to a fixed-dim **unit
+  vector** (so dot product = cosine). Same text → same vector. It lives in the module (not the
+  tests) because P5/P6 reuse it as their embedder double, mirroring `providers/fake.py`.
+
+`build_embedder(settings)` selects local vs OpenAI by `settings.embedding_provider` — and
+because both backends are lazy, the selector neither loads a model nor builds a client.
+
+**Cost/CI discipline baked in.** Documents are embedded **once at ingestion**; a search
+embeds only the one query string (§3.1). The heavy backends are **extras**, not core deps —
+`[rag]` (fastembed) and `[openai]` — so CI's `.[dev]` install never pulls them and the
+suite never downloads a model: tests run on `FakeEmbedder` + an injected fake OpenAI client.
+The real BGE model is exercised only by a test gated behind `RUN_EMBED_TESTS`
+(`importorskip("fastembed")`), skipped in CI. `fastembed.*`/`openai.*` are in the mypy
+ignore-missing-imports override so type-checking passes without the extras installed.
+
+**How P5/P6 use it.** P5 stores `embed_documents(chunk_texts)` vectors keyed by `chunk_id`
+with the chunk's flat metadata; P6 calls `embed_query(question)` and does the nearest-neighbor
+lookup. `dim` lets the store size its collection.
+
+**Key decisions.** One Protocol → provider swap is a one-line config change with zero impact
+on chunking/store/retrieval code. Extras (not core) keep base install + CI light, consistent
+with the repo's `[sequence]`/`[gdelt]` pattern — the real app installs `.[rag]`. The
+local↔OpenAI quality gap is negligible for SEC retrieval (§ cost analysis), so local is the
+honest default.
+
+---
+
+## P5–P8 — pending
+
+Appended as each lands: **P5** vector store · **P6** retrieval · **P7** grounded QA ·
+**P8** research memo.

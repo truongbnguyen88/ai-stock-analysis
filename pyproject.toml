@@ -64,6 +64,19 @@ gdelt = [
     "google-cloud-bigquery>=3.20",
     "db-dtypes>=1.2",  # lets BigQuery results convert cleanly to pandas dtypes
 ]
+# RAG layer (SEC-grounded research). Kept OUT of core + CI: the test suite uses a
+# deterministic FakeEmbedder, so CI never installs these or downloads a model. The
+# real app needs them. fastembed = local BGE embeddings via onnxruntime (no torch,
+# so no macOS torch+lightgbm OpenMP clash); chromadb = the local vector store (P5).
+# Install with `pip install -e ".[rag]"`.
+rag = [
+    "fastembed>=0.3",
+]
+# Optional OpenAI embedding backend (alternative to local fastembed). Off by default.
+# Install with `pip install -e ".[openai]"` and set OPENAI_API_KEY.
+openai = [
+    "openai>=1.0",
+]
 
 [project.scripts]
 # Console entry point. The real CLI app arrives in Phase 4 (cli/app.py); until
@@ -92,7 +105,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*", "fastembed.*", "openai.*"]
 ignore_missing_imports = true
 
 # The experimental LSTM forecaster subclasses torch.nn.Module. torch is an OPTIONAL
