@@ -64,6 +64,43 @@ def test_html_to_text_empty() -> None:
     assert html_to_text("   \n  ") == ""
 
 
+# Inline-XBRL XHTML (all modern filings): an XML declaration + an ix:hidden fact blob +
+# Item headers wrapped in <div>s. Regression for the bug where lxml rejected the str
+# (encoding declaration), the crude fallback collapsed everything to one line + leaked the
+# hidden facts, and section detection found nothing.
+_IXBRL_10K = (
+    '<?xml version="1.0" encoding="utf-8"?>\n'
+    '<html xmlns:ix="http://www.xbrl.org/2013/inlineXBRL"><head><title>NVDA 10-K</title></head>'
+    "<body>"
+    '<ix:header><ix:hidden>'
+    '<ix:nonNumeric name="dei:DocumentType">10-K</ix:nonNumeric>'
+    "JUNKFACT-0001045810-2026-FY-false-362-460-P1Y-P2Y</ix:hidden></ix:header>"
+    "<div>NVIDIA CORPORATION</div>"
+    "<div>Item 1A. Risk Factors</div>"
+    "<div>Our business faces "
+    '<ix:nonNumeric name="x">substantial</ix:nonNumeric> competition and supply-chain risk.</div>'
+    "<div>Item 7. Management&rsquo;s Discussion and Analysis</div>"
+    '<div>Revenue was <ix:nonFraction name="us-gaap:Revenues">130,497</ix:nonFraction> m.</div>'
+    "</body></html>"
+)
+
+
+def test_html_to_text_handles_inline_xbrl() -> None:
+    text = html_to_text(_IXBRL_10K)
+    assert text.count("\n") >= 3  # block structure preserved (NOT one collapsed line)
+    assert "JUNKFACT" not in text  # ix:hidden metadata dropped
+    assert "substantial" in text and "130,497" in text  # VISIBLE ix facts kept
+    assert "NVDA 10-K" not in text  # <title> still dropped
+
+
+def test_detect_sections_on_inline_xbrl() -> None:
+    sections = detect_sections(html_to_text(_IXBRL_10K))
+    risk = _section_with(sections, "Risk Factors")
+    assert "competition and supply-chain risk" in risk.text
+    mdna = _section_with(sections, "Management")
+    assert "130,497" in mdna.text
+
+
 # ---- detect_sections ---------------------------------------------------------
 def test_detect_sections_finds_risk_and_mdna() -> None:
     sections = detect_sections(html_to_text(_10K_HTML))

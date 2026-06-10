@@ -21,8 +21,16 @@ from lxml.etree import ParserError
 
 from stock_agent.schemas.documents import Document, DocumentMetadata
 
-# Tags whose text is noise (never part of the readable filing).
-_SKIP_TAGS = frozenset({"script", "style", "head", "title", "noscript"})
+# Tags whose text is noise (never part of the readable filing). Includes the inline-XBRL
+# METADATA elements (modern filings) — ``ix:hidden`` carries a huge blob of non-displayed
+# facts that otherwise leaks into the text; the VISIBLE facts live in ``ix:nonfraction`` /
+# ``ix:nonnumeric`` and are intentionally kept.
+_SKIP_TAGS = frozenset(
+    {
+        "script", "style", "head", "title", "noscript",
+        "ix:hidden", "ix:header", "ix:references", "ix:resources",
+    }
+)
 # Block-level tags after which we insert a newline, so paragraphs/rows/headers
 # land on their own lines (needed for line-anchored section detection below).
 _BLOCK_TAGS = frozenset(
@@ -34,6 +42,10 @@ _BLOCK_TAGS = frozenset(
 
 _WS = re.compile(r"[ \t\xa0]+")  # spaces, tabs, and non-breaking spaces (EDGAR)
 _TAG = re.compile(r"<[^>]+>")
+# Modern filings are inline-XBRL XHTML beginning with an XML declaration. lxml.html
+# refuses a *str* that carries an encoding declaration, so we strip it before parsing
+# (the content is already decoded, so no information is lost).
+_XML_DECL = re.compile(r"^\s*<\?xml[^>]*\?>", re.IGNORECASE)
 
 # An EDGAR "Item" header at the start of a line:
 #   10-K / 10-Q -> "Item 1A.", "Item 7." ; 8-K -> "Item 2.02." (decimal numbering).
@@ -80,17 +92,20 @@ def _walk(element: object, out: list[str]) -> None:
 def html_to_text(content: str) -> str:
     """Extract readable, whitespace-normalized text from a filing (HTML or plain text).
 
-    Fail-soft: plain text passes through normalization; unparseable HTML falls back
-    to a regex tag-strip. Decodes entities and collapses non-breaking spaces.
+    Handles inline-XBRL XHTML (all modern filings): strips the leading XML declaration so
+    lxml parses it as a DOM (otherwise it raises and we lose all block structure), and drops
+    the iXBRL hidden-fact metadata. Fail-soft: plain text passes through normalization;
+    truly unparseable markup falls back to a regex tag-strip. Decodes entities + nbsp.
     """
     if not content or not content.strip():
         return ""
     if "<" not in content:  # already plain text (older SGML/TXT filings)
         return _normalize(content)
+    cleaned = _XML_DECL.sub("", content, count=1)  # let lxml parse the str (iXBRL fix)
     try:
-        tree = lhtml.fromstring(content)
+        tree = lhtml.fromstring(cleaned)
     except (ParserError, ValueError):
-        return _normalize(_TAG.sub(" ", content))
+        return _normalize(_TAG.sub(" ", cleaned))
     parts: list[str] = []
     _walk(tree, parts)
     return _normalize("".join(parts))
