@@ -5,7 +5,7 @@
 > each phase lands. Companion to [RAG_TODO.md](RAG_TODO.md) (the ordered checklist)
 > and [rag_concepts.md](rag_concepts.md) (the theory). Updated as P3→P8 ship.
 >
-> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5–P8 pending.
+> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6–P8 pending.
 
 ---
 
@@ -309,7 +309,53 @@ honest default.
 
 ---
 
-## P5–P8 — pending
+## P5 — Vector store
 
-Appended as each lands: **P5** vector store · **P6** retrieval · **P7** grounded QA ·
+**Role.** Persist chunk **vectors + flat metadata** and serve **metadata-filtered cosine
+top-k**. This is a pure storage + nearest-neighbour layer: it takes *pre-computed* vectors
+(the `Embedder` runs in P6's pipeline, not here), does no LLM work, and is embedder-agnostic.
+
+**Key files.** `src/stock_agent/rag/vector_store.py`; `ChunkFilter` added to
+`schemas/retrieval.py`; tests `tests/unit/test_vector_store.py`.
+
+**How it works (step by step).**
+1. **`ChunkFilter`** (schema) — a metadata predicate: `ticker / document_types / sections /
+   date_from / date_to`, AND-combined, with `.matches(chunk)` (used by in-Python backends) and
+   `.is_empty`. Shared by the store (P5) and the retriever (P6) so "scope the search" has one
+   definition. Filter is applied **before** ranking (filter → top-k).
+2. **`VectorStore` Protocol** — `add(chunks, vectors)` (1:1, upsert by `chunk_id`),
+   `query(query_vector, *, top_k, where) -> list[RetrievedChunk]`, `count()`.
+3. **`InMemoryVectorStore`** — pure-Python: holds chunks/vectors in dicts keyed by `chunk_id`
+   (re-add = upsert), ranks by `_cosine` (robust to non-unit vectors), filters via
+   `where.matches`. Dependency-free, so **CI exercises the full filter/ranking contract here**;
+   also a chromadb-free fallback and the backend P6 tests use.
+4. **`ChromaVectorStore`** — persistent local Chroma. `chromadb` is **imported lazily** (it is
+   the `[rag]` extra, absent in CI). The collection is created with `hnsw:space="cosine"`, and
+   `add` **upserts** by `chunk_id` (so re-ingesting a filing replaces, never duplicates —
+   matches the idempotent download/ingest philosophy). Flat metadata is written per chunk;
+   `filing_date` is stored both as an ISO string (citation) and a `YYYYMMDD` int
+   (`filing_date_ord`) so date ranges use Chroma's numeric `$gte`/`$lte`; `section` is omitted
+   when `None` (Chroma rejects null values). `_to_chroma_where` translates a `ChunkFilter` into
+   a Chroma `where` clause (single condition, or `$and` of several).
+5. **Distance → similarity (the P0 carry-forward).** Chroma's cosine space returns a cosine
+   *distance* (lower = closer); we expose **similarity** as `score = 1 − distance`. Because our
+   embedders emit unit-norm vectors, that is exactly cosine similarity — so `RetrievedChunk.score`
+   is consistent ("higher = closer") across both backends. The gated Chroma test asserts Chroma's
+   scores ≈ `InMemoryVectorStore`'s direct cosine (`abs_tol=1e-4`).
+
+**How P6 uses it.** The pipeline embeds chunks once (`embedder.embed_documents`) and calls
+`store.add(chunks, vectors)` at ingestion; per query it embeds the question
+(`embedder.embed_query`) and calls `store.query(qv, top_k=settings.rag_top_k, where=...)`,
+wraps the hits in an `EvidenceSet`, and (P7) hands that — and only that — to the synthesis LLM.
+
+**Key decisions.** Store takes pre-computed vectors (keeps the store embedder-agnostic and
+trivially testable with `FakeEmbedder`). Two backends behind one Protocol so CI stays offline
+(InMemory) while production persists (Chroma) — same pattern as `FakeEmbedder`/`FastEmbedEmbedder`.
+Cosine space (not L2) makes the distance→similarity conversion a clean `1 − d`. **Validated on
+the real corpus**: 201 NVDA+AVGO 10-K chunks ingested with the real BGE embedder — persistence
+held across a reopen, and `ticker`/`form`/`section` filters returned exactly the right chunks.
+
+## P6–P8 — pending
+
+Appended as each lands: **P6** retrieval + ingest pipeline · **P7** grounded QA ·
 **P8** research memo.

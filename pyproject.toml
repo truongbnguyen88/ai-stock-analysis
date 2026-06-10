@@ -71,6 +71,7 @@ gdelt = [
 # Install with `pip install -e ".[rag]"`.
 rag = [
     "fastembed>=0.3",
+    "chromadb>=0.5",
 ]
 # Optional OpenAI embedding backend (alternative to local fastembed). Off by default.
 # Install with `pip install -e ".[openai]"` and set OPENAI_API_KEY.
@@ -110,7 +111,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*", "fastembed.*", "openai.*", "voyageai.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*", "fastembed.*", "openai.*", "voyageai.*", "chromadb.*"]
 ignore_missing_imports = true
 
 # The experimental LSTM forecaster subclasses torch.nn.Module. torch is an OPTIONAL

@@ -134,10 +134,18 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       unit-norm, Protocol conformance, selector routing, OpenAI + Voyage via injected fake
       clients (input_type asserted), key-required.
 
-### P5 — Vector store
-- [ ] `rag/vector_store.py` — `VectorStore` Protocol (`add`, `query`, `count`, persistence)
-      + `ChromaVectorStore` (persistent client, metadata filters). Tests: insert→count,
-      metadata filter (ticker/type/date), top-k order by score, temp-dir isolation.
+### P5 — Vector store ✅
+- [x] `rag/vector_store.py` — `VectorStore` Protocol (`add`/`query`/`count`) + `ChunkFilter`
+      (schemas; ticker/type/section/date, AND-combined) + **`InMemoryVectorStore`** (pure-Python
+      cosine + filter, CI-tested, chromadb-free fallback) + **`ChromaVectorStore`** (persistent,
+      lazy chromadb, **cosine space** → `score = 1 − distance` = cosine similarity) +
+      `build_vector_store(settings)`. Store takes **pre-computed vectors** (embedder runs in P6),
+      upserts by `chunk_id` (idempotent); `filing_date` stored as ISO + `YYYYMMDD` int for range
+      filters; `section` omitted when None (Chroma rejects None). `chromadb` joins the `[rag]`
+      extra (lazy → CI never imports it; `chromadb.*` in mypy overrides). Tests (CI, InMemory):
+      count/upsert, top-k order, each filter (ticker/type/section/date-range), empty, Protocol,
+      score==cosine; gated `RUN_VECTORSTORE_TESTS` Chroma test: persistence + InMemory parity.
+      Validated on the real corpus (201 NVDA+AVGO chunks: persist, filter, retrieve).
 
 ### P6 — Retrieval + ingest pipeline
 - [ ] `rag/retriever.py` (filters + top-k + chunk dedup, NO LLM) + `rag/pipeline.py`
