@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 
-from stock_agent.documents.parsers import ParsedFiling, Section
+from stock_agent.documents.parsers import ParsedFiling, Section, is_bare_item_header
 from stock_agent.schemas.documents import DocumentChunk, DocumentMetadata
 
 # 1 token ≈ 0.75 words for English prose (~4 chars/token, ~5 chars/word). Used to
@@ -24,6 +24,12 @@ _WORDS_PER_TOKEN = 0.75
 # Below this many words a "section" is a TOC header line / trivial fragment, not
 # content — dropped (dedup) so it never becomes a tiny, near-useless chunk.
 _MIN_CHUNK_WORDS = 15
+# A *bare* item header ("Item 5.") with a short body is a table-of-contents / running-header
+# line (the title + page number sit on the next lines). Real short sections carry the title in
+# the header ("Item 3. Legal Proceedings"); real bare-header sections (8-K items, e.g. an
+# incorporation-by-reference) run >= ~38 words. 25 sits in the empty gap between the two
+# (validated on the live corpus), so this drops TOC stubs without touching genuine sections.
+_TOC_STUB_MAX_WORDS = 25
 
 # Defaults mirror settings.rag_chunk_tokens / rag_chunk_overlap (the pipeline passes
 # the configured values; these keep the function usable standalone + in tests).
@@ -64,12 +70,14 @@ def chunk_sections(
     chunk_tokens: int = _DEFAULT_CHUNK_TOKENS,
     chunk_overlap: float = _DEFAULT_CHUNK_OVERLAP,
     min_chunk_words: int = _MIN_CHUNK_WORDS,
+    toc_stub_max_words: int = _TOC_STUB_MAX_WORDS,
 ) -> list[DocumentChunk]:
     """Chunk parsed ``sections`` into ``DocumentChunk``s (one filing's worth).
 
-    Each section is windowed independently (boundaries preserved). Sections with
-    fewer than ``min_chunk_words`` words are dropped (TOC dedup). ``chunk_index`` is
-    a document-global running counter, so ``chunk_id = document_id:index`` is unique.
+    Each section is windowed independently (boundaries preserved). Two kinds of section are
+    dropped as table-of-contents / running-header noise: any below ``min_chunk_words``, and a
+    *bare* item header (no title) whose body is below ``toc_stub_max_words``. ``chunk_index``
+    is a document-global running counter, so ``chunk_id = document_id:index`` is unique.
     """
     target = _target_words(chunk_tokens)
     step = max(1, target - _overlap_words(target, chunk_overlap))
@@ -79,7 +87,9 @@ def chunk_sections(
     for section in sections:
         words = section.text.split()
         if len(words) < min_chunk_words:
-            continue  # header-only / trivial section -> drop
+            continue  # header-only / trivial fragment -> drop
+        if is_bare_item_header(section.label) and len(words) < toc_stub_max_words:
+            continue  # bare item header + short body = TOC / running-header line -> drop
         section_label = section.label or None  # "" (no-item fallback) -> None
         for window in _windows(words, target, step):
             chunks.append(

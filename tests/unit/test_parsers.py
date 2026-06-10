@@ -9,6 +9,7 @@ from stock_agent.documents.parsers import (
     Section,
     detect_sections,
     html_to_text,
+    is_bare_item_header,
     load_filing,
     parse_metadata,
 )
@@ -126,6 +127,18 @@ def test_detect_sections_8k_decimal_items() -> None:
 
 def test_detect_sections_empty_text() -> None:
     assert detect_sections("") == []
+
+
+def test_is_bare_item_header() -> None:
+    # Bare headers (TOC / running-header lines): item number, no title.
+    assert is_bare_item_header("Item 5.")
+    assert is_bare_item_header("Item 1C")
+    assert is_bare_item_header("ITEM 9C.")
+    assert is_bare_item_header("Item 2.03")  # 8-K decimal item, still bare
+    # Real section headings carry a title; non-item labels are never bare.
+    assert not is_bare_item_header("Item 3. Legal Proceedings")
+    assert not is_bare_item_header("Preamble")
+    assert not is_bare_item_header("")
 
 
 # ---- metadata + load_filing --------------------------------------------------
