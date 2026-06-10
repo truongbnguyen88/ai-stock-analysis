@@ -33,14 +33,19 @@ _OPENAI_DIMS = {
 }
 _OPENAI_DEFAULT_MODEL = "text-embedding-3-small"
 
-# Voyage models output 1024-d by default. voyage-finance-2 is domain-tuned for
-# financial text (SEC filings), so it's the natural default for this corpus.
+# Voyage models output 1024-d by default. Current lineup (the voyage-4 family is
+# newest, with a 200M-token free allotment; the domain "-2" models — finance/law/code
+# — have 50M free). voyage-finance-2 is tuned for financial text (SEC filings), so it's
+# the natural default for this corpus; switch via the constructor for an A/B after P8.
 _VOYAGE_DIMS = {
+    "voyage-4-large": 1024,
+    "voyage-4": 1024,
+    "voyage-4-lite": 1024,
+    "voyage-context-3": 1024,
+    "voyage-code-3": 1024,
     "voyage-finance-2": 1024,
-    "voyage-3.5": 1024,
-    "voyage-3.5-lite": 1024,
-    "voyage-3-large": 1024,
-    "voyage-3": 1024,
+    "voyage-law-2": 1024,
+    "voyage-code-2": 1024,
 }
 _VOYAGE_DEFAULT_MODEL = "voyage-finance-2"
 
