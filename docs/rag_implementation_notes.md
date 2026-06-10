@@ -5,7 +5,7 @@
 > each phase lands. Companion to [RAG_TODO.md](RAG_TODO.md) (the ordered checklist)
 > and [rag_concepts.md](rag_concepts.md) (the theory). Updated as P3→P8 ship.
 >
-> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6–P8 pending.
+> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6 ✅ · P7–P8 pending.
 
 ---
 
@@ -355,7 +355,50 @@ Cosine space (not L2) makes the distance→similarity conversion a clean `1 − 
 the real corpus**: 201 NVDA+AVGO 10-K chunks ingested with the real BGE embedder — persistence
 held across a reopen, and `ticker`/`form`/`section` filters returned exactly the right chunks.
 
-## P6–P8 — pending
+## P6 — Retrieval + ingest pipeline
 
-Appended as each lands: **P6** retrieval + ingest pipeline · **P7** grounded QA ·
-**P8** research memo.
+**Role.** The two paths that *use* everything built so far. **Ingest** (write): downloaded
+filings → chunks → vectors → store. **Retrieve** (read): question → vector → filtered cosine
+top-k → deduped `EvidenceSet`. Still NO LLM — P6 decides *which* chunks become grounding; P7
+turns them into a cited answer.
+
+**Key files.** `src/stock_agent/rag/pipeline.py` (ingest), `src/stock_agent/rag/retriever.py`
+(retrieve); CLI `documents ingest` + `rag query` in `cli/app.py`; tests
+`tests/unit/test_rag_pipeline.py`, `tests/unit/test_retriever.py`.
+
+**Ingest — `pipeline.ingest_ticker` (step by step).**
+1. `iter_filing_dirs(documents_dir, ticker)` walks `sec/{TICKER}/**/filing.html` (the P1 layout).
+2. Each dir → `load_filing` (P2) → `chunk_filing` (P3, with the configured `chunk_tokens`/
+   `chunk_overlap`). All of the ticker's chunks are collected.
+3. **One batch** `embedder.embed_documents([c.text …])` (P4) → vectors, then a single
+   `store.add(chunks, vectors)` (P5). Because the store **upserts by `chunk_id`**, re-ingesting
+   the same corpus is a no-op on count — ingestion is idempotent (matches the idempotent
+   download). Returns `IngestResult(ticker, filings, chunks)`.
+
+**Retrieve — `retriever.Retriever.retrieve` (step by step).**
+1. `embed_query(query)` → `q` (same model as the chunks; BGE adds its query-instruction prefix).
+2. `store.query(q, top_k = top_k × over_fetch, where)` — filtered cosine top-k, **over-fetched
+   ×4** so the next step has slack.
+3. **`_dedup_by_text`** — drop chunks with identical normalized text, keeping the highest-scored.
+   SEC filings repeat boilerplate verbatim across years (and adjacent chunks overlap), so without
+   this the same passage could occupy several of the few evidence slots.
+4. Truncate to `top_k`, wrap as `EvidenceSet(query, chunks)`. Empty store / no match →
+   `EvidenceSet.is_empty` (P7 must then refuse, not invent).
+
+**CLI.** `documents ingest --ticker NVDA [--all]` builds the embedder + store from settings and
+ingests; `rag query --ticker NVDA --question "…"` retrieves and prints citations + scores +
+excerpts (no LLM — `--answer` synthesis arrives in P7). Both are thin wiring over the functions
+above.
+
+**Key decisions.** Embedder + store are **injected** (CLI builds from settings; tests pass
+`FakeEmbedder` + `InMemoryVectorStore`) — the whole read/write path is exercised in CI with no
+model or chromadb. Dedup is by **exact normalized text** (not by document or near-duplicate),
+so it removes only true repeats and never merges genuinely distinct overlapping chunks.
+**Validated end-to-end on the real corpus**: NVDA+AVGO ingested to 2062 chunks; a query embedded
+to a 384-d unit vector retrieved the correct MD&A/Risk-Factor chunks, and the store-reported
+score matched a hand-computed `q·d` to 6 decimals — confirming `embed → ANN(cosine) →
+1 − distance` is exactly cosine similarity through the real Chroma store.
+
+## P7–P8 — pending
+
+Appended as each lands: **P7** grounded QA · **P8** research memo.
