@@ -33,6 +33,17 @@ _OPENAI_DIMS = {
 }
 _OPENAI_DEFAULT_MODEL = "text-embedding-3-small"
 
+# Voyage models output 1024-d by default. voyage-finance-2 is domain-tuned for
+# financial text (SEC filings), so it's the natural default for this corpus.
+_VOYAGE_DIMS = {
+    "voyage-finance-2": 1024,
+    "voyage-3.5": 1024,
+    "voyage-3.5-lite": 1024,
+    "voyage-3-large": 1024,
+    "voyage-3": 1024,
+}
+_VOYAGE_DEFAULT_MODEL = "voyage-finance-2"
+
 
 @runtime_checkable
 class Embedder(Protocol):
@@ -181,13 +192,67 @@ class OpenAIEmbedder:
         return self.embed_documents([text])[0]
 
 
+class VoyageEmbedder:
+    """Voyage AI embeddings (opt-in). Default ``voyage-finance-2`` (1024-d).
+
+    Voyage is Anthropic's recommended embedding provider; ``voyage-finance-2`` is
+    tuned for financial text, which suits SEC filings. Uses Voyage's ``input_type``
+    asymmetry — ``"document"`` for passages, ``"query"`` for searches — which lifts
+    retrieval quality. Charges a ``VOYAGE_API_KEY`` (independent of Anthropic/OpenAI).
+    """
+
+    name = "voyage"
+
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        model: str = _VOYAGE_DEFAULT_MODEL,
+        client: object | None = None,
+    ) -> None:
+        self._settings = settings
+        self._model = model
+        self._client = client  # injected in tests
+
+    def _ensure_client(self) -> object:
+        if self._client is None:
+            key = self._settings.require("voyage_api_key", capability="Voyage embeddings")
+            try:
+                import voyageai
+            except ImportError as exc:  # pragma: no cover - exercised only without the extra
+                raise RuntimeError(
+                    "Voyage embeddings need the voyageai package: pip install -e \".[voyage]\""
+                ) from exc
+            self._client = voyageai.Client(api_key=key)
+        return self._client
+
+    @property
+    def dim(self) -> int:
+        return _VOYAGE_DIMS.get(self._model, 1024)
+
+    def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+        result = self._ensure_client().embed(  # type: ignore[attr-defined]
+            list(texts), model=self._model, input_type="document"
+        )
+        return [[float(x) for x in vec] for vec in result.embeddings]
+
+    def embed_query(self, text: str) -> list[float]:
+        result = self._ensure_client().embed(  # type: ignore[attr-defined]
+            [text], model=self._model, input_type="query"
+        )
+        return [float(x) for x in result.embeddings[0]]
+
+
 def build_embedder(settings: Settings) -> Embedder:
     """Select the configured embedder (``settings.embedding_provider``).
 
     ``local`` (default) -> ``FastEmbedEmbedder(settings.embedding_model)``;
-    ``openai`` -> ``OpenAIEmbedder`` (text-embedding-3-small). Neither loads a model
-    or a client here (both lazy), so this is cheap and offline.
+    ``openai`` -> ``OpenAIEmbedder`` (text-embedding-3-small); ``voyage`` ->
+    ``VoyageEmbedder`` (voyage-finance-2). None loads a model or a client here (all
+    lazy), so this is cheap and offline.
     """
     if settings.embedding_provider == "openai":
         return OpenAIEmbedder(settings)
+    if settings.embedding_provider == "voyage":
+        return VoyageEmbedder(settings)
     return FastEmbedEmbedder(settings.embedding_model)

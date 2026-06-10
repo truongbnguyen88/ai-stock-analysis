@@ -127,14 +127,15 @@ class Settings(BaseSettings):
     chat_history_retention_days: int = 30
 
     # ---- RAG (SEC-grounded equity research; see docs/RAG_TODO.md) ----
-    # Optional OpenAI key — only needed if embedding_provider="openai".
-    openai_api_key: str | None = None
+    # Optional embedding-provider keys — only needed for the matching provider.
+    openai_api_key: str | None = None  # embedding_provider="openai"
+    voyage_api_key: str | None = None  # embedding_provider="voyage"
     # SEC EDGAR fair-access requires a descriptive User-Agent with contact, e.g.
     # "Jane Doe jane@example.com". Required only for LIVE downloads (tests use fixtures).
     sec_user_agent: str | None = None
-    # Embeddings: local fastembed/BGE by default (no torch, $0); "openai" swaps the
-    # backend behind the same Embedder Protocol with no retrieval-code change.
-    embedding_provider: Literal["local", "openai"] = "local"
+    # Embeddings: local fastembed/BGE by default (no torch, $0); "openai" or "voyage"
+    # swap the backend behind the same Embedder Protocol with no retrieval-code change.
+    embedding_provider: Literal["local", "openai", "voyage"] = "local"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     # Chunking + retrieval defaults (balance answer quality vs token cost).
     rag_chunk_tokens: int = 900  # target chunk size (section-aware; never crosses a section)

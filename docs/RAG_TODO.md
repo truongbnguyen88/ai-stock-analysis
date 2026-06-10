@@ -126,11 +126,13 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
 ### P4 — Embeddings ✅
 - [x] `rag/embeddings.py` — `Embedder` Protocol (`name`, `dim`, `embed_documents`,
       `embed_query`); `FastEmbedEmbedder` (default, lazy onnxruntime/BGE) + `OpenAIEmbedder`
-      (opt-in, known dims) + `FakeEmbedder` (deterministic unit-vector test double, reused by
-      P5/P6) + `build_embedder(settings)`. Deps as **extras** (`[rag]` fastembed, `[openai]`)
-      — NOT core, so CI never installs them or downloads a model; `fastembed.*`/`openai.*`
-      added to mypy overrides. Tests (+7, +1 gated `RUN_EMBED_TESTS`): determinism, unit-norm,
-      Protocol conformance, selector routing, OpenAI via injected fake client, key-required.
+      (opt-in) + `VoyageEmbedder` (opt-in, `voyage-finance-2`, finance-tuned + `input_type`
+      asymmetry) + `FakeEmbedder` (deterministic unit-vector test double, reused by P5/P6) +
+      `build_embedder(settings)`. Deps as **extras** (`[rag]` fastembed, `[openai]`, `[voyage]`)
+      — NOT core, so CI never installs them or downloads a model; `fastembed.*`/`openai.*`/
+      `voyageai.*` in mypy overrides. Tests (+10, +1 gated `RUN_EMBED_TESTS`): determinism,
+      unit-norm, Protocol conformance, selector routing, OpenAI + Voyage via injected fake
+      clients (input_type asserted), key-required.
 
 ### P5 — Vector store
 - [ ] `rag/vector_store.py` — `VectorStore` Protocol (`add`, `query`, `count`, persistence)
