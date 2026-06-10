@@ -98,7 +98,7 @@ generation honest:
 
 ```mermaid
 flowchart TB
-  subgraph OFF["OFFLINE — Ingestion (once per document; local; no API cost)"]
+  subgraph OFF["OFFLINE — Ingestion (once per document, local, no API cost)"]
     direction LR
     SRC["Sources<br/>10-K / 10-Q / 8-K<br/>news, transcripts"] --> PRS["Parse to clean text<br/>+ section detect"]
     PRS --> CHK["Chunk<br/>(section-aware)"]
@@ -152,7 +152,7 @@ sequenceDiagram
   R->>V: search(q, filters, k)
   V-->>R: top-k chunks + scores
   alt evidence found
-    R->>L: prompt [system ; evidence ; x]
+    R->>L: prompt = system + evidence + x
     L-->>G: draft answer + citations
     Note over G: cited sources within evidence?<br/>numbers traceable to tools?
     G-->>U: grounded, cited answer
@@ -346,7 +346,7 @@ level:
 
 ```mermaid
 flowchart LR
-  R["Retrieved chunks<br/>z_1 ... z_k (+ citations)"] --> A["Assemble context c =<br/>[system ; evidence ; question]"]
+  R["Retrieved chunks<br/>z_1 ... z_k (+ citations)"] --> A["Assemble context c =<br/>[system + evidence + question]"]
   A --> T["Frozen LLM forward pass<br/>(attention reads the evidence)"]
   T --> D["Autoregressive decode<br/>p_theta(y_i given c and prefix)"]
   D --> O["Grounded, cited answer"]
