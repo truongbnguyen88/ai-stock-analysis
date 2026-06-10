@@ -92,7 +92,7 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*"]
 ignore_missing_imports = true
 
 # The experimental LSTM forecaster subclasses torch.nn.Module. torch is an OPTIONAL
