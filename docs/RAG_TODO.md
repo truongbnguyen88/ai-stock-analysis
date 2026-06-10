@@ -114,10 +114,14 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       Risk-Factors + MD&A + 8-K sections, metadata, end-to-end load. *(known: TOC repeats Item
       headers → short dup sections, deferred to P3 dedup.)* `lxml.*` added to mypy overrides.
 
-### P3 — Chunking
-- [ ] `rag/chunking.py` — PURE section-aware chunker (~`rag_chunk_tokens`, ~`overlap`,
-      never cross a section boundary; carry metadata onto every chunk). Tests: boundary
-      preservation, size bounds (no tiny/giant chunks), no metadata loss, deterministic.
+### P3 — Chunking ✅
+- [x] `rag/chunking.py` — PURE section-aware chunker: `chunk_sections` / `chunk_filing`.
+      Sliding word-window per section (token budget → words via a 0.75 proxy, no tokenizer
+      dep), `target_words` cap + exact `overlap_words`, **never crosses a section boundary**;
+      `DocumentChunk.from_metadata` copies metadata onto every chunk with a document-global
+      `chunk_index`. Folds in the **TOC dedup** P2 deferred (drops sub-`min_chunk_words`
+      sections). Tests (+12): size bounds, exact overlap, complete/ordered coverage, boundary
+      preservation, dedup, metadata/`chunk_id` integrity, determinism, overlap=0, edges.
 
 ### P4 — Embeddings
 - [ ] `rag/embeddings.py` — `Embedder` Protocol (`embed_documents`, `embed_query`,

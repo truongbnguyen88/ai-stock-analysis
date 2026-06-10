@@ -5,7 +5,7 @@
 > each phase lands. Companion to [RAG_TODO.md](RAG_TODO.md) (the ordered checklist)
 > and [rag_concepts.md](rag_concepts.md) (the theory). Updated as P3→P8 ship.
 >
-> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3–P8 pending.
+> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4–P8 pending.
 
 ---
 
@@ -188,7 +188,59 @@ the mypy `ignore_missing_imports` override.
 
 ---
 
-## P3–P8 — pending
+## P3 — Section-aware chunking
 
-Appended as each lands: **P3** chunking · **P4** embeddings · **P5** vector store ·
-**P6** retrieval · **P7** grounded QA · **P8** research memo.
+**Role.** Turn each parsed `Section` (from P2) into **retrieval-sized `DocumentChunk`s** —
+the units that get embedded (P4), stored (P5), and retrieved (P6). Pure + deterministic.
+
+**Key file.** `rag/chunking.py` (`chunk_sections`, `chunk_filing`).
+
+**Why chunk at all.** One vector can't faithfully represent a 100-page 10-K, and you want
+to retrieve + cite the *specific* passage. Chunk size trades two errors: too big → the
+embedding is a blurred average (low precision, wasted tokens); too small → the chunk loses
+the context needed to be self-explanatory. The MVP targets a few-hundred-word window with
+overlap (see [rag_concepts.md](rag_concepts.md) §4.6).
+
+**What the mechanism does.**
+- **Token budget without a tokenizer.** To stay dependency-free (a real tokenizer is a P4
+  concern), the token budget is converted to a **word** budget via a proxy:
+  `target_words = round(chunk_tokens × 0.75)` (≈ 1 English token ≈ 0.75 words). The default
+  900 tokens ≈ ~675 words. `_target_words` is the single swap-point if we later want exact
+  tokenization.
+- **Sliding word-window, per section.** Each section's text is split into words and walked
+  with a fixed window of `target_words` advancing by `step = target − overlap_words`
+  (`_windows`). So **every non-final window is exactly `target` words** (no giant chunks),
+  **consecutive chunks share exactly `overlap_words`** (a fact straddling a boundary survives
+  in both), and the windowing is bounded *within one section* → **chunks never cross a
+  section boundary** (Risk Factors and MD&A never bleed together).
+- **Dedup / no-tiny (folds in P2's deferred work).** A section whose body has
+  `< min_chunk_words` (15) words is dropped — this removes P2's header-only table-of-contents
+  duplicates (`Item 1A.` ≈ 2 words) and trivial cover lines, and guarantees no degenerately
+  tiny chunk. A section shorter than `target` but above the floor becomes one clean chunk.
+- **Metadata carry-through.** Each window becomes a `DocumentChunk` via
+  `DocumentChunk.from_metadata(...)`, copying the filing's flat metadata (ticker / type /
+  date / source / url) onto the chunk and stamping the section label. `chunk_index` is a
+  **document-global running counter**, so `chunk_id = document_id:index` is unique across the
+  whole filing — the key the vector store dedupes/updates on.
+
+**Worked sizing example.** With `chunk_tokens=200, overlap=0.2` → `target=150`, `overlap=30`,
+`step=120`. A 400-word section yields windows `[0:150]`, `[120:270]`, `[240:390]`, `[360:400]`
+— each ≤ 150 words, adjacent pairs sharing their 30 boundary words, together covering w0…w399
+with no gaps.
+
+**How P4/P5 use it.** P4 embeds each chunk's `.text`; P5 stores the vector keyed by
+`chunk_id` with the flat metadata as filter fields; P6 retrieves + filters on them.
+
+**Key decisions.** Pure/deterministic → fully offline-tested (12 tests: size bounds, exact
+overlap, complete coverage, boundary preservation, dedup, metadata/`chunk_id` integrity,
+determinism, `overlap=0`, edges). Chunk **text stays clean** (just the section's words); the
+section label lives in metadata — P4 can optionally *prepend* it to the embedding input for
+extra topical context without changing stored text. The word-proxy and `min_chunk_words`
+floor are the two heuristics most worth revisiting once we see real filings.
+
+---
+
+## P4–P8 — pending
+
+Appended as each lands: **P4** embeddings · **P5** vector store · **P6** retrieval ·
+**P7** grounded QA · **P8** research memo.
