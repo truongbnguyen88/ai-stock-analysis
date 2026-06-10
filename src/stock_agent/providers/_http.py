@@ -16,7 +16,7 @@ from stock_agent.providers.base import ProviderRateLimit, ProviderUnavailable
 
 
 class HttpJson:
-    """Minimal JSON-over-HTTP GET client with uniform error mapping."""
+    """Minimal HTTP GET client with uniform error mapping (JSON or raw text)."""
 
     def __init__(
         self,
@@ -24,19 +24,22 @@ class HttpJson:
         *,
         timeout: float = 10.0,
         client: httpx.Client | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         self._name = provider_name
         self._timeout = timeout
         # When injected (tests), we reuse and do not own the client's lifecycle.
         self._client = client
+        # Default headers applied to every request (e.g. SEC requires a User-Agent).
+        self._headers = headers
 
-    def get(self, url: str, params: dict[str, Any]) -> Any:
-        """GET ``url`` and return parsed JSON, or raise a typed provider error."""
+    def _fetch(self, url: str, params: dict[str, Any]) -> httpx.Response:
+        """GET ``url`` and return the response, mapping non-200 to typed errors."""
         try:
             if self._client is not None:
-                response = self._client.get(url, params=params)
+                response = self._client.get(url, params=params, headers=self._headers)
             else:
-                with httpx.Client(timeout=self._timeout) as client:
+                with httpx.Client(timeout=self._timeout, headers=self._headers) as client:
                     response = client.get(url, params=params)
         except httpx.HTTPError as exc:
             raise ProviderUnavailable(self._name, f"request error: {exc}") from exc
@@ -50,11 +53,19 @@ class HttpJson:
             raise ProviderUnavailable(self._name, f"server error (HTTP {code})")
         if code != 200:
             raise ProviderUnavailable(self._name, f"unexpected status (HTTP {code})")
+        return response
 
+    def get(self, url: str, params: dict[str, Any]) -> Any:
+        """GET ``url`` and return parsed JSON, or raise a typed provider error."""
+        response = self._fetch(url, params)
         try:
             return response.json()
         except ValueError as exc:
             raise ProviderUnavailable(self._name, f"invalid JSON: {exc}") from exc
+
+    def get_text(self, url: str, params: dict[str, Any] | None = None) -> str:
+        """GET ``url`` and return the raw response text (for HTML/TXT documents)."""
+        return self._fetch(url, params or {}).text
 
     def close(self) -> None:
         """Close an injected client if present (no-op for per-call clients)."""

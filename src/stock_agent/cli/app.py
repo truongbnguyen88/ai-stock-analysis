@@ -7,7 +7,7 @@ Commands: analyze (Phase 4), forecast (Phase 5), chat (Phase 4.5).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 
@@ -15,10 +15,15 @@ if TYPE_CHECKING:
     from stock_agent.schemas.backtest import BacktestResult
     from stock_agent.settings import Settings
 
+from stock_agent.documents.download import DEFAULT_FORMS, download_filings
+from stock_agent.documents.ticker_cik import load_universe, normalize_ticker
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
+from stock_agent.providers._cache import DiskCache
+from stock_agent.providers.sec_edgar import SecEdgarProvider
 from stock_agent.reports.render_md import render_markdown
+from stock_agent.schemas.documents import DocumentType
 from stock_agent.settings import get_settings
 
 app = typer.Typer(
@@ -523,3 +528,70 @@ def chat(
             continue
         if question:
             history = answer(question, history)
+
+
+# ---- documents (RAG corpus acquisition) --------------------------------------
+documents_app = typer.Typer(
+    add_completion=False, help="Acquire source documents for RAG (SEC filings)."
+)
+app.add_typer(documents_app, name="documents")
+
+_ALLOWED_FORMS: tuple[DocumentType, ...] = ("10-K", "10-Q", "8-K")
+
+
+@documents_app.command("download-sec")
+def download_sec(
+    ticker: Annotated[
+        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
+    ] = None,
+    download_all: Annotated[
+        bool, typer.Option("--all", help="Download for every ticker in the universe file")
+    ] = False,
+    forms: Annotated[
+        list[str] | None,
+        typer.Option("--forms", help="Filing forms (repeatable); default 10-K 10-Q 8-K"),
+    ] = None,
+    limit: Annotated[
+        int, typer.Option("--limit", help="Max filings per form per ticker")
+    ] = 4,
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file used with --all")
+    ] = Path("configs/universe.txt"),
+) -> None:
+    """Download SEC filings (10-K / 10-Q / 8-K) into the local corpus via EDGAR."""
+    settings = get_settings()
+    configure_logging(settings)
+    if not settings.sec_user_agent:
+        typer.echo(
+            "SEC_USER_AGENT is not set. SEC fair-access requires a contact User-Agent — "
+            "add SEC_USER_AGENT=\"Your Name your@email.com\" to your .env."
+        )
+        raise typer.Exit(code=1)
+
+    if forms:
+        bad = [f for f in forms if f not in _ALLOWED_FORMS]
+        if bad:
+            typer.echo(f"Unsupported forms {bad}; allowed: {list(_ALLOWED_FORMS)}")
+            raise typer.Exit(code=1)
+        forms_t = cast("tuple[DocumentType, ...]", tuple(forms))
+    else:
+        forms_t = DEFAULT_FORMS
+
+    if download_all:
+        tickers = load_universe(universe)
+    elif ticker:
+        tickers = [normalize_ticker(ticker)]
+    else:
+        typer.echo("Provide --ticker SYMBOL or --all.")
+        raise typer.Exit(code=1)
+
+    cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
+    provider = SecEdgarProvider(settings, cache)
+    for sym in tickers:
+        r = download_filings(
+            sym, provider, documents_dir=settings.documents_dir, forms=forms_t, limit=limit
+        )
+        typer.echo(
+            f"{sym}: downloaded {len(r.downloaded)}, skipped {len(r.skipped)}, "
+            f"errors {len(r.errors)}"
+        )
