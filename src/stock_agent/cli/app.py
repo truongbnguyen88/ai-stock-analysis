@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from stock_agent.documents.download import DEFAULT_FORMS, download_filings
 from stock_agent.documents.ticker_cik import load_universe, normalize_ticker
+from stock_agent.llm.client import AnthropicClient
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
@@ -28,6 +29,7 @@ from stock_agent.rag.pipeline import ingest_ticker
 from stock_agent.rag.retriever import Retriever
 from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
+from stock_agent.research.synthesis import answer_question
 from stock_agent.schemas.documents import DocumentType
 from stock_agent.schemas.retrieval import ChunkFilter
 from stock_agent.settings import get_settings
@@ -656,13 +658,24 @@ def rag_query(
     top_k: Annotated[
         int | None, typer.Option("--top-k", help="Chunks to return (default settings.rag_top_k)")
     ] = None,
+    answer: Annotated[
+        bool, typer.Option("--answer", help="Synthesize a cited answer (one LLM call) instead")
+    ] = False,
 ) -> None:
-    """Retrieve the most relevant SEC chunks for a question (no LLM; citations + scores)."""
+    """Retrieve SEC chunks for a question; with --answer, synthesize a cited answer."""
     settings = get_settings()
     configure_logging(settings)
     retriever = Retriever(build_embedder(settings), build_vector_store(settings))
     where = ChunkFilter(ticker=normalize_ticker(ticker)) if ticker else None
     evidence = retriever.retrieve(question, top_k=top_k or settings.rag_top_k, where=where)
+
+    if answer:
+        grounded = answer_question(question, evidence, llm=AnthropicClient(settings))
+        typer.echo(grounded.answer)
+        for cite in grounded.citations:
+            typer.echo(f"  [{cite.marker}] {cite.label}")
+        return
+
     if evidence.is_empty:
         typer.echo("No matching evidence found. Ingest first: documents ingest --ticker SYM")
         raise typer.Exit(code=1)
