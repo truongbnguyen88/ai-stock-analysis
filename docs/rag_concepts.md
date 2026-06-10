@@ -139,24 +139,17 @@ The sequence view makes the request/response order â€” and the two exit paths â€
 
 ```mermaid
 sequenceDiagram
-  autonumber
   participant U as User
   participant R as Retriever
-  participant E as Embedder
-  participant V as Vector store
-  participant L as Frozen LLM
+  participant L as LLM
   participant G as Guard
-  U->>R: question x
-  R->>E: embed(x)
-  E-->>R: query vector q
-  R->>V: search(q, filters, k)
-  V-->>R: top-k chunks + scores
+  U->>R: question
+  Note over R: embed the question, then<br/>search the vector store for top-k chunks
   alt evidence found
-    R->>L: prompt = system + evidence + x
-    L-->>G: draft answer + citations
-    Note over G: cited sources within evidence?<br/>numbers traceable to tools?
+    R->>L: system + evidence + question
+    L->>G: draft answer + citations
     G-->>U: grounded, cited answer
-  else nothing retrieved
+  else no evidence
     R-->>U: "Insufficient evidence found."
   end
 ```
