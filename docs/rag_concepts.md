@@ -133,26 +133,19 @@ Read it as three stages over one store: **ingestion** fills the vector store (of
 rather than returned. The embedder $E$ **must be identical** on both paths — query and
 document vectors are only comparable in the *same* embedding space.
 
-### 2.2 The same flow as an interaction over time
+### 2.2 The same flow as a cycle
 
-The sequence view makes the request/response order — and the two exit paths — explicit:
+Drawn as a loop, the per-query cycle returns to the user (who can then ask the next
+question). The numbered edges give the order; the dotted branch is the empty-retrieval exit:
 
 ```mermaid
-%%{init: {"sequence": {"mirrorActors": false}}}%%
-sequenceDiagram
-  participant U as User
-  participant R as Retriever
-  participant L as LLM
-  participant G as Guard
-  U->>R: question
-  Note over R: embed the question, then<br/>search the vector store for top-k chunks
-  alt evidence found
-    R->>L: system + evidence + question
-    L->>G: draft answer + citations
-    G-->>U: grounded, cited answer
-  else no evidence
-    R-->>U: "Insufficient evidence found."
-  end
+flowchart LR
+  U(("User")) -->|"1. question"| R["Retriever<br/>embed + vector search → top-k"]
+  R -->|"2. evidence"| L["LLM<br/>synthesize from system + evidence + question"]
+  L -->|"3. draft + citations"| G["Guard<br/>cited sources in evidence? numbers grounded?"]
+  G -->|"4. grounded, cited answer"| U
+  R -. "no evidence" .-> X["'Insufficient evidence found.'"]
+  X -. reply .-> U
 ```
 
 ---
