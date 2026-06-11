@@ -62,11 +62,11 @@ def test_retrieved_chunk_citation_label() -> None:
     meta = _meta(section="Item 1A. Risk Factors")
     chunk = DocumentChunk.from_metadata(meta, chunk_index=0, text="x")
     rc = RetrievedChunk(chunk=chunk, score=0.81)
-    assert rc.citation_label() == "NVDA 10-K 2025-02-26 — Item 1A. Risk Factors"
+    assert rc.citation_label() == "NVDA 10-K Feb 26, 2025 — Item 1A. Risk Factors"
     bare = RetrievedChunk(
         chunk=DocumentChunk.from_metadata(_meta(), chunk_index=0, text="x"), score=0.5
     )
-    assert bare.citation_label() == "NVDA 10-K 2025-02-26"  # no section -> no suffix
+    assert bare.citation_label() == "NVDA 10-K Feb 26, 2025"  # no section -> no suffix
 
 
 def test_evidence_set_empty_and_allowed_ids() -> None:

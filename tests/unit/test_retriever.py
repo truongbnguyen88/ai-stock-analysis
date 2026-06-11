@@ -76,5 +76,5 @@ def test_retrieve_passes_filter_through() -> None:
 def test_evidence_citation_and_allowed_ids() -> None:
     ev = _retriever([_chunk(0, "risk factors text")]).retrieve("risk factors text", top_k=1)
     rc = ev.chunks[0]
-    assert rc.citation_label() == "NVDA 10-K 2026-02-25 — Item 1A. Risk Factors"
+    assert rc.citation_label() == "NVDA 10-K Feb 25, 2026 — Item 1A. Risk Factors"
     assert ev.allowed_chunk_ids() == {rc.chunk.chunk_id}

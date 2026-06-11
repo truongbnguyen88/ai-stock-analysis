@@ -55,9 +55,14 @@ class RetrievedChunk(BaseModel):
     score: float
 
     def citation_label(self) -> str:
-        """Human-readable source label, e.g. 'NVDA 10-K 2025-02-26 — Item 1A. Risk Factors'."""
+        """Human-readable source label, e.g. 'NVDA 10-K Feb 26, 2025 — Item 1A. Risk Factors'.
+
+        The filing date is rendered as ``Mon D, YYYY`` (readable month, no zero-padding); the
+        day is kept because multiple 8-Ks can share a month, so it disambiguates the source.
+        """
         c = self.chunk
-        base = f"{c.ticker} {c.document_type} {c.filing_date.isoformat()}"
+        d = c.filing_date
+        base = f"{c.ticker} {c.document_type} {d:%b} {d.day}, {d.year}"
         return f"{base} — {c.section}" if c.section else base
 
 

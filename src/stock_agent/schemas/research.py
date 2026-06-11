@@ -17,7 +17,7 @@ class SourceCitation(BaseModel):
 
     marker: int  # the [n] used inline in the answer text
     chunk_id: str  # the retrieved chunk this marker refers to (⊆ the EvidenceSet)
-    label: str  # human-readable, e.g. "NVDA 10-K 2025-02-26 — Item 1A. Risk Factors"
+    label: str  # human-readable, e.g. "NVDA 10-K Feb 26, 2025 — Item 1A. Risk Factors"
 
 
 class GroundedAnswer(BaseModel):
