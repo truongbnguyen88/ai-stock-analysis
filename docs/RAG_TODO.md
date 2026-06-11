@@ -187,13 +187,13 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
 > (`rag query`, `research`). The chat agent (`agent/`, used by the Streamlit chat) has 16 tools
 > (prices, indicators, news, forecasts, backtest…) but **none touch the vector store** — so asking
 > the agent "what are NVDA's risk factors?" today does *not* search the embedded filings. P8.5 adds
-> one tool so the agent can answer filing questions from the ingested SEC vectors, with citations.
+> **two tools** so the agent can (1) answer a specific filing question from the ingested SEC vectors,
+> and (2) produce an integrated executive summary fusing filings + news + the forecast — both cited.
 
-**Decision (locked): expose P7 grounded-QA, not raw retrieval.** The tool makes its own
-guarded LLM call (`research.synthesis.answer_question`) and returns a *cited, validated* answer —
-exactly the `summarize_news` pattern (a tool that does its own Role-A synthesis). This keeps P7's
-**citation guard + number grounding** intact rather than handing raw chunks to the agent and hoping
-it cites correctly. (The P8 *memo* stays a CLI/explicit action — too heavy/expensive for a chat turn.)
+**Decision (locked): expose the guarded synthesis, not raw retrieval.** Both tools make their own
+guarded LLM call(s) and return *cited, validated* output — the `summarize_news` pattern (a tool that
+does its own synthesis). This keeps P7's **citation guard + number grounding** (and P8's, for the
+summary) intact rather than handing raw chunks to the agent and hoping it cites correctly.
 
 - [ ] **Tool** `search_filings` in `agent/tools.py` — schema `{ticker, question}` (+ optional
       `top_k`). Handler `_tool_search_filings`: build a `Retriever(build_embedder, build_vector_store)`
@@ -207,23 +207,39 @@ it cites correctly. (The P8 *memo* stays a CLI/explicit action — too heavy/exp
       (`documents ingest --ticker X`). The tool **does NOT** download/ingest on the fly (parse+chunk+
       embed ~1k chunks ≈ 60s — wrong for a synchronous chat turn). Background/auto-ingest of a
       watchlist is deferred to **P9**.
-- [ ] **Agent prompt** (`agent/prompts/agent.py`, bump `agent.v15 → v16`): add a routing line —
-      *"For questions about a company's SEC filings (risk factors, business, products, MD&A,
-      management commentary, accounting, legal), call `search_filings`; it answers from the
-      company's own filings with citations. Relay its citations; do not answer filing questions from
-      general knowledge."* Keep the router-not-calculator rule (the tool's numbers are already grounded).
-- [ ] **Guards / invariants.** The returned answer is already citation- + number-guarded by P7, so
-      the agent's existing **numeric-grounding guard** grounds the tool's figures from the tool output
-      (relaying SEC numbers stays safe), and non-advisory is preserved (P7 never recommends).
-      Dependency direction stays downward (`agent/ → research/ → rag/`).
-- [ ] **Tests** (offline, fakes): tool-schema conformance; `_tool_search_filings` with a fake
-      `Retriever` (InMemoryVectorStore + FakeEmbedder) + canned `TextLLM` → returns answer + resolved
-      citations; empty-store → insufficient path; `self._llm is None` → error; agent numeric-grounding
-      guard accepts the tool's grounded numbers; one agent-loop test that a filings question routes to
-      `search_filings`. **No live calls.**
-- [ ] **(Optional, same change)** also surface citations in the Streamlit chat answer rendering if not
-      automatic. Prerequisite to *use* it: `documents download-sec` + `documents ingest` for the
-      ticker (the chat answers from whatever is in `data/vectorstore`).
+- [ ] **Tool** `research_summary` in `agent/tools.py` (**required**, not optional) — schema
+      `{ticker}` (+ optional `days`). Handler `_tool_research_summary`: call **P8's**
+      `run_research(ticker, settings=self._settings, registry=self._registry, llm=self._llm)` →
+      `ResearchMemo`, and return a **compact** dict (NOT the full Markdown — too long for a tool
+      result): `executive_summary`, `business_drivers`, `risk_factors`, `bullish_evidence`,
+      `bearish_evidence`, `uncertainty_notes`, `recent_news`, the headline `forecasts`
+      (model / horizon / P(up) / E[r] / VaR95), key `technical_indicators`, and `citations`. This is
+      the **integrated executive summary** (filings + news + forecast) the agent relays for
+      "summarize / give me the full picture on TICKER / overview" requests. It is the **heaviest
+      tool** (prices + forecast + retrieval + a news-summary call + the memo call ≈ 2 LLM calls,
+      ~30–60s) — bound it like `run_backtest`, and apply the same **no-LLM guard**. Catch
+      `ResearchPipelineError` → `{"error": …}` (it's a `RuntimeError`, outside the dispatch's caught
+      tuple — extend the handler/tuple). Numbers are already from the models + P8's guards.
+- [ ] **Agent prompt** (`agent/prompts/agent.py`, bump `agent.v15 → v16`): add routing lines —
+      *for a specific filing question (risk factors, business, products, MD&A, management commentary,
+      accounting, legal) → `search_filings`; for an integrated picture / "executive summary" /
+      "overview of TICKER" → `research_summary` (fuses filings + news + forecast).* Relay each tool's
+      citations; do **not** answer filing questions from general knowledge. Reserve `research_summary`
+      for explicit full-picture requests (it's the expensive path). Keep the router-not-calculator rule.
+- [ ] **Guards / invariants.** Both tools' outputs are already citation- + number-guarded (P7 for
+      `search_filings`, P8 for `research_summary`), so the agent's existing **numeric-grounding guard**
+      grounds their figures from the tool output (relaying SEC numbers stays safe), and non-advisory is
+      preserved (neither recommends). Dependency direction stays downward (`agent/ → research/ → rag/`).
+- [ ] **Tests** (offline, fakes): tool-schema conformance for both. `_tool_search_filings` with a fake
+      `Retriever` (InMemoryVectorStore + FakeEmbedder) + canned `TextLLM` → answer + resolved citations;
+      empty-store → insufficient; `self._llm is None` → error. `_tool_research_summary` with `run_research`
+      injected/monkeypatched to return a `ResearchMemo` → compact-dict shape (exec summary + sections +
+      citations); no-LLM → error; `ResearchPipelineError` → `{"error": …}`. Agent numeric-grounding guard
+      accepts both tools' grounded numbers; agent-loop tests that a filing question routes to
+      `search_filings` and a "summarize TICKER" request routes to `research_summary`. **No live calls.**
+- [ ] **(Same change)** surface each tool's citations in the Streamlit chat answer rendering if not
+      automatic. Prerequisite to *use* either tool: `documents download-sec` + `documents ingest` for
+      the ticker (the chat answers from whatever is in `data/vectorstore`).
 
 ### P9 — Maturity / go-live (post-MVP)
 > Begins only **after P8 is green**. The MVP is built + tested on local `fastembed` (free,
