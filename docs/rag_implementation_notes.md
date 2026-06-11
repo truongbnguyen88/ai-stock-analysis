@@ -452,9 +452,14 @@ CLI `research --ticker`; tests `tests/unit/test_memo.py`.
 1. **Gather (`run_research`, orchestration).** Reuse the existing blocks: `PriceLoader` →
    `compute_snapshot` (technicals) → `HistoricalSimulation` baseline forecasts; `NewsFetcher` +
    `summarize_news` (optional). **New:** SEC evidence via three *targeted* retrievals (risk
-   factors / business drivers / MD&A), merged + deduped by `chunk_id`, capped at 10 by score —
-   so the filing-grounded sections each get coverage. The memo *is* the synthesis, so an LLM is
-   required (unlike `analyze`, which degrades).
+   factors / business drivers / MD&A), combined by **`_round_robin_merge`** — it interleaves the
+   three result lists (next-best unseen chunk from each in turn), deduping by `chunk_id`, up to a
+   cap of 10. This **guarantees per-section coverage**: a plain global score-cap let Risk-Factors
+   chunks (which score highest across *every* query) crowd out the others, so the Business-Drivers
+   and Management-Commentary sections ended up grounded in the wrong filing section — the
+   round-robin fixes that (post-P8 review fix). The memo *is* the synthesis, so an LLM is required
+   (unlike `analyze`, which degrades); a failed/guard-rejected memo is wrapped as a
+   `ResearchPipelineError` (clean CLI message, not a traceback).
 2. **Deterministic quant sections.** `build_memo` copies `snapshot.numeric_indicators()` and the
    `ScenarioForecast`s **verbatim** into the memo — the LLM never emits these numbers.
 3. **Seed the number-grounding set** from the forecast + snapshot + news + SEC source texts (the
@@ -472,10 +477,15 @@ CLI `research --ticker`; tests `tests/unit/test_memo.py`.
 
 **Key decisions.** Quant sections are code-rendered, not LLM-written, so the numbers-vs-narrative
 invariant holds structurally. The SEC evidence uses *multiple targeted* retrievals (not one
-composite query) for better per-section recall, then a score cap to bound prompt cost. P7's guard
-helpers (`_loads_lenient`, `_markers_in_text`, `_correction`) and `NumberGrounding` are reused
-rather than reimplemented. Tested end-to-end with a canned `TextLLM`; the two real LLM calls (news
-summary + memo) run only via `research --ticker`.
+composite query) merged round-robin for balanced per-section coverage. The shared synthesis
+helpers (`loads_lenient`, `markers_in_text`, `correction`) live in `research/_shared.py` — used by
+both P7 (`synthesis.py`) and P8 (`memo.py`) — and `NumberGrounding` is reused rather than
+reimplemented. **Known limitation:** the number-grounding guard is seeded from ~10 full SEC chunks,
+so it is *recall-favoring* — it reliably blocks a figure absent from all inputs, but can miss a
+fabricated number that coincidentally matches an unrelated value in the sources. The load-bearing
+numbers (technicals, scenarios) are exact, code-rendered, and never pass through the LLM, so this
+limitation affects only incidental figures the model might cite in prose. Tested end-to-end with a
+canned `TextLLM`; the two real LLM calls (news summary + memo) run only via `research --ticker`.
 
 ---
 
