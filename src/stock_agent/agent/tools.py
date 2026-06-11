@@ -24,14 +24,19 @@ from stock_agent.data.validation import DataIssue
 from stock_agent.features.news_features import build_news_features
 from stock_agent.forecasting.large_move import large_move_breakdown
 from stock_agent.indicators.snapshot import compute_snapshot
-from stock_agent.llm.client import TextLLM
+from stock_agent.llm.client import LLMError, TextLLM
 from stock_agent.llm.news_summarizer import summarize_news
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher, TopicNewsFetcher
 from stock_agent.news.topics import ResolvedTopic, gdelt_query_expression, list_topics
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
+from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
+from stock_agent.rag.embeddings import build_embedder
+from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.vector_store import build_vector_store
+from stock_agent.research.synthesis import ResearchGuardError, answer_question
 from stock_agent.schemas.backtest import BacktestResult
 from stock_agent.schemas.comparison import (
     ForecastComparison,
@@ -41,6 +46,8 @@ from stock_agent.schemas.comparison import (
     TickerNewsRow,
 )
 from stock_agent.schemas.forecast import ScenarioForecast
+from stock_agent.schemas.research import ResearchMemo
+from stock_agent.schemas.retrieval import ChunkFilter
 from stock_agent.settings import Settings
 
 
@@ -73,6 +80,11 @@ _BT_TIMEOUT_S = 45.0  # wall-clock backstop; argument bounds keep typical runs ~
 # rejected, so a slightly-too-long request still returns a useful comparison.
 _MAX_TICKERS = 6
 _COMPARE_TIMEOUT_S = 90.0
+
+# research_summary is the heaviest tool (prices + forecast + retrieval + a news-summary
+# call + the memo synthesis call ≈ 2 LLM calls). Bound the chat's wait like run_backtest;
+# the underlying LLM client carries its own per-request timeout, this is the wall-clock cap.
+_RESEARCH_TIMEOUT_S = 120.0
 
 # Curated theme slugs surfaced to the model (free-form themes also work).
 _KNOWN_TOPICS_DESC = ", ".join(list_topics())
@@ -491,6 +503,60 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "required": ["ticker"],
         },
     },
+    {
+        "name": "search_filings",
+        "description": (
+            "Answer a SPECIFIC question from a company's SEC FILINGS (10-K / 10-Q / 8-K) using "
+            "the ingested filing text — risk factors, business/products, MD&A, management "
+            "commentary, accounting, legal proceedings, segment detail. Returns a cited answer "
+            "(each claim marked [n], with the source filing+section) grounded ONLY in the "
+            "retrieved filings — never general knowledge. Use this for 'what are NVDA's risk "
+            "factors / what does management say about X / what's in the latest 10-K'. Qualitative "
+            "evidence only — no probabilities. If filings for the ticker haven't been ingested, "
+            "it reports insufficient evidence (it does NOT fetch on the fly)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string", "description": "Ticker symbol, e.g. NVDA"},
+                "question": {
+                    "type": "string",
+                    "description": "The specific filing question to answer from the SEC text.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "How many filing chunks to ground on (default from settings).",
+                },
+            },
+            "required": ["ticker", "question"],
+        },
+    },
+    {
+        "name": "research_summary",
+        "description": (
+            "INTEGRATED executive summary for one ticker fusing SEC FILINGS + NEWS + the price "
+            "FORECAST into one cited brief: executive summary, business drivers, risk factors, "
+            "bullish/bearish evidence, uncertainty notes, recent-news themes, the headline model "
+            "forecasts (P(up)/E[r]/VaR95 per horizon), and key technical indicators. Use ONLY for "
+            "explicit full-picture requests — 'give me the full picture / overview / executive "
+            "summary / brief on TICKER'. This is the HEAVIEST tool (forecast + retrieval + a "
+            "news-summary call + the memo synthesis ≈ 2 LLM calls, ~30–60s) — reserve it for those "
+            "requests, not casual questions. Numbers come from the models; filing claims cited; "
+            "NON-ADVISORY (no recommendation). Needs the ticker's filings ingested first."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ticker": {"type": "string"},
+                "days": {
+                    "type": "integer",
+                    "default": 30,
+                    "description": "News lookback window in days for the summary.",
+                },
+            },
+            "required": ["ticker"],
+        },
+    },
 ]
 
 
@@ -510,6 +576,18 @@ class ToolExecutor:
         # Per-session memoization of backtests so run_backtest + get_calibration on
         # the same (ticker, horizon, model) reuse one computation instead of two.
         self._backtest_cache: dict[tuple[str, int, str], BacktestResult] = {}
+        # Lazily-built, session-memoized RAG retriever (embedder + vector store) so
+        # repeated filing questions / the research summary don't reload the embedding
+        # model and re-open the store each call. Tests inject a fake by setting it.
+        self._retriever: Retriever | None = None
+
+    def _get_retriever(self) -> Retriever:
+        """Build (once) and return the shared SEC retriever for this session."""
+        if self._retriever is None:
+            self._retriever = Retriever(
+                build_embedder(self._settings), build_vector_store(self._settings)
+            )
+        return self._retriever
 
     # ---- data helpers --------------------------------------------------------
     def _load(self, ticker: str, days: int) -> LoadResult:
@@ -1045,4 +1123,108 @@ class ToolExecutor:
                 f"Walk-forward out-of-sample, embargo = horizon, {r.n_folds} folds, "
                 f"{c.n_bins}-bin reliability."
             ),
+        }
+
+    # ---- RAG: SEC-grounded filing QA + integrated summary (P8.5) --------------
+    @staticmethod
+    def _citations_payload(citations: list[Any]) -> list[dict[str, Any]]:
+        """Flatten ``SourceCitation`` objects to the compact citation dicts tools return."""
+        return [{"marker": c.marker, "label": c.label, "chunk_id": c.chunk_id} for c in citations]
+
+    def _tool_search_filings(self, args: dict[str, Any]) -> dict[str, Any]:
+        # Mirrors summarize_news: the tool makes its own guarded synthesis call, so the
+        # citation guard + number grounding (P7) stay intact rather than handing raw chunks
+        # to the agent. No LLM -> no synthesis possible.
+        if self._llm is None:
+            return {"error": "filing search unavailable (no LLM configured)"}
+        ticker = str(args["ticker"]).upper()
+        question = str(args["question"]).strip()
+        if not question:
+            return {"error": "search_filings needs a non-empty 'question'."}
+        top_k = int(args.get("top_k", self._settings.rag_top_k))
+        evidence = self._get_retriever().retrieve(
+            question, top_k=top_k, where=ChunkFilter(ticker=ticker)
+        )
+        if evidence.is_empty:
+            # Honest refusal (P7) + a hint that the corpus for this ticker isn't ingested.
+            # The tool never downloads/ingests on the fly (too slow for a chat turn).
+            return {
+                "ticker": ticker,
+                "answer": "Insufficient evidence found.",
+                "insufficient_evidence": True,
+                "n_sources": 0,
+                "citations": [],
+                "hint": (
+                    f"No ingested SEC filings for {ticker}. Run "
+                    f"`documents download-sec --ticker {ticker}` then "
+                    f"`documents ingest --ticker {ticker}` to enable filing search."
+                ),
+            }
+        try:
+            answer = answer_question(question, evidence, llm=self._llm)
+        except (ResearchGuardError, LLMError) as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "ticker": ticker,
+            "answer": answer.answer,
+            "insufficient_evidence": answer.insufficient_evidence,
+            "n_sources": len(evidence.chunks),
+            "citations": self._citations_payload(answer.citations),
+        }
+
+    @staticmethod
+    def _forecast_headline(forecasts: list[ScenarioForecast]) -> list[dict[str, Any]]:
+        """Compact per-horizon forecast rows for the summary (numbers straight from the model)."""
+        return [
+            {
+                "model": fc.model_name,
+                "horizon_days": fc.horizon_days,
+                "prob_up": fc.upside_prob,
+                "expected_return": fc.expected_return,
+                "var_95": fc.var_95,
+            }
+            for fc in forecasts
+        ]
+
+    def _tool_research_summary(self, args: dict[str, Any]) -> dict[str, Any]:
+        # Heaviest tool: P8's run_research (forecast + SEC retrieval + news summary + the memo
+        # synthesis call). Numbers + filing citations are already guarded inside the memo, so
+        # the agent just relays the compact result. Bound the wall-clock like run_backtest.
+        if self._llm is None:
+            return {"error": "research summary unavailable (no LLM configured)"}
+        ticker = str(args["ticker"]).upper()
+        days = int(args.get("days", 30))
+
+        def _run() -> ResearchMemo:
+            return run_research(
+                ticker,
+                settings=self._settings,
+                registry=self._registry,
+                llm=self._llm,
+                days=days,
+                retriever=self._get_retriever(),  # reuse the session embedder + store
+            )
+
+        try:
+            memo = _run_with_timeout(_run, _RESEARCH_TIMEOUT_S)
+        except ResearchPipelineError as exc:  # RuntimeError — outside dispatch's caught tuple
+            return {"error": str(exc)}
+        except TimeoutError:
+            return {
+                "error": f"research summary exceeded {int(_RESEARCH_TIMEOUT_S)}s; try again later."
+            }
+        # Compact dict (NOT the full Markdown — too long for a tool result).
+        return {
+            "ticker": memo.ticker,
+            "as_of": memo.as_of.isoformat(),
+            "executive_summary": memo.executive_summary,
+            "business_drivers": memo.business_drivers,
+            "risk_factors": memo.risk_factors,
+            "bullish_evidence": memo.bullish_evidence,
+            "bearish_evidence": memo.bearish_evidence,
+            "uncertainty_notes": memo.uncertainty_notes,
+            "recent_news": memo.recent_news,
+            "forecasts": self._forecast_headline(memo.forecasts),
+            "technical_indicators": memo.technical_indicators,
+            "citations": self._citations_payload(memo.citations),
         }

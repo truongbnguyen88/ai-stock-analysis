@@ -207,11 +207,14 @@ def test_batch_and_topic_tools_are_registered_and_prompt_documents_them() -> Non
         "get_topic_news",
         "analyze_topic_news",
         "conditional_outlook",
+        # P8.5: RAG tools (SEC filing QA + integrated summary).
+        "search_filings",
+        "research_summary",
     }
     assert expected <= names
     for tool in expected:
         assert tool in SYSTEM, tool
-    assert VERSION == "agent.v15"  # batch + topic + conditional-outlook guidance
+    assert VERSION == "agent.v16"  # + P8.5 RAG tool routing (search_filings / research_summary)
 
 
 def test_agent_loop_runs_compare_forecasts_and_surfaces_it() -> None:

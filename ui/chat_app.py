@@ -83,6 +83,33 @@ def _render_export(text: str, charts: list[ChartSpec], idx: int) -> None:
                 use_container_width=True,
             )
 
+def _sources_from_tool_results(tool_results: list) -> list[dict]:  # type: ignore[type-arg]
+    """Collect SEC citations from the RAG tools (search_filings / research_summary).
+
+    Citations come from the tool OUTPUT (P7/P8 resolved them against the retrieved set),
+    not the LLM — so surfacing them here can't introduce a fabricated source. Deduped by
+    (marker, label), preserving first-seen order.
+    """
+    seen: set[tuple[int, str]] = set()
+    sources: list[dict] = []  # type: ignore[type-arg]
+    for inv in tool_results:
+        for cit in inv.result.get("citations", []) if isinstance(inv.result, dict) else []:
+            key = (cit.get("marker"), cit.get("label", ""))
+            if key not in seen:
+                seen.add(key)
+                sources.append({"marker": cit.get("marker"), "label": cit.get("label", "")})
+    return sources
+
+
+def _render_sources(sources: list[dict]) -> None:  # type: ignore[type-arg]
+    """Render a turn's resolved SEC citations as a compact 'Filing sources' expander."""
+    if not sources:
+        return
+    with st.expander(f"📑 Filing sources ({len(sources)})"):
+        for s in sources:
+            st.caption(f"[{s['marker']}] {s['label']}")
+
+
 def _render_typewriter() -> None:
     """Animated centerpiece: a pure client-side typewriter cycling capability headlines.
 
@@ -192,6 +219,8 @@ def _serialize_messages(messages: list[dict]) -> list[dict]:
         sm = {"role": m["role"], "content": m["content"]}
         if m.get("charts"):
             sm["charts"] = [c.to_dict() for c in m["charts"]]
+        if m.get("sources"):
+            sm["sources"] = m["sources"]  # plain dicts already; survive a restart
         out.append(sm)
     return out
 
@@ -205,6 +234,7 @@ def _deserialize_messages(raw: list[dict]) -> list[dict]:
                 "role": m["role"],
                 "content": m["content"],
                 "charts": [ChartSpec.from_dict(c) for c in m.get("charts", [])],
+                "sources": m.get("sources", []),
             }
         )
     return out
@@ -317,6 +347,7 @@ for idx, msg in enumerate(st.session_state.messages):
         for spec in msg.get("charts", []):
             _render_chart(spec)
         if msg["role"] == "assistant":
+            _render_sources(msg.get("sources", []))
             _render_export(msg["content"], msg.get("charts", []), idx)
 
 # ---- handle quick-starter injection ----
@@ -341,6 +372,7 @@ if prompt:
     # Run the agent and stream the response.
     with st.chat_message("assistant"):
         charts: list[ChartSpec] = []
+        sources: list[dict] = []  # type: ignore[type-arg]
         with st.spinner("Working on your request…"):
             try:
                 result = run_agent(
@@ -355,6 +387,8 @@ if prompt:
                 # Charts derived from the tool results (numbers the tools produced,
                 # never the LLM) — rendered alongside the text below, not replacing it.
                 charts = charts_for(result.tool_results)
+                # Resolved SEC citations from the RAG tools (from tool output, not the LLM).
+                sources = _sources_from_tool_results(result.tool_results)
                 # Show which tools were used as a subtle annotation.
                 if result.tool_calls:
                     unique = list(dict.fromkeys(result.tool_calls))  # preserve order
@@ -377,10 +411,13 @@ if prompt:
         st.markdown(response)
         for spec in charts:
             _render_chart(spec)
+        _render_sources(sources)
         # Export buttons for this answer (idx = the index it gets once appended below).
         _render_export(response, charts, len(st.session_state.messages))
 
-    # Persist text + charts so the turn re-renders intact on later reruns.
-    st.session_state.messages.append({"role": "assistant", "content": response, "charts": charts})
+    # Persist text + charts + filing sources so the turn re-renders intact on later reruns.
+    st.session_state.messages.append(
+        {"role": "assistant", "content": response, "charts": charts, "sources": sources}
+    )
     # Save the thread to disk so it survives restarts and shows in the sidebar.
     _save_current_thread()

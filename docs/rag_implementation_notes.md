@@ -493,3 +493,73 @@ canned `TextLLM`; the two real LLM calls (news summary + memo) run only via `res
 `rag query [--answer]` / `research --ticker` → cited, auditable SEC-grounded output. Post-MVP work
 (switch to voyage-4, bulk download, scheduling, spend guard, retrieval A/B) is tracked in
 [RAG_TODO.md](RAG_TODO.md) → P9.
+
+---
+
+## P8.5 — Wire RAG into the chat agent
+
+**Role.** P0–P8 made SEC-grounded QA + the integrated memo reachable **only via the CLI**. P8.5
+exposes them to the chat agent (`agent/`, the Streamlit chat) as **two tools** so a conversational
+"what are NVDA's risk factors?" actually searches the embedded filings, and "give me the full
+picture on NVDA" returns the integrated memo — both cited and guarded. The locked decision: expose
+the **guarded synthesis**, not raw retrieval — each tool makes its own guarded LLM call(s) and
+returns *cited, validated* output (the `summarize_news` pattern), so P7's citation guard + number
+grounding (and P8's, for the summary) stay intact rather than handing raw chunks to the agent.
+
+**Key files.** `agent/tools.py` (`search_filings` + `research_summary` schemas, `_tool_search_filings`,
+`_tool_research_summary`, the memoized `_get_retriever`), `agent/prompts/agent.py` (`agent.v16`
+routing), `pipelines/research.py` (`run_research` gained a `retriever=` passthrough),
+`ui/chat_app.py` (`_render_sources` "Filing sources" expander); tests
+`tests/integration/test_agent_rag_tools.py` (+9) and the version/registration assertion in
+`test_agent_runtime.py`.
+
+**How it works (step by step).**
+1. **Memoized retriever.** `ToolExecutor._get_retriever()` lazily builds **one**
+   `Retriever(build_embedder, build_vector_store)` per session and caches it on `self._retriever`
+   (mirrors `_backtest_cache`), so repeated filing questions / the summary don't reload the
+   embedding model or re-open the store. Tests inject a fake by setting `executor._retriever`.
+2. **`search_filings(ticker, question, top_k?)`** → `_tool_search_filings`: no-LLM guard
+   (`self._llm is None → {"error": …}`, like `summarize_news`); `_get_retriever().retrieve(question,
+   top_k, where=ChunkFilter(ticker=...))`; **empty retrieval** → relay P7's
+   "Insufficient evidence found." + `insufficient_evidence=True` + a **hint** to
+   `documents download-sec`/`ingest` the ticker (the tool **never** ingests on the fly — parse+chunk+
+   embed ~1k chunks is too slow for a chat turn; auto-ingest is P9). Otherwise the single guarded
+   `answer_question(question, evidence, llm=self._llm)` (P7) → compact `{answer,
+   insufficient_evidence, n_sources, citations:[{marker,label,chunk_id}]}`. `ResearchGuardError` /
+   `LLMError` are caught → `{"error": …}` (the dispatch only catches `ProviderError/ValueError/KeyError`).
+3. **`research_summary(ticker, days?)`** → `_tool_research_summary`: no-LLM guard; calls **P8's**
+   `run_research(ticker, …, llm=self._llm, retriever=self._get_retriever())` under
+   `_run_with_timeout(120s)` (heaviest tool — forecast + retrieval + a news-summary call + the memo
+   synthesis ≈ 2 LLM calls). `ResearchPipelineError` (a `RuntimeError`, outside the dispatch tuple)
+   is caught **inside the handler** → `{"error": …}`. Returns a **compact** dict (NOT the full
+   Markdown — too long for a tool result): `executive_summary`, the section lists
+   (drivers/risks/bull/bear/uncertainty/recent_news), `forecasts` headline rows
+   (`model`/`horizon_days`/`prob_up`/`expected_return`/`var_95`), `technical_indicators`, and
+   resolved `citations`. `run_research` now accepts an optional `retriever` so the agent's session
+   retriever is reused instead of rebuilding the embedder.
+4. **Routing (`agent.v16`).** Added patterns: a *specific filing question* (risk factors, business,
+   MD&A, management commentary, accounting, legal) → `search_filings`, with "relay the [n] citations,
+   never answer a filing question from general knowledge, surface the insufficient-evidence hint";
+   an *explicit full-picture / "executive summary" / "overview of TICKER"* → `research_summary` (the
+   expensive path, reserved for explicit requests). The existing manual "executive summary"
+   composition is kept as the fallback (no filings ingested, or `research_summary` errors).
+5. **Guards / grounding stay automatic.** Both tools' numbers + citations are already guarded
+   (P7/P8), and the agent runtime seeds its numeric-grounding set from each tool result
+   (`grounding.add_from(result)`), so a relayed SEC figure (e.g. "41%") or model figure (e.g. P(up)
+   "76%") grounds from the tool output — no new guard needed. Non-advisory is preserved (neither tool
+   recommends). Dependency direction stays downward: `agent/ → pipelines/research → research/ → rag/`.
+6. **UI.** `_sources_from_tool_results` collects citations from the RAG tool *outputs* (not the LLM,
+   so it can't introduce a fabricated source), deduped by `(marker, label)`; `_render_sources` shows
+   them in a "📑 Filing sources" expander. Persisted on the message (`sources`) and round-tripped
+   through the thread store so they survive reruns/restarts alongside charts.
+
+**Key decisions.** (a) Guarded synthesis over raw retrieval — keeps the citation/number guards at the
+boundary. (b) No on-the-fly ingest in a chat turn (latency); prerequisite is `documents
+download-sec` + `documents ingest` for the ticker. (c) One session-memoized retriever shared by both
+tools and threaded into `run_research`, so the embedder loads at most once per chat session.
+(d) `research_summary` returns a compact dict, not the Markdown memo, to keep the tool-result token
+cost bounded. **Tested** offline with a fake `Retriever` (FakeEmbedder + InMemoryVectorStore) + canned
+`TextLLM`, and `run_research` monkeypatched for the summary path — no model download, no live LLM.
+
+**MVP + chat integration complete (P0–P8.5).** Next: P9 (voyage-4 embeddings, bulk download,
+quarterly refresh, spend guard, retrieval A/B) and watchlist auto-ingest.

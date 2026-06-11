@@ -102,8 +102,13 @@ def run_research(
     days: int = 30,
     company_name: str | None = None,
     use_news: bool = True,
+    retriever: Retriever | None = None,
 ) -> ResearchMemo:
-    """Gather technicals + forecast + news + SEC evidence, then build the integrated memo."""
+    """Gather technicals + forecast + news + SEC evidence, then build the integrated memo.
+
+    ``retriever`` lets a caller (e.g. the chat agent) inject a session-memoized retriever so
+    the embedder + vector store aren't rebuilt per call; when ``None`` one is built from settings.
+    """
     registry = registry or build_default_registry(settings)
     ticker = ticker.upper()
 
@@ -126,7 +131,7 @@ def run_research(
             log.info("research.skip_horizon", ticker=ticker, horizon=h)
 
     # SEC evidence (RAG). Empty when nothing has been ingested for the ticker.
-    evidence = _gather_sec_evidence(ticker, settings, settings.rag_top_k)
+    evidence = _gather_sec_evidence(ticker, settings, settings.rag_top_k, retriever=retriever)
     if evidence.is_empty:
         log.warning("research.no_sec_evidence", ticker=ticker)
 

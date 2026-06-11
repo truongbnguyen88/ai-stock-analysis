@@ -182,7 +182,7 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       section assembly, single-LLM-call, citation guard, number grounding, empty-evidence graceful,
       Markdown export. **MVP COMPLETE (P0–P8).**
 
-### P8.5 — Wire RAG into the chat agent
+### P8.5 — Wire RAG into the chat agent ✅
 > **Why.** P0–P8 built the SEC-grounded QA + memo, but they're reachable **only via the CLI**
 > (`rag query`, `research`). The chat agent (`agent/`, used by the Streamlit chat) has 16 tools
 > (prices, indicators, news, forecasts, backtest…) but **none touch the vector store** — so asking
@@ -195,19 +195,19 @@ guarded LLM call(s) and return *cited, validated* output — the `summarize_news
 does its own synthesis). This keeps P7's **citation guard + number grounding** (and P8's, for the
 summary) intact rather than handing raw chunks to the agent and hoping it cites correctly.
 
-- [ ] **Tool** `search_filings` in `agent/tools.py` — schema `{ticker, question}` (+ optional
+- [x] **Tool** `search_filings` in `agent/tools.py` — schema `{ticker, question}` (+ optional
       `top_k`). Handler `_tool_search_filings`: build a `Retriever(build_embedder, build_vector_store)`
       **memoized on the executor** (like `_backtest_cache`, so repeated filing questions don't rebuild
       the embedder/store), `ChunkFilter(ticker=...)`, call `answer_question(question, evidence,
       llm=self._llm)` → return `{answer, citations:[{marker,label,chunk_id}], insufficient_evidence,
       n_sources}`. Mirror `summarize_news`'s **no-LLM guard** (`self._llm is None → {"error": …}`).
       Never raises (dispatch already wraps to `{"error": …}`).
-- [ ] **Empty-store / not-ingested path.** If retrieval is empty → relay P7's
+- [x] **Empty-store / not-ingested path.** If retrieval is empty → relay P7's
       "Insufficient evidence found." plus a hint that filings for the ticker aren't ingested
       (`documents ingest --ticker X`). The tool **does NOT** download/ingest on the fly (parse+chunk+
       embed ~1k chunks ≈ 60s — wrong for a synchronous chat turn). Background/auto-ingest of a
       watchlist is deferred to **P9**.
-- [ ] **Tool** `research_summary` in `agent/tools.py` (**required**, not optional) — schema
+- [x] **Tool** `research_summary` in `agent/tools.py` (**required**, not optional) — schema
       `{ticker}` (+ optional `days`). Handler `_tool_research_summary`: call **P8's**
       `run_research(ticker, settings=self._settings, registry=self._registry, llm=self._llm)` →
       `ResearchMemo`, and return a **compact** dict (NOT the full Markdown — too long for a tool
@@ -220,24 +220,24 @@ summary) intact rather than handing raw chunks to the agent and hoping it cites 
       ~30–60s) — bound it like `run_backtest`, and apply the same **no-LLM guard**. Catch
       `ResearchPipelineError` → `{"error": …}` (it's a `RuntimeError`, outside the dispatch's caught
       tuple — extend the handler/tuple). Numbers are already from the models + P8's guards.
-- [ ] **Agent prompt** (`agent/prompts/agent.py`, bump `agent.v15 → v16`): add routing lines —
+- [x] **Agent prompt** (`agent/prompts/agent.py`, bump `agent.v15 → v16`): add routing lines —
       *for a specific filing question (risk factors, business, products, MD&A, management commentary,
       accounting, legal) → `search_filings`; for an integrated picture / "executive summary" /
       "overview of TICKER" → `research_summary` (fuses filings + news + forecast).* Relay each tool's
       citations; do **not** answer filing questions from general knowledge. Reserve `research_summary`
       for explicit full-picture requests (it's the expensive path). Keep the router-not-calculator rule.
-- [ ] **Guards / invariants.** Both tools' outputs are already citation- + number-guarded (P7 for
+- [x] **Guards / invariants.** Both tools' outputs are already citation- + number-guarded (P7 for
       `search_filings`, P8 for `research_summary`), so the agent's existing **numeric-grounding guard**
       grounds their figures from the tool output (relaying SEC numbers stays safe), and non-advisory is
       preserved (neither recommends). Dependency direction stays downward (`agent/ → research/ → rag/`).
-- [ ] **Tests** (offline, fakes): tool-schema conformance for both. `_tool_search_filings` with a fake
+- [x] **Tests** (offline, fakes): tool-schema conformance for both. `_tool_search_filings` with a fake
       `Retriever` (InMemoryVectorStore + FakeEmbedder) + canned `TextLLM` → answer + resolved citations;
       empty-store → insufficient; `self._llm is None` → error. `_tool_research_summary` with `run_research`
       injected/monkeypatched to return a `ResearchMemo` → compact-dict shape (exec summary + sections +
       citations); no-LLM → error; `ResearchPipelineError` → `{"error": …}`. Agent numeric-grounding guard
       accepts both tools' grounded numbers; agent-loop tests that a filing question routes to
       `search_filings` and a "summarize TICKER" request routes to `research_summary`. **No live calls.**
-- [ ] **(Same change)** surface each tool's citations in the Streamlit chat answer rendering if not
+- [x] **(Same change)** surface each tool's citations in the Streamlit chat answer rendering if not
       automatic. Prerequisite to *use* either tool: `documents download-sec` + `documents ingest` for
       the ticker (the chat answers from whatever is in `data/vectorstore`).
 
