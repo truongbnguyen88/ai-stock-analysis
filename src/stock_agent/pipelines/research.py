@@ -23,7 +23,7 @@ from stock_agent.providers.registry import ProviderRegistry, build_default_regis
 from stock_agent.rag.embeddings import build_embedder
 from stock_agent.rag.retriever import Retriever
 from stock_agent.rag.vector_store import build_vector_store
-from stock_agent.research.memo import build_memo
+from stock_agent.research.memo import MemoGuardError, build_memo
 from stock_agent.schemas.research import ResearchMemo
 from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChunk
 from stock_agent.settings import Settings
@@ -46,18 +46,50 @@ class ResearchPipelineError(RuntimeError):
     """Raised when the memo cannot be produced (e.g. no LLM available)."""
 
 
-def _gather_sec_evidence(ticker: str, settings: Settings, per_query_k: int) -> EvidenceSet:
-    """Retrieve + merge SEC chunks across the memo's section queries (deduped, score-capped)."""
-    retriever = Retriever(build_embedder(settings), build_vector_store(settings))
+def _round_robin_merge(
+    result_lists: Sequence[Sequence[RetrievedChunk]], cap: int
+) -> list[RetrievedChunk]:
+    """Interleave per-query results so each query is fairly represented (section diversity).
+
+    Pulls the next-best unseen chunk from each query's list in turn (round-robin), deduping by
+    ``chunk_id``, until ``cap`` chunks are chosen or every list is exhausted. This stops one
+    verbose section (e.g. Risk Factors, whose chunks score highest across *every* query) from
+    crowding out the others — the failure mode a plain global score-cap had. Returned sorted by
+    score for presentation; diversity comes from *which* chunks are picked, not their order.
+    """
+    selected: dict[str, RetrievedChunk] = {}
+    cursors = [0] * len(result_lists)
+    progressed = True
+    while len(selected) < cap and progressed:
+        progressed = False
+        for qi, chunks in enumerate(result_lists):
+            while cursors[qi] < len(chunks) and chunks[cursors[qi]].chunk.chunk_id in selected:
+                cursors[qi] += 1  # skip a chunk an earlier query already claimed
+            if cursors[qi] < len(chunks):
+                rc = chunks[cursors[qi]]
+                selected[rc.chunk.chunk_id] = rc
+                cursors[qi] += 1
+                progressed = True
+                if len(selected) >= cap:
+                    break
+    return sorted(selected.values(), key=lambda rc: rc.score, reverse=True)
+
+
+def _gather_sec_evidence(
+    ticker: str,
+    settings: Settings,
+    per_query_k: int,
+    *,
+    retriever: Retriever | None = None,
+) -> EvidenceSet:
+    """Retrieve SEC chunks per memo-section query, then round-robin merge for balanced coverage."""
+    retriever = retriever or Retriever(build_embedder(settings), build_vector_store(settings))
     where = ChunkFilter(ticker=ticker)
-    best: dict[str, RetrievedChunk] = {}
-    for query in _MEMO_QUERIES:
-        for rc in retriever.retrieve(query, top_k=per_query_k, where=where).chunks:
-            current = best.get(rc.chunk.chunk_id)
-            if current is None or rc.score > current.score:
-                best[rc.chunk.chunk_id] = rc
-    ranked = sorted(best.values(), key=lambda rc: rc.score, reverse=True)[:_MEMO_EVIDENCE_CAP]
-    return EvidenceSet(query=f"{ticker} research memo", chunks=ranked)
+    per_query = [
+        retriever.retrieve(q, top_k=per_query_k, where=where).chunks for q in _MEMO_QUERIES
+    ]
+    chunks = _round_robin_merge(per_query, _MEMO_EVIDENCE_CAP)
+    return EvidenceSet(query=f"{ticker} research memo", chunks=chunks)
 
 
 def run_research(
@@ -109,12 +141,17 @@ def run_research(
         except (LLMError, SummaryGuardError, ValueError, ValidationError) as exc:
             log.warning("research.news_failed", ticker=ticker, error=str(exc))
 
-    return build_memo(
-        ticker,
-        as_of,
-        snapshot=snapshot,
-        forecasts=forecasts,
-        evidence=evidence,
-        llm=client,
-        news_summary=news_summary,
-    )
+    # The memo IS the synthesis (no graceful no-LLM fallback) — surface a clean error rather
+    # than a traceback if the call fails or its guards reject the output after the retry.
+    try:
+        return build_memo(
+            ticker,
+            as_of,
+            snapshot=snapshot,
+            forecasts=forecasts,
+            evidence=evidence,
+            llm=client,
+            news_summary=news_summary,
+        )
+    except (MemoGuardError, LLMError, ValidationError) as exc:
+        raise ResearchPipelineError(f"Memo synthesis failed: {exc}") from exc

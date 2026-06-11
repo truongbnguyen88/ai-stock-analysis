@@ -22,8 +22,8 @@ from stock_agent.indicators.snapshot import IndicatorSnapshot
 from stock_agent.llm.client import TextLLM
 from stock_agent.llm.guards import NewsSummary, NumberGrounding
 from stock_agent.logging_config import get_logger
+from stock_agent.research._shared import correction, loads_lenient, markers_in_text
 from stock_agent.research.prompts import MEMO_SYSTEM, build_memo_user
-from stock_agent.research.synthesis import _correction, _loads_lenient, _markers_in_text
 from stock_agent.schemas.forecast import ScenarioForecast
 from stock_agent.schemas.research import ResearchMemo, SourceCitation
 from stock_agent.schemas.retrieval import EvidenceSet
@@ -108,6 +108,11 @@ def build_memo(
     if news_summary is not None:
         grounding.add_from(news_summary.model_dump())
         news_themes = list(news_summary.key_themes[:6])
+    # Seed the grounding set from every quotable input. KNOWN LIMITATION: with ~10 full SEC
+    # chunks the grounded number set is large, so this guard is recall-favoring — it reliably
+    # blocks a figure absent from *all* inputs, but won't catch a fabricated number that happens
+    # to coincide with an unrelated value somewhere in the sources. It is a guardrail, not a
+    # precision oracle (the quant sections, which carry the load-bearing numbers, are exact).
     for rc in evidence.chunks:
         grounding.add_from(rc.chunk.text)  # SEC figures are quotable
 
@@ -121,7 +126,7 @@ def build_memo(
             chunk_id=evidence.chunks[m - 1].chunk.chunk_id,
             label=evidence.chunks[m - 1].citation_label(),
         )
-        for m in sorted(set(parsed.citations) | _markers_in_text(_narrative_text(parsed)))
+        for m in sorted(set(parsed.citations) | markers_in_text(_narrative_text(parsed)))
     ]
     return ResearchMemo(
         ticker=ticker,
@@ -151,10 +156,10 @@ def _guarded(
     retry: bool,
 ) -> _RawMemo:
     """Validate the memo's citations + figures; one corrective retry, then raise."""
-    parsed = _RawMemo.model_validate(_loads_lenient(raw))
+    parsed = _RawMemo.model_validate(loads_lenient(raw))
     n = len(evidence.chunks)
     text = _narrative_text(parsed)
-    cited = set(parsed.citations) | _markers_in_text(text)
+    cited = set(parsed.citations) | markers_in_text(text)
     bad_cites = sorted(m for m in cited if not 1 <= m <= n)  # citations outside the retrieved set
     ungrounded = grounding.ungrounded(text)  # figures not in any input
 
@@ -162,7 +167,8 @@ def _guarded(
         if retry:
             log.warning("memo.guard.retry", bad_citations=bad_cites, ungrounded=ungrounded[:5])
             corrected = llm.complete_json(
-                system=MEMO_SYSTEM, user=user + _correction(bad_cites, ungrounded, n),
+                system=MEMO_SYSTEM,
+                user=user + correction(bad_cites, ungrounded, n, allow_insufficient=False),
                 max_tokens=max_tokens,
             )
             return _guarded(evidence, grounding, corrected, user, llm, max_tokens, retry=False)

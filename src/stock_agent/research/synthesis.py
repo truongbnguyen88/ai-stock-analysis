@@ -17,15 +17,12 @@ the honest-refusal invariant).
 
 from __future__ import annotations
 
-import json
-import re
-from typing import Any
-
 from pydantic import BaseModel, Field
 
 from stock_agent.llm.client import TextLLM
 from stock_agent.llm.guards import NumberGrounding
 from stock_agent.logging_config import get_logger
+from stock_agent.research._shared import correction, loads_lenient, markers_in_text
 from stock_agent.research.prompts import SYSTEM, build_user
 from stock_agent.schemas.research import GroundedAnswer, SourceCitation
 from stock_agent.schemas.retrieval import EvidenceSet
@@ -34,7 +31,6 @@ log = get_logger(__name__)
 
 _INSUFFICIENT = "Insufficient evidence found."
 _MAX_TOKENS = 1200
-_MARKER = re.compile(r"\[(\d+)\]")  # inline citation markers, e.g. "[2]"
 
 
 class ResearchGuardError(RuntimeError):
@@ -47,39 +43,6 @@ class _RawAnswer(BaseModel):
     answer: str = ""
     citations: list[int] = Field(default_factory=list)
     insufficient_evidence: bool = False
-
-
-def _loads_lenient(text: str) -> dict[str, Any]:
-    """Parse a JSON object, tolerating stray prose around it (matches the summarizer)."""
-    try:
-        result: Any = json.loads(text)
-    except json.JSONDecodeError:
-        start, end = text.find("{"), text.rfind("}")
-        if start == -1 or end <= start:
-            raise
-        result = json.loads(text[start : end + 1])
-    if not isinstance(result, dict):
-        raise ValueError("research answer was not a JSON object")
-    return result
-
-
-def _markers_in_text(text: str) -> set[int]:
-    """Source numbers cited inline in the answer (the real citation surface)."""
-    return {int(m.group(1)) for m in _MARKER.finditer(text)}
-
-
-def _correction(bad_cites: list[int], ungrounded: list[str], n: int) -> str:
-    """Append a corrective note describing exactly what to fix."""
-    problems: list[str] = []
-    if bad_cites:
-        problems.append(f"you cited sources {bad_cites}, but only [1]–[{n}] exist")
-    if ungrounded:
-        problems.append(f"these figures are not in any source: {', '.join(ungrounded[:5])}")
-    return (
-        "\n\nIMPORTANT: " + "; ".join(problems) + ". Use ONLY the provided sources and only "
-        "numbers that appear in them — or set \"insufficient_evidence\": true. "
-        "Do not invent sources or figures."
-    )
 
 
 def answer_question(
@@ -114,12 +77,12 @@ def _guarded(
     *,
     retry: bool,
 ) -> GroundedAnswer:
-    parsed = _RawAnswer.model_validate(_loads_lenient(raw))
+    parsed = _RawAnswer.model_validate(loads_lenient(raw))
     if parsed.insufficient_evidence:
         return GroundedAnswer(question=question, answer=_INSUFFICIENT, insufficient_evidence=True)
 
     n = len(evidence.chunks)
-    cited = set(parsed.citations) | _markers_in_text(parsed.answer)
+    cited = set(parsed.citations) | markers_in_text(parsed.answer)
     bad_cites = sorted(m for m in cited if not 1 <= m <= n)  # citations outside the retrieved set
     ungrounded = grounding.ungrounded(parsed.answer)  # figures not present in any source
 
@@ -129,7 +92,7 @@ def _guarded(
                 "research.guard.retry", bad_citations=bad_cites, ungrounded=ungrounded[:5]
             )
             corrected = llm.complete_json(
-                system=SYSTEM, user=user + _correction(bad_cites, ungrounded, n),
+                system=SYSTEM, user=user + correction(bad_cites, ungrounded, n),
                 max_tokens=max_tokens,
             )
             return _guarded(question, evidence, grounding, corrected, user, llm, max_tokens,
