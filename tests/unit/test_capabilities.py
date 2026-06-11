@@ -43,3 +43,13 @@ def test_cross_enhancement_capabilities_present() -> None:
     titles = " ".join(c.title.lower() for c in CAPABILITIES)
     assert "compare multiple tickers" in titles
     assert "theme" in titles
+
+
+def test_rag_capabilities_present() -> None:
+    # P8.5: the showcase advertises the SEC-filing QA and the integrated brief.
+    titles = " ".join(c.title.lower() for c in CAPABILITIES)
+    assert "sec filings" in titles  # search_filings
+    assert "executive research brief" in titles  # research_summary
+    # The filing example must steer the agent to the filings (not general knowledge).
+    sec = next(c for c in CAPABILITIES if "sec filings" in c.title.lower())
+    assert "sec filing" in sec.example.lower()

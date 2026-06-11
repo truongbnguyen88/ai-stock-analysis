@@ -31,14 +31,24 @@ class Capability:
 
 
 # Curated value statements (not tool names). Ordered roughly by how a user would
-# explore: understand the name → forecast it → sanity-check the forecast → widen
-# to news/themes/multi-ticker. Each example routes to a real agent capability.
+# explore: understand the name → read its filings → forecast it → sanity-check the
+# forecast → read/synthesize the news → get the integrated brief → widen to
+# multi-ticker/themes. Each example routes to a real agent capability.
 CAPABILITIES: tuple[Capability, ...] = (
     Capability(
         icon="📊",
         title="Technical analysis",
         blurb="Trend, momentum, volatility — MAs, RSI, MACD, ATR, drawdown",
         example="Give me a technical analysis of {ticker}: trend, momentum, and volatility.",
+    ),
+    Capability(
+        icon="📄",
+        title="Ask the SEC filings",
+        blurb="Risk factors, MD&A, business drivers — answered from the 10-K/10-Q, cited",
+        example=(
+            "What are {ticker}'s key risk factors, and what does management say about "
+            "demand and margins? Use the SEC filings and cite them."
+        ),
     ),
     Capability(
         icon="🔮",
@@ -69,6 +79,12 @@ CAPABILITIES: tuple[Capability, ...] = (
         title="News synthesis",
         blurb="Themes, risks, and catalysts from the news — cited, qualitative",
         example="Summarize {ticker} news and pull out the key themes, risks, and catalysts.",
+    ),
+    Capability(
+        icon="🧩",
+        title="Executive research brief",
+        blurb="Filings + news + forecast fused into one cited, non-advisory summary",
+        example="Give me the full executive research brief on {ticker}.",
     ),
     Capability(
         icon="⚖️",
