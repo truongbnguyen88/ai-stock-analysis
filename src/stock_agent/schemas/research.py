@@ -9,7 +9,11 @@ no claim is made.
 
 from __future__ import annotations
 
+from datetime import date as Date
+
 from pydantic import BaseModel, Field
+
+from stock_agent.schemas.forecast import ScenarioForecast
 
 
 class SourceCitation(BaseModel):
@@ -27,3 +31,33 @@ class GroundedAnswer(BaseModel):
     answer: str
     citations: list[SourceCitation] = Field(default_factory=list)
     insufficient_evidence: bool = False
+
+
+class ResearchMemo(BaseModel):
+    """An integrated research memo for one ticker (RAG P8).
+
+    Combines QUANTITATIVE sections rendered directly from the models — ``technical_indicators``
+    and ``forecasts`` (the LLM never produces these numbers) — with QUALITATIVE narrative
+    synthesized in one grounded call. Every claim drawn from a filing carries an inline ``[n]``
+    marker resolved in ``citations`` (citation guard); narrative figures must trace to the inputs
+    (number-grounding guard). DESIGN INVARIANT: no recommendation / buy-sell field.
+    """
+
+    ticker: str
+    as_of: Date
+
+    # Quantitative — copied verbatim from the modules.
+    technical_indicators: dict[str, float] = Field(default_factory=dict)
+    forecasts: list[ScenarioForecast] = Field(default_factory=list)
+
+    # Qualitative narrative — produced by the single synthesis call (SEC claims cited [n]).
+    executive_summary: str = ""
+    management_commentary: str = ""
+    business_drivers: list[str] = Field(default_factory=list)
+    risk_factors: list[str] = Field(default_factory=list)
+    bullish_evidence: list[str] = Field(default_factory=list)
+    bearish_evidence: list[str] = Field(default_factory=list)
+    uncertainty_notes: list[str] = Field(default_factory=list)
+    recent_news: list[str] = Field(default_factory=list)  # news themes (from the summary, if any)
+
+    citations: list[SourceCitation] = Field(default_factory=list)  # resolved SEC sources
