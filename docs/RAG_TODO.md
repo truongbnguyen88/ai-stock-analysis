@@ -182,6 +182,49 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       section assembly, single-LLM-call, citation guard, number grounding, empty-evidence graceful,
       Markdown export. **MVP COMPLETE (P0–P8).**
 
+### P8.5 — Wire RAG into the chat agent
+> **Why.** P0–P8 built the SEC-grounded QA + memo, but they're reachable **only via the CLI**
+> (`rag query`, `research`). The chat agent (`agent/`, used by the Streamlit chat) has 16 tools
+> (prices, indicators, news, forecasts, backtest…) but **none touch the vector store** — so asking
+> the agent "what are NVDA's risk factors?" today does *not* search the embedded filings. P8.5 adds
+> one tool so the agent can answer filing questions from the ingested SEC vectors, with citations.
+
+**Decision (locked): expose P7 grounded-QA, not raw retrieval.** The tool makes its own
+guarded LLM call (`research.synthesis.answer_question`) and returns a *cited, validated* answer —
+exactly the `summarize_news` pattern (a tool that does its own Role-A synthesis). This keeps P7's
+**citation guard + number grounding** intact rather than handing raw chunks to the agent and hoping
+it cites correctly. (The P8 *memo* stays a CLI/explicit action — too heavy/expensive for a chat turn.)
+
+- [ ] **Tool** `search_filings` in `agent/tools.py` — schema `{ticker, question}` (+ optional
+      `top_k`). Handler `_tool_search_filings`: build a `Retriever(build_embedder, build_vector_store)`
+      **memoized on the executor** (like `_backtest_cache`, so repeated filing questions don't rebuild
+      the embedder/store), `ChunkFilter(ticker=...)`, call `answer_question(question, evidence,
+      llm=self._llm)` → return `{answer, citations:[{marker,label,chunk_id}], insufficient_evidence,
+      n_sources}`. Mirror `summarize_news`'s **no-LLM guard** (`self._llm is None → {"error": …}`).
+      Never raises (dispatch already wraps to `{"error": …}`).
+- [ ] **Empty-store / not-ingested path.** If retrieval is empty → relay P7's
+      "Insufficient evidence found." plus a hint that filings for the ticker aren't ingested
+      (`documents ingest --ticker X`). The tool **does NOT** download/ingest on the fly (parse+chunk+
+      embed ~1k chunks ≈ 60s — wrong for a synchronous chat turn). Background/auto-ingest of a
+      watchlist is deferred to **P9**.
+- [ ] **Agent prompt** (`agent/prompts/agent.py`, bump `agent.v15 → v16`): add a routing line —
+      *"For questions about a company's SEC filings (risk factors, business, products, MD&A,
+      management commentary, accounting, legal), call `search_filings`; it answers from the
+      company's own filings with citations. Relay its citations; do not answer filing questions from
+      general knowledge."* Keep the router-not-calculator rule (the tool's numbers are already grounded).
+- [ ] **Guards / invariants.** The returned answer is already citation- + number-guarded by P7, so
+      the agent's existing **numeric-grounding guard** grounds the tool's figures from the tool output
+      (relaying SEC numbers stays safe), and non-advisory is preserved (P7 never recommends).
+      Dependency direction stays downward (`agent/ → research/ → rag/`).
+- [ ] **Tests** (offline, fakes): tool-schema conformance; `_tool_search_filings` with a fake
+      `Retriever` (InMemoryVectorStore + FakeEmbedder) + canned `TextLLM` → returns answer + resolved
+      citations; empty-store → insufficient path; `self._llm is None` → error; agent numeric-grounding
+      guard accepts the tool's grounded numbers; one agent-loop test that a filings question routes to
+      `search_filings`. **No live calls.**
+- [ ] **(Optional, same change)** also surface citations in the Streamlit chat answer rendering if not
+      automatic. Prerequisite to *use* it: `documents download-sec` + `documents ingest` for the
+      ticker (the chat answers from whatever is in `data/vectorstore`).
+
 ### P9 — Maturity / go-live (post-MVP)
 > Begins only **after P8 is green**. The MVP is built + tested on local `fastembed` (free,
 > unlimited) — these are the steps to take it to production scale + paid-quality embeddings
