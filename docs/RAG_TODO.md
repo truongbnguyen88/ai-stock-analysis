@@ -169,14 +169,18 @@ reuses the present `lxml`. Heavy model loads are **lazy-imported** so import sta
       resolution, empty-no-call, fabricated-citation retry→raise & retry→recover, invented-number
       retry→raise, grounded-number pass, LLM-signaled insufficiency, inline-marker out-of-range.
 
-### P8 — Integrated research memo
-- [ ] `research/memo.py` + CLI `research --ticker` — gather technicals (`compute_snapshot`)
-      + forecast (`run_forecast`) + news (`summarize_news`) + RAG evidence, then **ONE**
-      synthesis call → memo (Executive Summary, Technical Indicators, Probability Scenarios,
-      Recent News, Management Commentary, Business Drivers, Risk Factors, Bullish Evidence,
-      Bearish Evidence, Uncertainty Notes, Source Citations). Numbers from modules; narrative
-      cited. Tests: section assembly, numbers-grounding + citation guards on the memo,
-      single-LLM-call assertion, Markdown export.
+### P8 — Integrated research memo ✅
+- [x] `research/memo.py` `build_memo(...)` + `render_memo_markdown` + `pipelines/research.py`
+      `run_research` + CLI `research --ticker`. Gathers technicals (`compute_snapshot`) + baseline
+      forecast + news (`summarize_news`) + **SEC evidence** (3 targeted retrievals merged/deduped),
+      then **ONE** synthesis call → `ResearchMemo` (`schemas/research.py`): quant sections
+      (Technical Indicators, Probability Scenarios) copied **verbatim from the models**; narrative
+      (Executive Summary, Management Commentary, Business Drivers, Risk Factors, Bullish/Bearish
+      Evidence, Uncertainty Notes, Recent News) from the LLM with SEC claims cited `[n]`. **No
+      recommendation field.** Reuses P7's citation guard + `NumberGrounding` (seeded from forecast
+      + snapshot + news + SEC texts), one retry then `MemoGuardError`. Tests (canned `TextLLM`):
+      section assembly, single-LLM-call, citation guard, number grounding, empty-evidence graceful,
+      Markdown export. **MVP COMPLETE (P0–P8).**
 
 ### P9 — Maturity / go-live (post-MVP)
 > Begins only **after P8 is green**. The MVP is built + tested on local `fastembed` (free,

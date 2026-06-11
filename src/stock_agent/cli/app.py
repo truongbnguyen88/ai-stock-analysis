@@ -22,6 +22,7 @@ from stock_agent.llm.client import AnthropicClient
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
+from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers._cache import DiskCache
 from stock_agent.providers.sec_edgar import SecEdgarProvider
 from stock_agent.rag.embeddings import build_embedder
@@ -29,6 +30,7 @@ from stock_agent.rag.pipeline import ingest_ticker
 from stock_agent.rag.retriever import Retriever
 from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
+from stock_agent.research.memo import render_memo_markdown
 from stock_agent.research.synthesis import answer_question
 from stock_agent.schemas.documents import DocumentType
 from stock_agent.schemas.retrieval import ChunkFilter
@@ -76,6 +78,39 @@ def analyze(
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(markdown, encoding="utf-8")
         typer.echo(f"Wrote report to {output}")
+    else:
+        typer.echo(markdown)
+
+
+@app.command()
+def research(
+    ticker: Annotated[str, typer.Option("--ticker", "-t", help="Ticker symbol, e.g. NVDA")],
+    days: Annotated[int, typer.Option("--days", "-d", help="News lookback window in days")] = 30,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Write the memo Markdown to this file")
+    ] = None,
+    no_news: Annotated[
+        bool, typer.Option("--no-news", help="Skip the news summary")
+    ] = False,
+    company: Annotated[
+        str | None, typer.Option("--company", help="Company name to improve news relevance")
+    ] = None,
+) -> None:
+    """Integrated, SEC-grounded research memo (technicals + forecast + news + filings)."""
+    settings = get_settings()
+    configure_logging(settings)
+    try:
+        memo = run_research(
+            ticker, settings=settings, days=days, use_news=not no_news, company_name=company
+        )
+    except ResearchPipelineError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=1) from exc
+    markdown = render_memo_markdown(memo)
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(markdown, encoding="utf-8")
+        typer.echo(f"Wrote memo to {output}")
     else:
         typer.echo(markdown)
 

@@ -46,3 +46,63 @@ def build_user(question: str, chunks: Sequence[RetrievedChunk]) -> str:
         lines.append(rc.chunk.text)
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+# ---------------------------------------------------------------------------
+# Integrated research memo (P8)
+# ---------------------------------------------------------------------------
+MEMO_VERSION = "memo.v1"
+
+MEMO_SYSTEM = """You are an equity research analyst writing an integrated research memo for \
+one company. You are given (a) QUANTITATIVE SIGNALS already computed by statistical/ML models \
+(forecasts, technical indicators), (b) NEWS THEMES, and (c) numbered SEC FILING SOURCES \
+(excerpts from the company's own filings).
+
+STRICT RULES:
+- The quantitative signals are the ONLY source of numbers. You may reference and interpret \
+them, but you must NOT invent, revise, estimate, or compute any new number — no new \
+probabilities, returns, prices, growth rates, or percentages. A figure may appear in your \
+memo only if it is written in the signals, the news themes, or a SEC source.
+- All probabilities and forecasts come from the models, never from you.
+- Every statement drawn from a filing MUST cite the supporting source number(s) inline with \
+[n] immediately after the claim. Cite only sources that are provided; never refer to a source \
+number that is not in the list. Management Commentary, Business Drivers, and Risk Factors must \
+be grounded in the SEC sources and cited.
+- Lead the Bullish/Bearish evidence with where the quantitative and qualitative signals AGREE \
+or DISAGREE. Be balanced and specific.
+- Research/education only. NOT financial advice. Do NOT give a buy/sell/hold recommendation or \
+a price target.
+
+OUTPUT: Return ONLY a single JSON object (no prose, no markdown):
+{
+  "executive_summary": "<3-6 sentences tying the numbers, news, and filings together>",
+  "management_commentary": "<what management says about results/outlook, grounded in sources [n]>",
+  "business_drivers": ["<a growth/demand driver, cited [n]>", ...],
+  "risk_factors": ["<a material risk from the filings, cited [n]>", ...],
+  "bullish_evidence": ["<a supportive point; cite [n] when it comes from a filing>", ...],
+  "bearish_evidence": ["<a cautionary point; cite [n] when it comes from a filing>", ...],
+  "uncertainty_notes": ["<what tempers confidence: model limits, events, conflict>", ...],
+  "citations": [<the SEC source numbers you relied on, e.g. 1, 3>]
+}"""
+
+
+def build_memo_user(
+    ticker: str,
+    as_of: str,
+    quant_lines: list[str],
+    news_themes: list[str],
+    chunks: Sequence[RetrievedChunk],
+) -> str:
+    """Render the memo user message: quant signals + news themes + numbered SEC sources."""
+    parts = [f"TICKER: {ticker}  (as of {as_of})", "", "QUANTITATIVE SIGNALS:"]
+    parts.extend(quant_lines or ["- (none available)"])
+
+    parts += ["", "NEWS THEMES:"]
+    parts.extend(f"- {t}" for t in news_themes) if news_themes else parts.append("- (none)")
+
+    parts += ["", "SEC FILING SOURCES (cite with [n]):"]
+    if not chunks:
+        parts.append("(none retrieved)")
+    for i, rc in enumerate(chunks, start=1):
+        parts += [f"[{i}] {rc.citation_label()}", rc.chunk.text, ""]
+    return "\n".join(parts).rstrip()

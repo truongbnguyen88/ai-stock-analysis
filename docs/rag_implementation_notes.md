@@ -5,7 +5,7 @@
 > each phase lands. Companion to [RAG_TODO.md](RAG_TODO.md) (the ordered checklist)
 > and [rag_concepts.md](rag_concepts.md) (the theory). Updated as P3→P8 ship.
 >
-> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6 ✅ · P7 ✅ · P8 pending.
+> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6 ✅ · P7 ✅ · P8 ✅ — **MVP complete**.
 
 ---
 
@@ -437,6 +437,49 @@ is what makes every claim auditable. Reused `NumberGrounding` (built for the for
 rather than a second number checker. The whole path is tested with a canned `TextLLM` — CI makes
 no API call; the real call is exercised only via `rag query --answer`.
 
-## P8 — pending
+## P8 — Integrated research memo
 
-Appended when it lands: **P8** integrated research memo.
+**Role.** The capstone: one memo per ticker that fuses the QUANTITATIVE models (technicals +
+forecast) with the QUALITATIVE narrative (news + SEC filings), in a single grounded synthesis
+call. Numbers come from the modules; every filing-derived claim is cited; there is no
+recommendation field (the non-advisory invariant).
+
+**Key files.** `research/memo.py` (`build_memo` + `render_memo_markdown`), `pipelines/research.py`
+(`run_research`), `schemas/research.py` (`ResearchMemo`), prompt `memo.v1` in `research/prompts.py`,
+CLI `research --ticker`; tests `tests/unit/test_memo.py`.
+
+**How it works (step by step).**
+1. **Gather (`run_research`, orchestration).** Reuse the existing blocks: `PriceLoader` →
+   `compute_snapshot` (technicals) → `HistoricalSimulation` baseline forecasts; `NewsFetcher` +
+   `summarize_news` (optional). **New:** SEC evidence via three *targeted* retrievals (risk
+   factors / business drivers / MD&A), merged + deduped by `chunk_id`, capped at 10 by score —
+   so the filing-grounded sections each get coverage. The memo *is* the synthesis, so an LLM is
+   required (unlike `analyze`, which degrades).
+2. **Deterministic quant sections.** `build_memo` copies `snapshot.numeric_indicators()` and the
+   `ScenarioForecast`s **verbatim** into the memo — the LLM never emits these numbers.
+3. **Seed the number-grounding set** from the forecast + snapshot + news + SEC source texts (the
+   only figures the narrative may state).
+4. **One synthesis call.** `build_memo_user` renders the quant signal lines + news themes +
+   numbered SEC sources; `memo.v1` asks for the narrative sections as JSON, citing SEC claims
+   inline `[n]`, inventing no numbers, giving no recommendation.
+5. **Guards (shared with P7).** Citation guard (every `[n]` inline + listed ⊆ retrieved sources)
+   and number grounding (`NumberGrounding.ungrounded` over all narrative text). One corrective
+   retry, then `MemoGuardError`. Markers resolve to `SourceCitation`s.
+6. **Render.** `render_memo_markdown` lays out Executive Summary → Technical Indicators →
+   Probability Scenarios → Recent News → Business Drivers → Risk Factors → Bullish/Bearish
+   Evidence → Uncertainty Notes → Management Commentary → Source Citations, with the
+   not-financial-advice header.
+
+**Key decisions.** Quant sections are code-rendered, not LLM-written, so the numbers-vs-narrative
+invariant holds structurally. The SEC evidence uses *multiple targeted* retrievals (not one
+composite query) for better per-section recall, then a score cap to bound prompt cost. P7's guard
+helpers (`_loads_lenient`, `_markers_in_text`, `_correction`) and `NumberGrounding` are reused
+rather than reimplemented. Tested end-to-end with a canned `TextLLM`; the two real LLM calls (news
+summary + memo) run only via `research --ticker`.
+
+---
+
+**MVP complete (P0–P8).** Full path: `documents download-sec` → `documents ingest` →
+`rag query [--answer]` / `research --ticker` → cited, auditable SEC-grounded output. Post-MVP work
+(switch to voyage-4, bulk download, scheduling, spend guard, retrieval A/B) is tracked in
+[RAG_TODO.md](RAG_TODO.md) → P9.
