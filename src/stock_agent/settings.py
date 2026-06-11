@@ -141,6 +141,10 @@ class Settings(BaseSettings):
     rag_chunk_tokens: int = 900  # target chunk size (section-aware; never crosses a section)
     rag_chunk_overlap: float = 0.15  # fractional overlap between adjacent chunks
     rag_top_k: int = 8  # chunks retrieved per query (deduped before synthesis)
+    # Client-side hard ceiling on embedding tokens per ingest run (RAG_TODO 9a). Independent
+    # of the provider dashboard — protects the one-time paid voyage ingest (9c) from surprise
+    # over-spend. None = unlimited (the default; local fastembed is free, so no ceiling needed).
+    rag_max_embed_tokens: int | None = None
     # Local storage (all under the gitignored data/ tree). Raw is never overwritten.
     documents_dir: Path = Path("data/raw")  # downloaded filings
     processed_dir: Path = Path("data/processed")  # parsed text + chunks

@@ -42,6 +42,19 @@ def _target_words(chunk_tokens: int) -> int:
     return max(1, round(chunk_tokens * _WORDS_PER_TOKEN))
 
 
+def estimate_tokens(texts: Sequence[str]) -> int:
+    """Approximate total embedding tokens for ``texts`` (proxy, no tokenizer).
+
+    Inverse of the chunk word-budget proxy: ``tokens ≈ words / 0.75``. Single source of
+    truth for the words↔tokens conversion (shared with ``_target_words``), used by the
+    ingest spend guard (RAG_TODO 9a) to refuse a run *before* it embeds — a client-side
+    ceiling independent of any provider dashboard. English-prose approximation; adequate
+    for a hard budget, not billing-exact.
+    """
+    words = sum(len(t.split()) for t in texts)
+    return round(words / _WORDS_PER_TOKEN)
+
+
 def _overlap_words(target: int, overlap_fraction: float) -> int:
     """Words shared between adjacent chunks; clamped to ``[0, target-1]`` so step >= 1."""
     return min(max(0, round(target * overlap_fraction)), target - 1)

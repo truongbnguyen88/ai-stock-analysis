@@ -9,14 +9,21 @@ from __future__ import annotations
 
 import math
 import os
+import re
 from datetime import date
 
 import pytest
 
 from stock_agent.rag.embeddings import FakeEmbedder
-from stock_agent.rag.vector_store import InMemoryVectorStore, VectorStore
+from stock_agent.rag.vector_store import (
+    InMemoryVectorStore,
+    VectorStore,
+    build_vector_store,
+    collection_name_for,
+)
 from stock_agent.schemas.documents import DocumentChunk, DocumentType
 from stock_agent.schemas.retrieval import ChunkFilter
+from stock_agent.settings import Settings
 
 _EMB = FakeEmbedder(dim=32)
 
@@ -196,3 +203,25 @@ def _mixed_list() -> list[DocumentChunk]:
         _chunk(1, "nvda mdna", ticker="NVDA", dtype="10-Q", filing=date(2025, 5, 20)),
         _chunk(2, "avgo risk", ticker="AVGO", dtype="10-K", filing=date(2025, 12, 18)),
     ]
+
+
+# ---- 9c: per-embedder collection namespacing (safe provider switch) ----------
+
+
+def test_collection_name_for_is_chroma_safe() -> None:
+    name = collection_name_for("local-BAAI/bge-small-en-v1.5")
+    assert name == "filings-local-baai-bge-small-en-v1-5"
+    # Chroma rules: 3–512 chars, only [a-zA-Z0-9._-], start + end alphanumeric.
+    assert 3 <= len(name) <= 512
+    assert re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*[a-zA-Z0-9]", name)
+    assert collection_name_for("") == "filings"  # degenerate -> base name
+
+
+def test_build_vector_store_isolates_collections_by_provider() -> None:
+    # Switching local -> voyage (384-d -> 1024-d) must target a DIFFERENT collection, so the
+    # two corpora never share one (a dimension mismatch would corrupt search). Construction is
+    # lazy (no chromadb import), so this stays offline.
+    local = build_vector_store(Settings(_env_file=None, embedding_provider="local"))
+    voyage = build_vector_store(Settings(_env_file=None, embedding_provider="voyage"))
+    assert local._collection_name != voyage._collection_name  # type: ignore[attr-defined]
+    assert "voyage" in voyage._collection_name  # type: ignore[attr-defined]

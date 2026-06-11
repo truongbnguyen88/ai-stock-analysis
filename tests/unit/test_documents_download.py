@@ -9,6 +9,7 @@ from pathlib import Path
 
 from stock_agent.documents.download import (
     DEFAULT_FORMS,
+    bulk_download,
     download_filings,
     filing_dir,
     manifest_path,
@@ -26,9 +27,47 @@ class FakeEdgar:
         self.download_calls = 0
 
     def list_filings(
-        self, ticker: str, forms: Sequence[DocumentType], *, limit: int = 10
+        self,
+        ticker: str,
+        forms: Sequence[DocumentType],
+        *,
+        limit: int = 10,
+        since: date | None = None,
     ) -> list[FilingRef]:
-        return [r for r in self._refs if r.form in set(forms)][:limit]
+        refs = [r for r in self._refs if r.form in set(forms)]
+        if since is not None:
+            refs = [r for r in refs if r.filing_date >= since]
+        return refs[:limit]
+
+    def download_filing(self, ref: FilingRef) -> str:
+        self.download_calls += 1
+        return f"<html>{ref.document_id} body</html>"
+
+
+class MultiEdgar:
+    """Bulk-test provider: synthesizes one 10-K per requested ticker; can fail chosen tickers."""
+
+    def __init__(self, *, fail: set[str] | None = None) -> None:
+        self.fail = fail or set()
+        self.download_calls = 0
+
+    def list_filings(
+        self,
+        ticker: str,
+        forms: Sequence[DocumentType],
+        *,
+        limit: int = 10,
+        since: date | None = None,
+    ) -> list[FilingRef]:
+        if ticker in self.fail:
+            raise RuntimeError(f"CIK not found for {ticker}")  # whole-ticker failure
+        return [
+            FilingRef(
+                ticker=ticker, cik="0000000000", form="10-K",
+                filing_date=date(2025, 2, 26), accession_number=f"{ticker}-25-000001",
+                primary_document=f"{ticker.lower()}-10k.htm",
+            )
+        ]
 
     def download_filing(self, ref: FilingRef) -> str:
         self.download_calls += 1
@@ -112,3 +151,43 @@ def test_load_universe(tmp_path: Path) -> None:
     p = tmp_path / "u.txt"
     p.write_text("# comment\nNVDA\n  msft \n\n# another\nAMD\n")
     assert load_universe(p) == ["NVDA", "MSFT", "AMD"]
+
+
+# ---- 9d: date-bounded history + bulk download --------------------------------
+
+
+def test_download_since_floor_excludes_older_filings(tmp_path: Path) -> None:
+    # _refs() has a 2025-02-26 10-K and a 2024-11-20 10-Q; floor at 2025-01-01 keeps only the 10-K.
+    fake = FakeEdgar(_refs())
+    r = download_filings(
+        "NVDA", fake, documents_dir=tmp_path, limit=10, since=date(2025, 1, 1)  # type: ignore[arg-type]
+    )
+    assert len(r.downloaded) == 1 and fake.download_calls == 1
+    assert DownloadManifest.load(manifest_path(tmp_path)).has(
+        "NVDA:10-K:2025-02-26:0001045810-25-000017"
+    )
+
+
+def test_bulk_download_aggregates_across_tickers(tmp_path: Path) -> None:
+    fake = MultiEdgar()
+    res = bulk_download(["nvda", "MSFT"], fake, documents_dir=tmp_path, limit=5)  # type: ignore[arg-type]
+    assert res.tickers == 2 and res.downloaded == 2 and not res.failed_tickers
+    assert {r.ticker for r in res.per_ticker} == {"NVDA", "MSFT"}
+    assert fake.download_calls == 2
+
+
+def test_bulk_download_isolates_whole_ticker_failure(tmp_path: Path) -> None:
+    fake = MultiEdgar(fail={"MSFT"})  # MSFT's listing raises (bad CIK)
+    res = bulk_download(["NVDA", "MSFT"], fake, documents_dir=tmp_path, limit=5)  # type: ignore[arg-type]
+    assert res.tickers == 2  # both attempted
+    assert res.downloaded == 1  # NVDA still succeeded — the run was not aborted
+    assert len(res.failed_tickers) == 1 and res.failed_tickers[0].startswith("MSFT:")
+    assert [r.ticker for r in res.per_ticker] == ["NVDA"]
+
+
+def test_bulk_download_is_idempotent(tmp_path: Path) -> None:
+    fake = MultiEdgar()
+    bulk_download(["NVDA"], fake, documents_dir=tmp_path, limit=5)  # type: ignore[arg-type]
+    res2 = bulk_download(["NVDA"], fake, documents_dir=tmp_path, limit=5)  # type: ignore[arg-type]
+    assert res2.downloaded == 0 and res2.skipped == 1  # already on disk -> skipped
+    assert fake.download_calls == 1  # no re-fetch

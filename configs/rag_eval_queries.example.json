@@ -1,0 +1,17 @@
+[
+  {
+    "query": "What are the company's main risk factors related to supply chain and export controls?",
+    "ticker": "NVDA",
+    "relevant_spans": ["export", "supply chain"]
+  },
+  {
+    "query": "How does management describe data center revenue growth?",
+    "ticker": "NVDA",
+    "relevant_spans": ["data center", "revenue"]
+  },
+  {
+    "query": "What does the company say about competition in accelerated computing?",
+    "ticker": "NVDA",
+    "relevant_spans": ["competition", "competitors"]
+  }
+]

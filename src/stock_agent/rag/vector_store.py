@@ -19,16 +19,18 @@ so Chroma returns a cosine *distance*; we convert to similarity as ``score = 1 -
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Mapping, Sequence
 from datetime import date as Date
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from stock_agent.rag.embeddings import embedding_namespace
 from stock_agent.schemas.documents import DocumentChunk
 from stock_agent.schemas.retrieval import ChunkFilter, RetrievedChunk
 from stock_agent.settings import Settings
 
-_COLLECTION = "filings"
+_COLLECTION = "filings"  # base name; the persistent collection is namespaced per embedder
 
 
 @runtime_checkable
@@ -236,6 +238,27 @@ class ChromaVectorStore:
         return int(self._ensure().count())
 
 
+def collection_name_for(namespace: str) -> str:
+    """Chroma-safe collection name for an embedder ``namespace`` (per-embedder isolation).
+
+    Chroma requires 3–512 chars of ``[a-zA-Z0-9._-]`` starting/ending alphanumeric. We slugify
+    the namespace, e.g. ``local-BAAI/bge-small-en-v1.5`` -> ``filings-local-baai-bge-small-en-v1-5``
+    and ``voyage-voyage-4`` -> ``filings-voyage-voyage-4``. The ``filings-`` prefix guarantees a
+    valid leading char; the lowercased alnum-only slug guarantees a valid trailing char.
+    """
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", namespace).strip("-").lower()
+    return f"{_COLLECTION}-{slug}" if slug else _COLLECTION
+
+
 def build_vector_store(settings: Settings) -> VectorStore:
-    """Construct the configured persistent store (Chroma at ``settings.vector_store_dir``)."""
-    return ChromaVectorStore(settings.vector_store_dir)
+    """Construct the configured persistent store (Chroma at ``settings.vector_store_dir``).
+
+    The collection is **namespaced per embedder** (``embedding_namespace``): corpora embedded
+    with different models have different vector dimensions and must not share a collection.
+    Switching ``embedding_provider`` (e.g. ``local`` -> ``voyage``, RAG_TODO 9c) therefore
+    targets a fresh collection; a re-ingest populates it without colliding with the old one.
+    """
+    return ChromaVectorStore(
+        settings.vector_store_dir,
+        collection_name=collection_name_for(embedding_namespace(settings)),
+    )

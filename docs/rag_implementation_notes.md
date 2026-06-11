@@ -563,3 +563,185 @@ cost bounded. **Tested** offline with a fake `Retriever` (FakeEmbedder + InMemor
 
 **MVP + chat integration complete (P0–P8.5).** Next: P9 (voyage-4 embeddings, bulk download,
 quarterly refresh, spend guard, retrieval A/B) and watchlist auto-ingest.
+
+---
+
+## P9a — Embedding spend guard
+
+**Role.** A client-side hard ceiling on the embedding tokens any single ingest run may consume,
+enforced **before** the embedder is called — so an over-budget run incurs *zero* provider spend.
+It is independent of (and complementary to) the provider's own dashboard limits. P9a is sequenced
+**first** in P9 because the paid embed-once switch to `voyage-4` (P9c) embeds the whole corpus
+against a finite 200M-token free pool; without this guard a misconfigured re-embed could silently
+burn it. Default behaviour is unchanged (local `fastembed` is free → ceiling `None` = unlimited).
+
+**Key files / mechanism (step-by-step).**
+1. `rag/chunking.py` `estimate_tokens(texts)` — the words↔tokens proxy lived only inside the
+   chunker (`_target_words` uses `_WORDS_PER_TOKEN = 0.75`). Promoted to a public estimator that
+   is its **inverse**: `tokens ≈ words / 0.75`. One source of truth for the conversion, no
+   tokenizer dependency, deterministic. (Not billing-exact — adequate for a hard budget.)
+2. `settings.py` `rag_max_embed_tokens: int | None = None` — the configurable ceiling; `None`
+   disables the guard (preserves the free-local default).
+3. `rag/pipeline.py` — `ingest_ticker(..., max_embed_tokens=None)` parses + chunks as before,
+   then `embed_tokens = estimate_tokens([c.text for c in chunks])` **before** embedding. If a
+   ceiling is set and the estimate exceeds it, it raises `EmbedBudgetExceeded(ticker, estimated,
+   ceiling)` *before* `embedder.embed_documents` — nothing is embedded or stored. The estimate is
+   logged (`rag.ingest`) and returned on `IngestResult.embed_tokens` for observability + a future
+   cross-ticker tally.
+4. `cli/app.py` `documents ingest` passes `settings.rag_max_embed_tokens` and, on
+   `EmbedBudgetExceeded`, aborts the run loud (`typer.Exit(1)`) rather than silently over-spending
+   — the user deliberately raises the ceiling to proceed. The success line now reports the token
+   estimate.
+
+**Scope decision.** The ceiling is enforced **per `ingest_ticker` run** (the unit that batches one
+ticker's embed call). `IngestResult.embed_tokens` is returned so a cross-ticker cumulative budget
+for `--all` can be layered on later without touching the guard; the per-run hard stop is the
+correctness-relevant primitive and the smallest vertical slice.
+
+**How P9b/P9c use it.** P9c (paid voyage ingest) runs with `rag_max_embed_tokens` set to a sane
+ceiling so a re-embed can't exhaust the free pool by surprise; P9b's A/B confirms the chunking +
+embedder are locked *before* that one-time embed, so the budget is spent once on the settled corpus.
+
+**Tested** (offline, FakeEmbedder + InMemoryVectorStore): proxy value (`6 words / 0.75 = 8`,
+empty → 0), under-ceiling success + non-zero `embed_tokens`, over-ceiling raises and a
+call-counting embedder confirms **embed was never invoked** + the store stayed empty, and
+`max_embed_tokens=None` reproduces prior behaviour. No model download, no network.
+
+---
+
+## P9b — Retrieval-quality A/B harness
+
+**Role.** Compare embedders (local `fastembed` vs `voyage-4` vs `voyage-finance-2`) on a small
+**labeled** query set, so the production embedder *and* the chunking are **locked before** the
+one-time paid ingest (P9c). Embedding the wrong config would burn the finite free-token pool, so
+this is the evidence gate in front of 9c.
+
+**Chunking-invariant relevance — the key design choice.** Labels are answer-bearing phrases
+(`LabeledQuery.relevant_spans`), not `chunk_id`s. A retrieved chunk is relevant iff its text
+contains *any* span (lowercased + whitespace-collapsed). Because the label is a phrase, the **same
+labeled set scores different embedders AND different chunking configs** — exactly what "confirm the
+chunking is settled" requires (chunk-id labels would break the moment you re-chunk).
+
+**Key files / mechanism (step-by-step).**
+1. `rag/eval.py`
+   - `LabeledQuery{query, relevant_spans[≥1], ticker?, top_k?}` + `is_relevant(chunk)` predicate.
+   - Pure ranking metrics over a ranked relevance-flag list: `hit_at_k` (success@k), `reciprocal_rank`
+     (mean → MRR), `precision_at_k` (denominator = chunks *actually* returned, so a small corpus
+     isn't penalized), `recall_at_k(flags, n_relevant, k)` (`n_relevant` = relevant chunks in the
+     ticker-scoped corpus; 0-relevant queries return 0 and are **excluded** from the mean).
+   - `evaluate_query(retriever, q, top_k, corpus_chunks)` → `QueryReport`: retrieves with the same
+     `ChunkFilter(ticker=…)` used in prod, flags each hit, computes the four metrics + the corpus
+     relevant-count denominator.
+   - `run_ab(corpus_chunks, queries, embedders, *, top_k, store_factory=InMemoryVectorStore)`: for
+     each embedder, build a **fresh store**, embed the *fixed* corpus, retrieve every query, aggregate
+     → `EmbedderReport` (mean metrics + `per_query`). Chunking is held constant across embedders (the
+     corpus is chunked once by the caller); to A/B chunking, call twice with different `corpus_chunks`.
+   - `format_reports_markdown` → a GitHub comparison table.
+2. `rag/pipeline.py` `build_chunks(ticker, …)` — extracted from `ingest_ticker` (the parse+chunk
+   front half) so ingest and the eval corpus build share one code path; behavior-preserving
+   (`iter_filing_dirs` is sorted → identical chunk order), covered by the existing ingest tests.
+3. `cli/app.py` `rag eval --queries FILE --compare local,voyage,voyage-finance,openai [--top-k]` +
+   `_named_embedder` (constructs a specific embedder by name, independent of `embedding_provider`,
+   so one run compares several). `configs/rag_eval_queries.example.json` is the template
+   (`{query, relevant_spans[], ticker?}`).
+
+**Provider-agnostic + offline.** `run_ab` injects embedders + a `store_factory`, so CI tests it with
+`FakeEmbedder` + `InMemoryVectorStore` (a query whose text equals a chunk's text self-matches at
+rank 1 → deterministic). The **real** fastembed/voyage comparison is a caller run (needs models/keys
++ an ingested corpus); the harness logic is fully unit-tested. **Tested:** metric golden values,
+relevance predicate (case/whitespace-insensitive, any-span, empty-span rejected), `evaluate_query`
+self-match, `run_ab` aggregation + store isolation + embedder order, Markdown table.
+
+**How P9c uses it.** Run `rag eval` on the labeled set; once `voyage-*` shows the target recall@k /
+MRR **and** the chunking is settled (stable scores across chunk-param variants), flip
+`embedding_provider=voyage` and do the one-time paid embed under the 9a spend ceiling.
+
+---
+
+## P9c — Voyage-4 switch mechanism (per-embedder store namespacing)
+
+**Role.** Make switching the embedding provider (local `fastembed` → `voyage-4`) **safe and
+reproducible**. P9c has two halves: the **mechanism** (this section — code, $0) and the **one-time
+paid embed** (a manual ops run, deferred to after 9d + the 9b A/B). Only the mechanism is in code.
+
+**The bug it fixes.** `build_vector_store` created **one fixed Chroma collection** (`"filings"`) for
+every embedder. But embedders have **different vector dimensions** — BGE `bge-small` is 384-d,
+voyage-4 is 1024-d. Chroma fixes a collection's dimensionality on first write, so after flipping to
+voyage a re-ingest would push 1024-d vectors into the 384-d `"filings"` collection → a dimension
+mismatch (error at best, silently corrupted nearest-neighbour search at worst). The switch was unsafe.
+
+**Mechanism (key files).**
+1. `rag/embeddings.py` `embedding_namespace(settings)` — a stable provider+model identity that
+   **mirrors `build_embedder`'s selection** (`local-{model}` / `voyage-{voyage-4}` /
+   `openai-{model}`), so the namespace always matches the embedder actually built.
+2. `rag/vector_store.py` `collection_name_for(namespace)` — slugifies it to a Chroma-safe name
+   (3–512 chars of `[A-Za-z0-9._-]`, alnum start/end): `local-BAAI/bge-small-en-v1.5` →
+   `filings-local-baai-bge-small-en-v1-5`; `voyage-voyage-4` → `filings-voyage-voyage-4`.
+3. `build_vector_store(settings)` now passes that as `collection_name`. **Each embedder owns its own
+   collection** in the same `vector_store_dir`; switching `embedding_provider` targets a fresh one,
+   so local and voyage corpora coexist and never mix dimensions. (`ChromaVectorStore` stays
+   embedder-agnostic — it just takes a `collection_name`; only the factory wires the namespace.
+   No import cycle: `vector_store → embeddings → settings`.)
+
+**One-time switch runbook (the deferred paid step — run LAST, after 9d + 9b A/B).**
+1. `pip install -e ".[voyage]"`; set `VOYAGE_API_KEY` in `.env`.
+2. Set a spend ceiling: `rag_max_embed_tokens` (9a) to a sane bound for the full corpus.
+3. (9b) `python -m stock_agent rag eval --queries … --compare local,voyage,voyage-finance` →
+   confirm voyage hits the target recall@k / MRR **and** chunking is stable across chunk-param
+   variants. Lock chunking.
+4. Flip `embedding_provider=voyage`; `python -m stock_agent documents ingest --all`. This embeds the
+   **whole** corpus once into the new `filings-voyage-voyage-4` collection (the 384-d local
+   collection is left intact as a fallback / for A/B). Spend the free pool **once** here.
+5. The agent + research pipeline read the voyage collection automatically (`build_vector_store`
+   picks the namespace from the same setting). The old local collection can be deleted to reclaim disk.
+
+**Note (local re-ingest).** Because the local collection name also changed (now namespaced), any
+pre-9c local store under the old `"filings"` name is no longer read — re-run `documents ingest`
+once to repopulate the namespaced local collection ($0; fastembed is free).
+
+**Tested** (offline): `embedding_namespace` distinguishes providers + carries the local model;
+`collection_name_for` is Chroma-safe (regex + bounds) and maps the degenerate empty namespace to the
+base name; `build_vector_store` yields **different** collection names for `local` vs `voyage`
+Settings (construction is lazy → no chromadb import, no network).
+
+---
+
+## P9d — Bulk historical download
+
+**Role.** Take the P1 download path from "a few latest filings per ticker" to "**2–3 years of the
+full universe**", so the corpus is complete **before** the one-time paid voyage embed (9c-run) — you
+download free + idempotently now, embed once later. Two gaps over P1: P1 bounded history only by a
+per-form **count** (`limit`) and the CLI `--all` loop had **no per-ticker error isolation** (a bad
+CIK aborted the whole universe) and no aggregate summary.
+
+**Mechanism (key files).**
+1. **Date floor** — `providers/sec_edgar._parse_filings` gains `since: date | None`: after the form
+   filter it drops `filing_date < since`, then sorts newest-first and caps to `limit` (now a *safety
+   ceiling within the window*, not the history bound). Plumbed through `list_filings(…, since=)` and
+   `documents.download_filings(…, since=)`. `None` preserves the old count-only behaviour.
+2. **`documents.bulk_download(tickers, provider, *, documents_dir, forms, limit, since) →
+   BulkDownloadResult`** — runs `download_filings` per ticker inside a try/except so a **whole-ticker**
+   failure (bad CIK / `ProviderUnavailable`, which `download_filings` does *not* catch — it only
+   isolates per-*filing* errors) is recorded in `failed_tickers` and never aborts the universe.
+   Aggregates totals (`downloaded`/`skipped`/`errors`) + keeps `per_ticker`. Idempotent (delegates to
+   `download_filings`, which skips anything already on disk / in the manifest), so a re-run resumes.
+3. **CLI** `documents download-sec` gains `--since YYYY-MM-DD` and `--years N`; the floor is
+   `--since` if given, else `today − N years`, else none. Both single-ticker and `--all` now route
+   through `bulk_download`; output is per-ticker lines + a `— total:` summary + any `! failed`
+   tickers. (Business logic lives in `documents/`, CLI stays thin.)
+
+**Scope note (recent-window).** Only EDGAR's `filings.recent` array (~1000 newest filings) is read —
+far more than a 2–3yr 10-K/10-Q/8-K window needs (~30–60 filings). Complete deep history for
+hyperactive 8-K filers would require fetching the older `filings.files` JSON shards; deferred.
+
+**Runbook (free, your machine — not run in CI).**
+1. Ensure `SEC_USER_AGENT="Name email"` in `.env` (fair-access; the CLI exits if absent).
+2. `python -m stock_agent documents download-sec --all --years 3 --limit 60` — resumable; re-run to
+   pick up failures (printed as `! TICKER: …`) or new filings.
+3. Then `documents ingest --all` (local fastembed, $0) to chunk+embed for the 9b A/B. The paid
+   voyage embed (9c-run) comes last, once chunking + embedder are locked.
+
+**Tested** (offline, `FakeEdgar`/`MultiEdgar` + monkeypatched CLI): `_parse_filings` + `download_filings`
+date-floor filtering; `bulk_download` aggregation, whole-ticker isolation (one ticker raises → others
+still download), idempotent re-run; CLI `--years` floor math, explicit `--since` precedence over
+`--years`, bad-date exit, `--all` universe routing + summary. No live SEC calls.

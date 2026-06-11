@@ -19,6 +19,7 @@ from stock_agent.rag.embeddings import (
     OpenAIEmbedder,
     VoyageEmbedder,
     build_embedder,
+    embedding_namespace,
 )
 from stock_agent.settings import MissingSettingError, Settings
 
@@ -150,3 +151,21 @@ def test_fastembed_real_model() -> None:
     assert e.embed_query("AI data-center demand") == e.embed_query("AI data-center demand")
     docs = e.embed_documents(["chip revenue grew", "gaming declined"])
     assert len(docs) == 2 and all(len(v) == 384 for v in docs)
+
+
+# ---- 9c: embedder namespace (store isolation across providers) ---------------
+
+
+def test_embedding_namespace_distinguishes_providers() -> None:
+    local = embedding_namespace(Settings(_env_file=None, embedding_provider="local"))
+    voyage = embedding_namespace(Settings(_env_file=None, embedding_provider="voyage"))
+    openai = embedding_namespace(Settings(_env_file=None, embedding_provider="openai"))
+    assert local != voyage != openai and local != openai
+    assert "voyage-4" in voyage  # default voyage model is reflected
+    # The local namespace carries the model, so two BGE variants don't collide either.
+    other = embedding_namespace(
+        Settings(
+            _env_file=None, embedding_provider="local", embedding_model="BAAI/bge-base-en-v1.5"
+        )
+    )
+    assert other != local

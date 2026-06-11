@@ -53,7 +53,8 @@ SMCI
 DELL
 ANET
 HPE
-PSTG
+# PSTG (Pure Storage) renamed to Everpure, Inc. on 2026-01-09; ticker is now P (CIK 1474432)
+P
 NTAP
 CIEN
 PLTR

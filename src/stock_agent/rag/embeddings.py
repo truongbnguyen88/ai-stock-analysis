@@ -262,3 +262,19 @@ def build_embedder(settings: Settings) -> Embedder:
     if settings.embedding_provider == "voyage":
         return VoyageEmbedder(settings)
     return FastEmbedEmbedder(settings.embedding_model)
+
+
+def embedding_namespace(settings: Settings) -> str:
+    """Stable identity (provider + model) of the configured embedder, for store namespacing.
+
+    Switching ``embedding_provider`` changes the **vector dimension** (BGE 384-d vs voyage-4
+    1024-d), so each embedder must own a separate vector-store collection — mixing dimensions
+    in one collection corrupts search. Mirrors ``build_embedder``'s selection so the namespace
+    always matches the embedder actually built. (The A/B harness builds non-default models in
+    its own in-memory stores, so only the prod default model is reflected here.)
+    """
+    if settings.embedding_provider == "openai":
+        return f"openai-{_OPENAI_DEFAULT_MODEL}"
+    if settings.embedding_provider == "voyage":
+        return f"voyage-{_VOYAGE_DEFAULT_MODEL}"
+    return f"local-{settings.embedding_model}"

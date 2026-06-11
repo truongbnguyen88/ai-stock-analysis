@@ -6,7 +6,9 @@ Commands: analyze (Phase 4), forecast (Phase 5), chat (Phase 4.5).
 
 from __future__ import annotations
 
+import json
 import textwrap
+from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
@@ -16,7 +18,7 @@ if TYPE_CHECKING:
     from stock_agent.schemas.backtest import BacktestResult
     from stock_agent.settings import Settings
 
-from stock_agent.documents.download import DEFAULT_FORMS, download_filings
+from stock_agent.documents.download import DEFAULT_FORMS, bulk_download
 from stock_agent.documents.ticker_cik import load_universe, normalize_ticker
 from stock_agent.llm.client import AnthropicClient
 from stock_agent.logging_config import configure_logging
@@ -25,14 +27,21 @@ from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers._cache import DiskCache
 from stock_agent.providers.sec_edgar import SecEdgarProvider
-from stock_agent.rag.embeddings import build_embedder
-from stock_agent.rag.pipeline import ingest_ticker
+from stock_agent.rag.embeddings import (
+    Embedder,
+    FastEmbedEmbedder,
+    OpenAIEmbedder,
+    VoyageEmbedder,
+    build_embedder,
+)
+from stock_agent.rag.eval import LabeledQuery, format_reports_markdown, run_ab
+from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, ingest_ticker
 from stock_agent.rag.retriever import Retriever
 from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.research.memo import render_memo_markdown
 from stock_agent.research.synthesis import answer_question
-from stock_agent.schemas.documents import DocumentType
+from stock_agent.schemas.documents import DocumentChunk, DocumentType
 from stock_agent.schemas.retrieval import ChunkFilter
 from stock_agent.settings import get_settings
 
@@ -595,13 +604,26 @@ def download_sec(
         typer.Option("--forms", help="Filing forms (repeatable); default 10-K 10-Q 8-K"),
     ] = None,
     limit: Annotated[
-        int, typer.Option("--limit", help="Max filings per form per ticker")
+        int, typer.Option("--limit", help="Max filings per form per ticker (within the window)")
     ] = 4,
+    since: Annotated[
+        str | None,
+        typer.Option("--since", help="Inclusive date floor YYYY-MM-DD (history window)"),
+    ] = None,
+    years: Annotated[
+        int,
+        typer.Option("--years", help="History depth in years (floor = today − N yrs; 0 = off)"),
+    ] = 0,
     universe: Annotated[
         Path, typer.Option("--universe", help="Universe file used with --all")
     ] = Path("configs/universe.txt"),
 ) -> None:
-    """Download SEC filings (10-K / 10-Q / 8-K) into the local corpus via EDGAR."""
+    """Download SEC filings (10-K / 10-Q / 8-K) into the local corpus via EDGAR.
+
+    Bulk history (RAG_TODO 9d): ``--all --years 3 --limit 60`` pulls ~3 years for the universe.
+    Idempotent — re-runs resume (already-downloaded filings are skipped) and per-ticker failures
+    don't abort the run.
+    """
     settings = get_settings()
     configure_logging(settings)
     if not settings.sec_user_agent:
@@ -620,6 +642,18 @@ def download_sec(
     else:
         forms_t = DEFAULT_FORMS
 
+    # Date floor: explicit --since wins; else --years N -> today − N years; else no floor.
+    if since is not None:
+        try:
+            since_floor: date | None = date.fromisoformat(since)
+        except ValueError:
+            typer.echo(f"Invalid --since '{since}'; expected YYYY-MM-DD.")
+            raise typer.Exit(code=1) from None
+    elif years > 0:
+        since_floor = date.today() - timedelta(days=365 * years)
+    else:
+        since_floor = None
+
     if download_all:
         tickers = load_universe(universe)
     elif ticker:
@@ -630,14 +664,27 @@ def download_sec(
 
     cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
     provider = SecEdgarProvider(settings, cache)
-    for sym in tickers:
-        r = download_filings(
-            sym, provider, documents_dir=settings.documents_dir, forms=forms_t, limit=limit
-        )
+    result = bulk_download(
+        tickers,
+        provider,
+        documents_dir=settings.documents_dir,
+        forms=forms_t,
+        limit=limit,
+        since=since_floor,
+    )
+    for r in result.per_ticker:
         typer.echo(
-            f"{sym}: downloaded {len(r.downloaded)}, skipped {len(r.skipped)}, "
+            f"{r.ticker}: downloaded {len(r.downloaded)}, skipped {len(r.skipped)}, "
             f"errors {len(r.errors)}"
         )
+    window = f" since {since_floor.isoformat()}" if since_floor else ""
+    typer.echo(
+        f"— total: {result.tickers} tickers{window} → downloaded {result.downloaded}, "
+        f"skipped {result.skipped}, errors {result.errors}, "
+        f"failed tickers {len(result.failed_tickers)}"
+    )
+    for fail in result.failed_tickers:
+        typer.echo(f"  ! {fail}")
 
 
 def _ingest_tickers(download_all: bool, ticker: str | None, universe: Path) -> list[str]:
@@ -668,15 +715,25 @@ def ingest(
     embedder = build_embedder(settings)
     store = build_vector_store(settings)
     for sym in _ingest_tickers(ingest_all, ticker, universe):
-        result = ingest_ticker(
-            sym,
-            documents_dir=settings.documents_dir,
-            embedder=embedder,
-            store=store,
-            chunk_tokens=settings.rag_chunk_tokens,
-            chunk_overlap=settings.rag_chunk_overlap,
+        try:
+            result = ingest_ticker(
+                sym,
+                documents_dir=settings.documents_dir,
+                embedder=embedder,
+                store=store,
+                chunk_tokens=settings.rag_chunk_tokens,
+                chunk_overlap=settings.rag_chunk_overlap,
+                max_embed_tokens=settings.rag_max_embed_tokens,
+            )
+        except EmbedBudgetExceeded as exc:
+            # Spend ceiling hit (RAG_TODO 9a): abort loud, embed nothing — let the user
+            # deliberately raise rag_max_embed_tokens rather than silently over-spending.
+            typer.echo(f"Aborting: {exc}")
+            raise typer.Exit(code=1) from exc
+        typer.echo(
+            f"{sym}: {result.filings} filings → {result.chunks} chunks "
+            f"(~{result.embed_tokens:,} embed tokens) ingested"
         )
-        typer.echo(f"{sym}: {result.filings} filings → {result.chunks} chunks ingested")
 
 
 # ---- rag (SEC-grounded retrieval) --------------------------------------------
@@ -717,3 +774,65 @@ def rag_query(
     for i, rc in enumerate(evidence.chunks, start=1):
         typer.echo(f"\n[{i}] {rc.citation_label()}  (score {rc.score:.3f})")
         typer.echo(textwrap.shorten(rc.chunk.text, width=280))
+
+
+def _named_embedder(name: str, settings: Settings) -> Embedder:
+    """Map an A/B ``--compare`` name to a constructed embedder (RAG_TODO 9b).
+
+    Independent of ``embedding_provider`` so a single run can compare several. ``voyage*`` /
+    ``openai`` need their API key (lazy — errors only when actually embedded).
+    """
+    key = name.strip().lower()
+    if key in ("local", "fastembed"):
+        return FastEmbedEmbedder(settings.embedding_model)
+    if key in ("voyage", "voyage-4"):
+        return VoyageEmbedder(settings)
+    if key in ("voyage-finance", "voyage-finance-2"):
+        return VoyageEmbedder(settings, model="voyage-finance-2")
+    if key == "openai":
+        return OpenAIEmbedder(settings)
+    raise typer.BadParameter(
+        f"unknown embedder '{name}' (use: local, voyage, voyage-finance, openai)"
+    )
+
+
+@rag_app.command("eval")
+def rag_eval(
+    queries: Annotated[
+        Path, typer.Option("--queries", "-q", help="JSON file: list of labeled queries")
+    ],
+    compare: Annotated[
+        str,
+        typer.Option("--compare", help="Comma list: local,voyage,voyage-finance,openai"),
+    ] = "local",
+    top_k: Annotated[
+        int | None, typer.Option("--top-k", help="Chunks per query (default settings.rag_top_k)")
+    ] = None,
+) -> None:
+    """A/B retrieval quality across embedders on a labeled query set (RAG_TODO 9b).
+
+    The labeled-query file is a JSON list of ``{query, relevant_spans[], ticker?, top_k?}``
+    (see configs/rag_eval_queries.example.json). The corpus is the already-ingested filings
+    for the tickers referenced; chunking is held constant (compares embedders, not chunking).
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    labeled = [LabeledQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    tickers = sorted({q.ticker for q in labeled if q.ticker})
+    corpus: list[DocumentChunk] = []
+    for sym in tickers:
+        corpus.extend(
+            build_chunks(
+                sym,
+                documents_dir=settings.documents_dir,
+                chunk_tokens=settings.rag_chunk_tokens,
+                chunk_overlap=settings.rag_chunk_overlap,
+            )
+        )
+    if not corpus:
+        typer.echo("No downloaded filings for the query tickers. Run download-sec + ingest first.")
+        raise typer.Exit(code=1)
+    names = [s for s in compare.split(",") if s.strip()]
+    embedders = {n: _named_embedder(n, settings) for n in names}
+    reports = run_ab(corpus, labeled, embedders, top_k=top_k or settings.rag_top_k)
+    typer.echo(format_reports_markdown(reports))

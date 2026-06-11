@@ -69,6 +69,16 @@ def test_parse_filings_newest_first_and_limit() -> None:
     assert refs[1].filing_date.isoformat() == "2024-11-20"
 
 
+def test_parse_filings_since_floor_excludes_older() -> None:
+    # Floor at 2024-10-01 drops the 2024-08-28 8-K; keeps the 10-K + 10-Q (9d history window).
+    refs = _parse_filings(
+        "NVDA", "0001045810", _SUBMISSIONS,
+        forms=["10-K", "10-Q", "8-K"], limit=10, since=date(2024, 10, 1),
+    )
+    dates = [r.filing_date.isoformat() for r in refs]
+    assert dates == ["2025-02-26", "2024-11-20"]  # 2024-08-28 excluded by the floor
+
+
 def test_filing_ref_url_and_document_id() -> None:
     ref = FilingRef(
         ticker="NVDA",

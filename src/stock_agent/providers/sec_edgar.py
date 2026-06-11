@@ -52,15 +52,26 @@ def _parse_cik_map(payload: object) -> dict[str, str]:
 
 
 def _parse_filings(
-    ticker: str, cik: str, payload: object, *, forms: Sequence[str], limit: int
+    ticker: str,
+    cik: str,
+    payload: object,
+    *,
+    forms: Sequence[str],
+    limit: int,
+    since: Date | None = None,
 ) -> list[FilingRef]:
     """Extract newest-first ``FilingRef``s for the requested forms. Pure.
 
     The submissions index stores filings as PARALLEL arrays under
     ``filings.recent`` (form[i], filingDate[i], accessionNumber[i],
     primaryDocument[i]). We keep only exact form matches (so "10-K/A" amendments
-    are excluded when "10-K" is requested), skip malformed rows, sort newest-first,
-    and cap to ``limit``.
+    are excluded when "10-K" is requested), skip malformed rows, **drop filings older
+    than ``since``** (inclusive date floor; ``None`` = no floor), sort newest-first,
+    and cap to ``limit`` (a safety ceiling within the date window).
+
+    Note: only ``filings.recent`` (the most-recent ~1000 filings) is read — more than
+    enough for a 2–3yr 10-K/10-Q/8-K window; complete deep history would need EDGAR's
+    older ``filings.files`` shards (out of scope).
     """
     recent: object = payload
     for key in ("filings", "recent"):
@@ -81,6 +92,8 @@ def _parse_filings(
             filing_date = Date.fromisoformat(str(fdate))
         except ValueError:
             continue
+        if since is not None and filing_date < since:
+            continue  # outside the requested history window
         refs.append(
             FilingRef(
                 ticker=ticker,
@@ -157,9 +170,18 @@ class SecEdgarProvider:
         return cik
 
     def list_filings(
-        self, ticker: str, forms: Sequence[DocumentType], *, limit: int = 10
+        self,
+        ticker: str,
+        forms: Sequence[DocumentType],
+        *,
+        limit: int = 10,
+        since: Date | None = None,
     ) -> list[FilingRef]:
-        """Return newest-first filings of the requested ``forms`` for ``ticker``."""
+        """Return newest-first filings of the requested ``forms`` for ``ticker``.
+
+        ``since`` is an inclusive date floor (e.g. 3 years ago for a bulk history pull);
+        ``limit`` caps the count within that window.
+        """
         sym = ticker.strip().upper()
         cik = self.get_cik(sym)
         key = make_key(_NAME, "submissions", cik)
@@ -170,7 +192,7 @@ class SecEdgarProvider:
             self._throttle()
             payload = self._client().get(_SUBMISSIONS_URL.format(cik10=cik), params={})
             self._cache.set(key, json.dumps(payload))
-        return _parse_filings(sym, cik, payload, forms=forms, limit=limit)
+        return _parse_filings(sym, cik, payload, forms=forms, limit=limit, since=since)
 
     def download_filing(self, ref: FilingRef) -> str:
         """Fetch the raw primary-document text (HTML/TXT) for ``ref``."""

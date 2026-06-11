@@ -13,7 +13,9 @@ Storage layout (under ``settings.documents_dir``):
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
+from datetime import date as Date
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -73,19 +75,21 @@ def download_filings(
     documents_dir: Path,
     forms: tuple[DocumentType, ...] = DEFAULT_FORMS,
     limit: int = 4,
+    since: Date | None = None,
 ) -> DownloadResult:
     """Download up to ``limit`` filings per requested form for ``ticker``.
 
-    Idempotent: a filing already on disk (or in the manifest) is skipped, never
-    re-fetched or overwritten. A per-filing failure is recorded and does not abort
-    the rest of the run.
+    ``since`` is an inclusive date floor (e.g. 3 years ago for a bulk history pull, RAG_TODO 9d);
+    ``None`` keeps the prior count-only behaviour. Idempotent: a filing already on disk (or in the
+    manifest) is skipped, never re-fetched or overwritten. A per-filing failure is recorded and
+    does not abort the rest of the run.
     """
     sym = normalize_ticker(ticker)
     result = DownloadResult(ticker=sym)
     mpath = manifest_path(documents_dir)
     manifest = DownloadManifest.load(mpath)
 
-    refs = provider.list_filings(sym, forms, limit=limit)
+    refs = provider.list_filings(sym, forms, limit=limit, since=since)
     for ref in refs:
         directory = filing_dir(documents_dir, ref)
         html_path = directory / _FILING_FILENAME
@@ -124,3 +128,58 @@ def download_filings(
         errors=len(result.errors),
     )
     return result
+
+
+class BulkDownloadResult(BaseModel):
+    """Aggregate summary of a multi-ticker download run (RAG_TODO 9d)."""
+
+    tickers: int
+    downloaded: int  # total filings fetched across all tickers
+    skipped: int  # total already-on-disk filings
+    errors: int  # total per-filing failures (one ticker can have several)
+    failed_tickers: list[str] = Field(default_factory=list)  # "TICKER: message" (whole-ticker)
+    per_ticker: list[DownloadResult] = Field(default_factory=list)
+
+
+def bulk_download(
+    tickers: Sequence[str],
+    provider: SecEdgarProvider,
+    *,
+    documents_dir: Path,
+    forms: tuple[DocumentType, ...] = DEFAULT_FORMS,
+    limit: int = 4,
+    since: Date | None = None,
+) -> BulkDownloadResult:
+    """Download filings for many tickers, isolating per-ticker failures (RAG_TODO 9d).
+
+    Unlike ``download_filings`` (which isolates per-*filing* errors), this isolates **whole-ticker**
+    failures: a bad CIK lookup or an unavailable provider for one ticker is recorded in
+    ``failed_tickers`` and does **not** abort the rest of the universe. Idempotent (delegates to
+    ``download_filings``), so a re-run resumes — already-downloaded filings are skipped.
+    """
+    syms = [normalize_ticker(t) for t in tickers]
+    per_ticker: list[DownloadResult] = []
+    failed: list[str] = []
+    for sym in syms:
+        try:
+            per_ticker.append(
+                download_filings(
+                    sym,
+                    provider,
+                    documents_dir=documents_dir,
+                    forms=forms,
+                    limit=limit,
+                    since=since,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — one ticker's listing failure isn't fatal to the run
+            log.warning("sec.bulk_ticker_failed", ticker=sym, error=str(exc))
+            failed.append(f"{sym}: {exc}")
+    return BulkDownloadResult(
+        tickers=len(syms),
+        downloaded=sum(len(r.downloaded) for r in per_ticker),
+        skipped=sum(len(r.skipped) for r in per_ticker),
+        errors=sum(len(r.errors) for r in per_ticker),
+        failed_tickers=failed,
+        per_ticker=per_ticker,
+    )
