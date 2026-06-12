@@ -10,10 +10,12 @@ Embedder + store are injected (the CLI builds them from settings; tests pass fak
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import structlog
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from stock_agent.documents.parsers import load_filing
 from stock_agent.rag.chunking import chunk_filing, estimate_tokens
@@ -122,4 +124,78 @@ def ingest_ticker(
     )
     return IngestResult(
         ticker=ticker, filings=len(dirs), chunks=len(chunks), embed_tokens=embed_tokens
+    )
+
+
+class BulkIngestResult(BaseModel):
+    """Aggregate summary of a multi-ticker ingest run (RAG_TODO 9c-run hardening)."""
+
+    tickers: int
+    chunks: int  # total chunks embedded + stored across all tickers
+    embed_tokens: int  # total proxy embed tokens
+    failed_tickers: list[str] = Field(default_factory=list)  # "TICKER: message"
+    per_ticker: list[IngestResult] = Field(default_factory=list)
+
+
+def bulk_ingest(
+    tickers: Sequence[str],
+    *,
+    documents_dir: Path,
+    embedder: Embedder,
+    store: VectorStore,
+    chunk_tokens: int = _DEFAULT_CHUNK_TOKENS,
+    chunk_overlap: float = _DEFAULT_CHUNK_OVERLAP,
+    max_embed_tokens: int | None = None,
+    retries: int = 2,
+    sleep: Callable[[float], None] = time.sleep,
+) -> BulkIngestResult:
+    """Ingest many tickers, surviving transient per-ticker failures (RAG_TODO 9c-run hardening).
+
+    A whole-corpus embed makes thousands of provider calls over ~hours, so a single transient blip
+    (e.g. a dropped connection, as hit the first voyage embed) must **not** abort the run. Each
+    ticker is retried up to ``retries`` times (linear backoff); a ticker that still fails is
+    recorded in ``failed_tickers`` and the run **continues**. Idempotent (``ingest_ticker`` upserts
+    by ``chunk_id``), so a re-run backfills exactly the failures.
+
+    ``EmbedBudgetExceeded`` is deliberately **not** isolated — it's an intentional spend ceiling
+    (9a), so it propagates and aborts the run (the caller decides whether to raise the ceiling).
+    """
+    syms = list(tickers)
+    per_ticker: list[IngestResult] = []
+    failed: list[str] = []
+    for sym in syms:
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                per_ticker.append(
+                    ingest_ticker(
+                        sym,
+                        documents_dir=documents_dir,
+                        embedder=embedder,
+                        store=store,
+                        chunk_tokens=chunk_tokens,
+                        chunk_overlap=chunk_overlap,
+                        max_embed_tokens=max_embed_tokens,
+                    )
+                )
+                last_exc = None
+                break
+            except EmbedBudgetExceeded:
+                raise  # deliberate budget stop — abort the whole run (not a transient failure)
+            except Exception as exc:  # noqa: BLE001 — isolate transient/per-ticker embed failures
+                last_exc = exc
+                if attempt < retries:
+                    log.warning(
+                        "rag.ingest_retry", ticker=sym, attempt=attempt + 1, error=str(exc)
+                    )
+                    sleep(2.0 * (attempt + 1))  # linear backoff: 2s, 4s
+        if last_exc is not None:
+            log.warning("rag.bulk_ingest_ticker_failed", ticker=sym, error=str(last_exc))
+            failed.append(f"{sym}: {last_exc}")
+    return BulkIngestResult(
+        tickers=len(syms),
+        chunks=sum(r.chunks for r in per_ticker),
+        embed_tokens=sum(r.embed_tokens for r in per_ticker),
+        failed_tickers=failed,
+        per_ticker=per_ticker,
     )

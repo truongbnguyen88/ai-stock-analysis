@@ -35,7 +35,7 @@ from stock_agent.rag.embeddings import (
     build_embedder,
 )
 from stock_agent.rag.eval import LabeledQuery, format_reports_markdown, run_ab
-from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, ingest_ticker
+from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, bulk_ingest
 from stock_agent.rag.retriever import Retriever
 from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
@@ -714,25 +714,38 @@ def ingest(
     configure_logging(settings)
     embedder = build_embedder(settings)
     store = build_vector_store(settings)
-    for sym in _ingest_tickers(ingest_all, ticker, universe):
-        try:
-            result = ingest_ticker(
-                sym,
-                documents_dir=settings.documents_dir,
-                embedder=embedder,
-                store=store,
-                chunk_tokens=settings.rag_chunk_tokens,
-                chunk_overlap=settings.rag_chunk_overlap,
-                max_embed_tokens=settings.rag_max_embed_tokens,
-            )
-        except EmbedBudgetExceeded as exc:
-            # Spend ceiling hit (RAG_TODO 9a): abort loud, embed nothing — let the user
-            # deliberately raise rag_max_embed_tokens rather than silently over-spending.
-            typer.echo(f"Aborting: {exc}")
-            raise typer.Exit(code=1) from exc
+    tickers = _ingest_tickers(ingest_all, ticker, universe)
+    try:
+        # bulk_ingest isolates + retries per-ticker failures so one transient network blip
+        # doesn't abort a multi-hour corpus embed (RAG_TODO 9c-run hardening).
+        result = bulk_ingest(
+            tickers,
+            documents_dir=settings.documents_dir,
+            embedder=embedder,
+            store=store,
+            chunk_tokens=settings.rag_chunk_tokens,
+            chunk_overlap=settings.rag_chunk_overlap,
+            max_embed_tokens=settings.rag_max_embed_tokens,
+        )
+    except EmbedBudgetExceeded as exc:
+        # Spend ceiling hit (RAG_TODO 9a): abort loud — deliberate budget stop, not a transient
+        # failure, so it is NOT isolated/retried by bulk_ingest.
+        typer.echo(f"Aborting: {exc}")
+        raise typer.Exit(code=1) from exc
+    for r in result.per_ticker:
         typer.echo(
-            f"{sym}: {result.filings} filings → {result.chunks} chunks "
-            f"(~{result.embed_tokens:,} embed tokens) ingested"
+            f"{r.ticker}: {r.filings} filings → {r.chunks} chunks "
+            f"(~{r.embed_tokens:,} embed tokens) ingested"
+        )
+    typer.echo(
+        f"— total: {result.tickers} tickers → {result.chunks:,} chunks, "
+        f"~{result.embed_tokens:,} embed tokens, failed {len(result.failed_tickers)}"
+    )
+    for fail in result.failed_tickers:
+        typer.echo(f"  ! {fail}")
+    if result.failed_tickers:
+        typer.echo(
+            f"Re-run to backfill the {len(result.failed_tickers)} failed ticker(s) (idempotent)."
         )
 
 

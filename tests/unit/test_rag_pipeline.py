@@ -12,8 +12,10 @@ from stock_agent.documents.parsers import load_filing
 from stock_agent.rag.chunking import chunk_filing, estimate_tokens
 from stock_agent.rag.embeddings import FakeEmbedder
 from stock_agent.rag.pipeline import (
+    BulkIngestResult,
     EmbedBudgetExceeded,
     IngestResult,
+    bulk_ingest,
     ingest_ticker,
     iter_filing_dirs,
 )
@@ -151,3 +153,67 @@ def test_ingest_no_ceiling_is_unlimited(tmp_path: Path) -> None:
     # Default max_embed_tokens=None -> guard disabled, behaves exactly as before.
     result = ingest_ticker("NVDA", documents_dir=tmp_path, embedder=_EMB, store=store)
     assert store.count() == result.chunks and result.chunks >= 2
+
+
+# ---- 9c-run hardening: bulk_ingest isolation + retry -------------------------
+
+def _nosleep(_seconds: float) -> None:
+    """Injected no-op backoff so retry tests don't actually wait."""
+
+
+def test_bulk_ingest_aggregates_across_tickers(tmp_path: Path) -> None:
+    _make_filing(tmp_path, ticker="NVDA")
+    _make_filing(tmp_path, ticker="AVGO")
+    store = InMemoryVectorStore()
+    res = bulk_ingest(
+        ["NVDA", "AVGO"], documents_dir=tmp_path, embedder=_EMB, store=store, sleep=_nosleep
+    )
+    assert isinstance(res, BulkIngestResult)
+    assert res.tickers == 2 and not res.failed_tickers
+    assert res.chunks == store.count() and res.chunks > 0
+    assert {r.ticker for r in res.per_ticker} == {"NVDA", "AVGO"}
+
+
+def test_bulk_ingest_isolates_failure_and_retries_transient(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Drive bulk_ingest's loop directly: GOOD succeeds, FLAKY fails once then succeeds (retry),
+    # BAD always fails (recorded, run continues). A transient blip must NOT abort the run.
+    import stock_agent.rag.pipeline as pl
+
+    calls = {"GOOD": 0, "FLAKY": 0, "BAD": 0}
+
+    def fake_ingest(sym: str, **kw: object) -> IngestResult:
+        calls[sym] += 1
+        if sym == "BAD":
+            raise RuntimeError("network down")
+        if sym == "FLAKY" and calls["FLAKY"] == 1:
+            raise RuntimeError("transient blip")  # recovers on retry
+        return IngestResult(ticker=sym, filings=1, chunks=2, embed_tokens=10)
+
+    monkeypatch.setattr(pl, "ingest_ticker", fake_ingest)
+    res = bulk_ingest(
+        ["GOOD", "FLAKY", "BAD"], documents_dir=tmp_path, embedder=_EMB,
+        store=InMemoryVectorStore(), retries=2, sleep=_nosleep,
+    )
+    assert res.tickers == 3
+    assert [r.ticker for r in res.per_ticker] == ["GOOD", "FLAKY"]  # BAD isolated, run continued
+    assert len(res.failed_tickers) == 1 and res.failed_tickers[0].startswith("BAD:")
+    assert calls["FLAKY"] == 2  # failed once, retried, succeeded
+    assert calls["BAD"] == 3  # initial + 2 retries, then recorded
+
+
+def test_bulk_ingest_budget_exceeded_aborts_not_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import stock_agent.rag.pipeline as pl
+
+    def fake_ingest(sym: str, **kw: object) -> IngestResult:
+        raise EmbedBudgetExceeded(sym, 100, 10)  # deliberate spend stop
+
+    monkeypatch.setattr(pl, "ingest_ticker", fake_ingest)
+    with pytest.raises(EmbedBudgetExceeded):  # propagates — NOT caught/retried as transient
+        bulk_ingest(
+            ["NVDA"], documents_dir=tmp_path, embedder=_EMB,
+            store=InMemoryVectorStore(), sleep=_nosleep,
+        )
