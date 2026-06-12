@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from stock_agent.features.assembler import _target_col, build_training_matrix
-from stock_agent.features.price_features import PRICE_FEATURE_COLS
+from stock_agent.features.price_features import resolve_feature_cols
 from stock_agent.forecasting.buckets import thresholds_for_horizon
 from stock_agent.logging_config import get_logger
 from stock_agent.schemas.market import PriceSeries
@@ -171,6 +171,9 @@ def train_pooled_from_series(
     min_total_rows: int = 500,
     earnings_by_ticker: dict[str, list[Date]] | None = None,
     vix: pd.Series | None = None,
+    market: pd.Series | None = None,
+    insider_by_ticker: dict[str, pd.DataFrame] | None = None,
+    feature_groups: Sequence[str] | None = None,
     calibrate: bool = True,
 ) -> PooledModel:
     """Train a pooled model from in-memory price series (pure; offline-testable).
@@ -179,9 +182,14 @@ def train_pooled_from_series(
     discipline by the assembler); rows are stacked, then one classifier per
     threshold is fit on the pool. Tickers with too little history are skipped.
     ``earnings_by_ticker`` supplies per-ticker earnings dates for the
-    ``days_to_next_earnings`` feature (NaN where absent).
+    ``days_to_next_earnings`` feature (NaN where absent). ``feature_groups`` opts
+    into candidate columns (ablation); ``market`` (SPY) feeds the ``relstr`` group.
+    The trained ``feature_cols`` are recorded on the artifact so inference rebuilds
+    the identical feature set.
     """
     earnings_by_ticker = earnings_by_ticker or {}
+    insider_by_ticker = insider_by_ticker or {}
+    feature_cols = resolve_feature_cols(feature_groups)
     thresholds = thresholds_for_horizon(horizon_days)  # horizon-scaled cut-points
     frames_x: list[pd.DataFrame] = []
     frames_y: list[pd.DataFrame] = []
@@ -194,6 +202,9 @@ def train_pooled_from_series(
                 min_rows=min_rows_per_ticker,
                 earnings_dates=earnings_by_ticker.get(series.ticker.upper()),
                 vix=vix,
+                market=market,
+                insider=insider_by_ticker.get(series.ticker.upper()),
+                feature_groups=feature_groups,
                 thresholds=thresholds,
             )
         except ValueError as exc:
@@ -227,7 +238,7 @@ def train_pooled_from_series(
         # the column count stable across fit/transform.
         imputer = SimpleImputer(strategy="median", keep_empty_features=True).fit(X_all)
         X_fit = pd.DataFrame(
-            imputer.transform(X_all), columns=PRICE_FEATURE_COLS, index=X_all.index
+            imputer.transform(X_all), columns=feature_cols, index=X_all.index
         )
 
     classifiers: dict[float, Any] = {}
@@ -276,7 +287,7 @@ def train_pooled_from_series(
     return PooledModel(
         model_type=model_type,
         horizon_days=horizon_days,
-        feature_cols=list(PRICE_FEATURE_COLS),
+        feature_cols=list(feature_cols),
         classifiers=classifiers,
         imputer=imputer,
         n_train_rows=len(X_all),

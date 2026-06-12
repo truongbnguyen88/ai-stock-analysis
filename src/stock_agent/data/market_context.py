@@ -24,6 +24,7 @@ from stock_agent.providers.registry import ProviderRegistry
 log = get_logger(__name__)
 
 VIX_SYMBOL = "^VIX"  # CBOE Volatility Index (yfinance ticker)
+MARKET_SYMBOL = "SPY"  # S&P 500 ETF — broad-market proxy for relative-strength features
 
 
 def fetch_index_close(
@@ -46,3 +47,12 @@ def fetch_index_close(
 def fetch_vix(registry: ProviderRegistry, *, start: Date, end: Date) -> pd.Series:
     """Date-indexed VIX close over [start, end] (empty Series if unavailable)."""
     return fetch_index_close(registry, VIX_SYMBOL, start=start, end=end)
+
+
+def fetch_market(registry: ProviderRegistry, *, start: Date, end: Date) -> pd.Series:
+    """Date-indexed broad-market (SPY) close over [start, end] for relative strength.
+
+    Like VIX, fetched once over a span and reindexed per fold; using close at-or-
+    before each date keeps relative-strength features point-in-time safe.
+    """
+    return fetch_index_close(registry, MARKET_SYMBOL, start=start, end=end)

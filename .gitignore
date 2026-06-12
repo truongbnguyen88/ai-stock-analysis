@@ -23,8 +23,10 @@ htmlcov/
 # Project runtime artifacts
 .cache/
 outputs/
-# RAG: raw SEC filings, parsed text, and the local vector store (large/binary)
-data/
+# RAG: raw SEC filings, parsed text, and the local vector store (large/binary).
+# Root-anchored: this is the top-level data/ dir (documents_dir=data/raw), NOT the
+# src/stock_agent/data source package (an unanchored `data/` matched that too).
+/data/
 
 # OS / editor
 .DS_Store

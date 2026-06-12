@@ -22,6 +22,7 @@ from stock_agent.providers._cache import DiskCache, make_key
 from stock_agent.providers._http import HttpJson
 from stock_agent.providers.base import ProviderUnavailable, SymbolNotFound
 from stock_agent.schemas.documents import DocumentType, FilingRef
+from stock_agent.schemas.insider import InsiderFilingRef
 from stock_agent.settings import Settings
 
 _NAME = "sec_edgar"
@@ -108,6 +109,53 @@ def _parse_filings(
     return refs[:limit]
 
 
+def _parse_form4_filings(
+    ticker: str,
+    cik: str,
+    payload: object,
+    *,
+    limit: int,
+    since: Date | None = None,
+) -> list[InsiderFilingRef]:
+    """Extract newest-first Form 4 (``form == "4"``) filing refs. Pure.
+
+    Same parallel-array shape as ``_parse_filings`` but yields ``InsiderFilingRef``
+    (form fixed to "4", outside the RAG ``DocumentType``). Excludes amendments
+    ("4/A") by exact match; applies the inclusive ``since`` floor and ``limit``.
+    """
+    recent: object = payload
+    for key in ("filings", "recent"):
+        recent = recent.get(key, {}) if isinstance(recent, dict) else {}
+    if not isinstance(recent, dict):
+        return []
+    form_arr = recent.get("form") or []
+    date_arr = recent.get("filingDate") or []
+    acc_arr = recent.get("accessionNumber") or []
+    doc_arr = recent.get("primaryDocument") or []
+
+    refs: list[InsiderFilingRef] = []
+    for form, fdate, acc, doc in zip(form_arr, date_arr, acc_arr, doc_arr, strict=False):
+        if form != "4" or not (fdate and acc and doc):
+            continue
+        try:
+            filing_date = Date.fromisoformat(str(fdate))
+        except ValueError:
+            continue
+        if since is not None and filing_date < since:
+            continue
+        refs.append(
+            InsiderFilingRef(
+                ticker=ticker,
+                cik=cik,
+                filing_date=filing_date,
+                accession_number=str(acc),
+                primary_document=str(doc),
+            )
+        )
+    refs.sort(key=lambda r: r.filing_date, reverse=True)
+    return refs[:limit]
+
+
 class SecEdgarProvider:
     """Official EDGAR client: ticker->CIK, filing list, and filing download."""
 
@@ -184,20 +232,52 @@ class SecEdgarProvider:
         """
         sym = ticker.strip().upper()
         cik = self.get_cik(sym)
+        payload = self._submissions(cik)
+        return _parse_filings(sym, cik, payload, forms=forms, limit=limit, since=since)
+
+    def list_form4_filings(
+        self, ticker: str, *, limit: int = 200, since: Date | None = None
+    ) -> list[InsiderFilingRef]:
+        """Return newest-first Form 4 (insider-transaction) filings for ``ticker``.
+
+        Reuses the cached submissions index. ``limit`` defaults high (insiders file
+        frequently) so a multi-year ``since`` window isn't truncated prematurely.
+        """
+        sym = ticker.strip().upper()
+        cik = self.get_cik(sym)
+        payload = self._submissions(cik)
+        return _parse_form4_filings(sym, cik, payload, limit=limit, since=since)
+
+    def _submissions(self, cik: str) -> object:
+        """Fetch (or cache-hit) the EDGAR submissions index for ``cik``."""
         key = make_key(_NAME, "submissions", cik)
         raw = self._cache.get(key)
         if raw is not None:
-            payload: object = json.loads(raw)
-        else:
-            self._throttle()
-            payload = self._client().get(_SUBMISSIONS_URL.format(cik10=cik), params={})
-            self._cache.set(key, json.dumps(payload))
-        return _parse_filings(sym, cik, payload, forms=forms, limit=limit, since=since)
+            return json.loads(raw)
+        self._throttle()
+        payload = self._client().get(_SUBMISSIONS_URL.format(cik10=cik), params={})
+        self._cache.set(key, json.dumps(payload))
+        return payload
 
     def download_filing(self, ref: FilingRef) -> str:
         """Fetch the raw primary-document text (HTML/TXT) for ``ref``."""
         self._throttle()
         return self._client().get_text(ref.url)
+
+    def download_form4(self, ref: InsiderFilingRef) -> str:
+        """Fetch the raw Form 4 ownership-XML text for ``ref`` (disk-cached by URL).
+
+        Form 4 XML is immutable once filed, so caching is safe and avoids re-downloading
+        the same documents on every walk-forward as-of (insiders file frequently).
+        """
+        key = make_key(_NAME, "form4_xml", ref.url)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        self._throttle()
+        text = self._client().get_text(ref.url)
+        self._cache.set(key, text)
+        return text
 
     def close(self) -> None:
         if self._http is not None:

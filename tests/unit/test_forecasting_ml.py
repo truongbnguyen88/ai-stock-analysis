@@ -6,8 +6,10 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
+from stock_agent.features.price_features import FEATURE_GROUPS, PRICE_FEATURE_COLS
 from stock_agent.forecasting.ml import MLForecaster
 from stock_agent.forecasting.pooled import PooledModel, train_pooled_from_series
 from stock_agent.schemas.market import PriceBar, PriceSeries
@@ -65,6 +67,87 @@ def test_pooled_forecast_buckets_valid(model_type: str) -> None:
     assert fc.upside_prob + fc.downside_prob == pytest.approx(1.0, abs=1e-6)
     assert fc.model_name == f"ml_{model_type}"
     assert fc.notes is not None and "Pooled" in fc.notes
+
+
+def _market_series(n: int = 260, seed: int = 123) -> pd.Series:
+    rng = np.random.default_rng(seed)
+    close = 400.0 * np.exp(np.cumsum(rng.normal(0.0003, 0.01, n)))
+    idx = pd.DatetimeIndex([date(2022, 1, 1) + timedelta(days=i) for i in range(n)])
+    return pd.Series(close, index=idx, dtype=float)
+
+
+def test_default_pooled_model_is_baseline_only_bc() -> None:
+    # No feature_groups → artifact trains on exactly the production baseline cols.
+    model = train_pooled_from_series(
+        _universe(), horizon_days=20, model_type="logistic", min_total_rows=100, calibrate=False
+    )
+    assert model.feature_cols == list(PRICE_FEATURE_COLS)
+
+
+@pytest.mark.parametrize("model_type", ["logistic", "lightgbm"])
+def test_train_infer_roundtrip_with_feature_groups(model_type: str) -> None:
+    # Train WITH candidate groups; the artifact records the extended feature_cols,
+    # and inference must rebuild the matching feature set (via groups_for_cols) and
+    # still yield a valid bucket distribution — proving the integration end-to-end.
+    groups = ["volume", "high52w", "session", "shape"]
+    model = train_pooled_from_series(
+        _universe(), horizon_days=20, model_type=model_type,  # type: ignore[arg-type]
+        min_total_rows=100, calibrate=False, feature_groups=groups,
+    )
+    expected = list(PRICE_FEATURE_COLS) + [c for g in groups for c in FEATURE_GROUPS[g]]
+    assert model.feature_cols == expected
+
+    fc = MLForecaster(model_type, model=model).forecast(  # type: ignore[arg-type]
+        _noisy_series("NVDA", seed=99), horizon_days=20
+    )
+    assert sum(b.probability for b in fc.buckets) == pytest.approx(1.0, abs=1e-6)
+    assert all(0.0 <= b.probability <= 1.0 for b in fc.buckets)
+
+
+def test_train_infer_roundtrip_relstr_no_registry_is_safe() -> None:
+    # relstr trained with a market series; at inference there is no registry, so the
+    # market is unavailable → relstr features are NaN. Must NOT crash and must still
+    # produce a valid distribution (imputer/booster handle the missing column).
+    model = train_pooled_from_series(
+        _universe(), horizon_days=20, model_type="logistic", min_total_rows=100,
+        calibrate=False, feature_groups=["relstr"], market=_market_series(),
+    )
+    assert "rel_strength_20d" in model.feature_cols
+    fc = MLForecaster("logistic", model=model).forecast(  # no registry
+        _noisy_series("NVDA", seed=7), horizon_days=20
+    )
+    assert sum(b.probability for b in fc.buckets) == pytest.approx(1.0, abs=1e-6)
+
+
+def _insider_by_ticker(universe: list[PriceSeries]) -> dict[str, pd.DataFrame]:
+    out: dict[str, pd.DataFrame] = {}
+    for s in universe:
+        dates = [pd.Timestamp(b.date) for b in s.bars[30:42]]  # 12 filings in-range
+        out[s.ticker.upper()] = pd.DataFrame(
+            {
+                "net_value": [1e6 if i < 8 else -1e6 for i in range(len(dates))],
+                "n_buys": [1 if i < 8 else 0 for i in range(len(dates))],
+                "n_sells": [0 if i < 8 else 1 for i in range(len(dates))],
+            },
+            index=pd.DatetimeIndex(dates),
+        )
+    return out
+
+
+def test_train_infer_roundtrip_insider_no_registry_is_safe() -> None:
+    # Train with the insider group + per-ticker Form 4 frames; at inference there is no
+    # registry/SEC provider, so insider features are NaN. Must not crash and must yield a
+    # valid distribution (imputer/booster handle the missing columns).
+    universe = _universe()
+    model = train_pooled_from_series(
+        universe, horizon_days=20, model_type="logistic", min_total_rows=100,
+        calibrate=False, feature_groups=["insider"], insider_by_ticker=_insider_by_ticker(universe),
+    )
+    assert "insider_net_63d" in model.feature_cols and "insider_imb_63d" in model.feature_cols
+    fc = MLForecaster("logistic", model=model).forecast(  # no registry → no insider fetch
+        _noisy_series("NVDA", seed=7), horizon_days=20
+    )
+    assert sum(b.probability for b in fc.buckets) == pytest.approx(1.0, abs=1e-6)
 
 
 def test_pooled_save_load_roundtrip(tmp_path: Path) -> None:

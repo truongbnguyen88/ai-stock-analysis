@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from stock_agent.features.assembler import current_features_vector
+from stock_agent.features.price_features import groups_for_cols
 from stock_agent.forecasting.buckets import BucketDef, buckets_for_horizon, make_prob_buckets
 from stock_agent.forecasting.historical import HistoricalSimulation
 from stock_agent.forecasting.pooled import PooledModel, default_model_path
@@ -124,6 +125,39 @@ class MLForecaster:
         v = fetch_vix(self._registry, start=series.dates[0], end=series.dates[-1])
         return v if not v.empty else None
 
+    def _market(self, series: PriceSeries) -> pd.Series | None:
+        """SPY close over the price window for the relative-strength features.
+
+        Point-in-time safe (same rationale as ``_vix``): bounded by the as-of bar.
+        None when no registry / SPY is unavailable (the feature becomes NaN).
+        """
+        if self._registry is None or not series.bars:
+            return None
+        from stock_agent.data.market_context import fetch_market
+
+        m = fetch_market(self._registry, start=series.dates[0], end=series.dates[-1])
+        return m if not m.empty else None
+
+    def _insider(self, series: PriceSeries) -> pd.DataFrame | None:
+        """Form 4 insider-activity frame for the ticker (None if SEC unconfigured).
+
+        Built from a dedicated EDGAR provider (the registry doesn't carry one); the
+        ``since`` floor matches the price window, and Form 4 XML is disk-cached so the
+        per-as-of refits in a backtest don't re-download. ``filing_date`` keys the
+        frame, so trailing features over it stay point-in-time safe.
+        """
+        if not series.bars:
+            return None
+        from stock_agent.data.insider import build_sec_provider, fetch_insider_activity
+
+        provider = build_sec_provider(get_settings())
+        if provider is None:
+            return None
+        try:
+            return fetch_insider_activity(provider, series.ticker, since=series.dates[0])
+        finally:
+            provider.close()
+
     def _resolve_model(self, horizon_days: int) -> PooledModel | None:
         """Return a pooled model for this horizon (cached, then disk), or None."""
         if self._model is not None and self._model.horizon_days == horizon_days:
@@ -161,9 +195,23 @@ class MLForecaster:
             return fc.model_copy(update={"model_name": self.name, "notes": note})
 
         # Inference: current features (incl. earnings) → per-threshold exceedance → buckets.
+        # Rebuild exactly the feature groups the artifact was trained on (recovered from
+        # its feature_cols), so baseline models stay baseline and richer ones get matched.
         earnings_dates = self._earnings_dates(series.ticker)
+        groups = groups_for_cols(model.feature_cols)
+        market = self._market(series) if "relstr" in groups else None
+        insider = self._insider(series) if "insider" in groups else None
         x_df = pd.DataFrame(
-            [current_features_vector(series, earnings_dates=earnings_dates, vix=self._vix(series))]
+            [
+                current_features_vector(
+                    series,
+                    earnings_dates=earnings_dates,
+                    vix=self._vix(series),
+                    market=market,
+                    insider=insider,
+                    feature_groups=groups,
+                )
+            ]
         )
         thresholds = model.effective_thresholds()
         probs_raw = model.predict_exceedance(x_df)
