@@ -1,0 +1,31 @@
+[
+  { "ticker": "AAPL", "query": "What risk does Apple disclose from concentrating manufacturing with outsourcing partners in Asia?", "relevant_spans": ["outsourcing partners"] },
+  { "ticker": "AAPL", "query": "How does Apple's Services revenue perform and what does it include?", "relevant_spans": ["Services net sales"] },
+  { "ticker": "AAPL", "query": "What does Apple say about App Store regulation such as the Digital Markets Act?", "relevant_spans": ["Digital Markets Act"] },
+  { "ticker": "AAPL", "query": "How much capital does Apple return through its share repurchase program?", "relevant_spans": ["repurchase program"] },
+  { "ticker": "AAPL", "query": "What does Apple disclose about its business and results in Greater China?", "relevant_spans": ["Greater China"] },
+
+  { "ticker": "MSFT", "query": "What does Microsoft disclose about the Activision Blizzard acquisition?", "relevant_spans": ["Activision Blizzard"] },
+  { "ticker": "MSFT", "query": "What does Microsoft say about Copilot and its AI investments?", "relevant_spans": ["Copilot"] },
+  { "ticker": "MSFT", "query": "What cybersecurity threats such as cyberattacks does Microsoft identify as risks?", "relevant_spans": ["cyberattacks"] },
+  { "ticker": "MSFT", "query": "How does Microsoft describe revenue from server products and cloud services?", "relevant_spans": ["server products and cloud services"] },
+  { "ticker": "MSFT", "query": "What does Microsoft report for its More Personal Computing segment?", "relevant_spans": ["More Personal Computing"] },
+
+  { "ticker": "NVDA", "query": "What does NVIDIA disclose about U.S. export controls and licensing requirements affecting China sales?", "relevant_spans": ["export controls", "licensing requirement"] },
+  { "ticker": "NVDA", "query": "How does NVIDIA describe Data Center revenue growth?", "relevant_spans": ["Data Center revenue"] },
+  { "ticker": "NVDA", "query": "What does NVIDIA say about demand for generative AI?", "relevant_spans": ["generative AI"] },
+  { "ticker": "NVDA", "query": "What does NVIDIA disclose about reliance on third-party foundries for manufacturing?", "relevant_spans": ["third-party foundries"] },
+  { "ticker": "NVDA", "query": "What competitive risks does NVIDIA cite from competitors in its markets?", "relevant_spans": ["competitors"] },
+
+  { "ticker": "AMZN", "query": "How does Amazon describe Amazon Web Services results?", "relevant_spans": ["Amazon Web Services"] },
+  { "ticker": "AMZN", "query": "What does Amazon disclose about its advertising services revenue?", "relevant_spans": ["advertising services"] },
+  { "ticker": "AMZN", "query": "How does Amazon's International segment perform?", "relevant_spans": ["International segment"] },
+  { "ticker": "AMZN", "query": "Why does Amazon describe its markets as intensely competitive?", "relevant_spans": ["intensely competitive"] },
+  { "ticker": "AMZN", "query": "What does Amazon report for operating income across its segments?", "relevant_spans": ["operating income"] },
+
+  { "ticker": "GOOGL", "query": "How does Alphabet describe Google Cloud Platform growth?", "relevant_spans": ["Google Cloud Platform"] },
+  { "ticker": "GOOGL", "query": "What does Alphabet disclose about YouTube ads revenue?", "relevant_spans": ["YouTube ads"] },
+  { "ticker": "GOOGL", "query": "What antitrust risks does Alphabet disclose?", "relevant_spans": ["antitrust"] },
+  { "ticker": "GOOGL", "query": "How does Alphabet describe traffic acquisition costs?", "relevant_spans": ["traffic acquisition"] },
+  { "ticker": "GOOGL", "query": "What data privacy risks does Alphabet identify?", "relevant_spans": ["data privacy"] }
+]

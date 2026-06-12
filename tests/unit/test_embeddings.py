@@ -139,6 +139,28 @@ def test_voyage_embedder_requires_key() -> None:
         e.embed_documents(["x"])
 
 
+def test_voyage_embedder_batches_large_inputs(monkeypatch: Any) -> None:
+    # A corpus embed is thousands of chunks; the provider caps each request, so embed_documents
+    # must split into batches. With the item cap forced to 2, 5 texts -> 3 requests (2+2+1).
+    import stock_agent.rag.embeddings as emb
+
+    monkeypatch.setattr(emb, "_EMBED_BATCH_MAX_ITEMS", 2)
+    client = _FakeVoyageClient()
+    e = VoyageEmbedder(Settings(_env_file=None), client=client)
+    texts = [f"document number {i}" for i in range(5)]
+    vecs = e.embed_documents(texts)
+    assert len(vecs) == 5  # one vector per input, order preserved
+    assert [len(call[2]) for call in client.calls] == [2, 2, 1]  # batched requests
+    assert all(call[1] == "document" for call in client.calls)
+
+
+def test_voyage_embed_documents_empty_makes_no_call() -> None:
+    client = _FakeVoyageClient()
+    e = VoyageEmbedder(Settings(_env_file=None), client=client)
+    assert e.embed_documents([]) == []
+    assert client.calls == []  # no empty request sent
+
+
 # ---- real fastembed model (gated; never runs in CI) --------------------------
 @pytest.mark.skipif(
     not os.environ.get("RUN_EMBED_TESTS"),

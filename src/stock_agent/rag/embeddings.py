@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import math
 import struct
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Protocol, runtime_checkable
 
 from stock_agent.settings import Settings
@@ -154,6 +154,36 @@ class FastEmbedEmbedder:
         return [float(x) for x in next(iter(gen))]
 
 
+# Provider request limits: Voyage caps each embed request (~1000 texts / ~120k tokens) and
+# OpenAI similarly. Embedding a whole corpus is tens of thousands of chunks, so a single request
+# would be rejected — split into safe batches. Bounded by item count AND a token estimate.
+_EMBED_BATCH_MAX_ITEMS = 96
+_EMBED_BATCH_MAX_TOKENS = 100_000
+
+
+def _embed_batches(texts: Sequence[str]) -> Iterator[list[str]]:
+    """Yield provider-safe request batches from ``texts`` (caps items and approx tokens/request).
+
+    Uses the same 0.75 words/token proxy as the rest of the RAG layer — only a conservative
+    ceiling is needed (Voyage truncates any individual over-long text itself). Preserves order,
+    so concatenating batch results reconstructs the input order. Empty input yields nothing.
+    """
+    batch: list[str] = []
+    batch_tokens = 0
+    for text in texts:
+        approx = round(len(text.split()) / 0.75)
+        if batch and (
+            len(batch) >= _EMBED_BATCH_MAX_ITEMS
+            or batch_tokens + approx > _EMBED_BATCH_MAX_TOKENS
+        ):
+            yield batch
+            batch, batch_tokens = [], 0
+        batch.append(text)
+        batch_tokens += approx
+    if batch:
+        yield batch
+
+
 class OpenAIEmbedder:
     """OpenAI embeddings (opt-in). Default model ``text-embedding-3-small`` (1536-d)."""
 
@@ -188,10 +218,12 @@ class OpenAIEmbedder:
         return _OPENAI_DIMS.get(self._model, 1536)
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        resp = self._ensure_client().embeddings.create(  # type: ignore[attr-defined]
-            model=self._model, input=list(texts)
-        )
-        return [[float(x) for x in item.embedding] for item in resp.data]
+        client = self._ensure_client()
+        out: list[list[float]] = []
+        for batch in _embed_batches(texts):
+            resp = client.embeddings.create(model=self._model, input=batch)  # type: ignore[attr-defined]
+            out.extend([float(x) for x in item.embedding] for item in resp.data)
+        return out
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]
@@ -237,10 +269,14 @@ class VoyageEmbedder:
         return _VOYAGE_DIMS.get(self._model, 1024)
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
-        result = self._ensure_client().embed(  # type: ignore[attr-defined]
-            list(texts), model=self._model, input_type="document"
-        )
-        return [[float(x) for x in vec] for vec in result.embeddings]
+        client = self._ensure_client()
+        out: list[list[float]] = []
+        for batch in _embed_batches(texts):
+            result = client.embed(  # type: ignore[attr-defined]
+                batch, model=self._model, input_type="document"
+            )
+            out.extend([float(x) for x in vec] for vec in result.embeddings)
+        return out
 
     def embed_query(self, text: str) -> list[float]:
         result = self._ensure_client().embed(  # type: ignore[attr-defined]

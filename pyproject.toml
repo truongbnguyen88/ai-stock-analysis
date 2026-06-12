@@ -111,7 +111,17 @@ plugins = ["pydantic.mypy"]
 # Third-party libs without (complete) type stubs. We normalize their outputs to
 # typed domain models at the provider boundary, so untyped imports stop there.
 [[tool.mypy.overrides]]
-module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*", "fastembed.*", "openai.*", "voyageai.*", "chromadb.*"]
+module = ["yfinance.*", "pandas.*", "sklearn.*", "lightgbm.*", "joblib.*", "hmmlearn.*", "torch.*", "arch.*", "google.*", "lxml.*", "fastembed.*", "chromadb.*"]
+ignore_missing_imports = true
+
+# Optional embedding extras ([openai]/[voyage]): installed locally for a real embed run but
+# ABSENT in CI. Their thin client classes (openai.OpenAI, voyageai.Client) aren't explicitly
+# exported, so when the package IS installed mypy flags `attr-defined`. follow_imports="skip"
+# treats them as Any whether installed or not, keeping mypy environment-independent (same intent
+# as the forecasting.sequence/torch override below).
+[[tool.mypy.overrides]]
+module = ["openai.*", "voyageai.*"]
+follow_imports = "skip"
 ignore_missing_imports = true
 
 # The experimental LSTM forecaster subclasses torch.nn.Module. torch is an OPTIONAL
