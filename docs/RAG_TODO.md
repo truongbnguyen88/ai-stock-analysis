@@ -287,10 +287,15 @@ summary) intact rather than handing raw chunks to the agent and hoping it cites 
       (`VOYAGE_API_KEY`) + `[voyage]` extra fail fast (lazy `require`). Tests (offline): namespace
       distinguishes providers/models, collection name is Chroma-safe, `build_vector_store` isolates
       local vs voyage collections. **Runbook** in `rag_implementation_notes.md` (P9c).
-      - [ ] **9c-run — the one-time paid embed (MANUAL, deferred).** Set `VOYAGE_API_KEY`, install
-            `[voyage]`, set a `rag_max_embed_tokens` ceiling (9a), flip `embedding_provider=voyage`,
-            `documents ingest --all`. **Run last** — after 9d (full corpus) + the 9b A/B confirm
-            voyage + chunking — so the free pool is spent once. Not automatable here (paid + live).
+      - [x] **9c-run — the one-time paid embed (DONE; voyage-4 live in production).** The 9b A/B
+            (25 Q / 5 tickers) picked **voyage-4** — MRR 0.72→0.89, precision@8 0.63→0.76 vs local;
+            voyage-finance-2 lost (worse than voyage-4), so it was dropped. Embedded the full corpus
+            (93,109 chunks) into `filings-voyage-voyage-4` (~80M real tokens of the 200M pool; the
+            proxy under-counts ~1.18×), verified count-match vs local + test queries, then flipped
+            `.env` `EMBEDDING_PROVIDER=voyage`. The complete local fastembed collection stays on disk
+            as a $0 fallback. **Incident:** a transient dropped connection ~103 tickers in aborted the
+            run (one ticker, RTX, was backfilled); root cause = no per-ticker isolation in the ingest
+            loop → fixed by `bulk_ingest` (isolation + retry; see commit history).
 - [x] **9d — Bulk historical download.** Pull 2–3 yrs of 10-K/10-Q/8-K for the full universe
       (deferred from P1; free, idempotent) once the download/metadata format is stable. Added a
       **date floor**: `providers/sec_edgar._parse_filings`/`list_filings` + `documents.download_filings`
