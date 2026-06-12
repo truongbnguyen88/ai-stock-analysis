@@ -36,6 +36,7 @@ from stock_agent.chat.history import (
     now_iso,
 )
 from stock_agent.llm.client import AnthropicClient
+from stock_agent.rag.status import corpus_status
 from stock_agent.settings import get_settings
 from stock_agent.reports.export import EXPORT_META, export_summary
 from stock_agent.ui.capabilities import CAPABILITIES
@@ -282,9 +283,21 @@ if "agent_history" not in st.session_state:
     st.session_state.agent_history = []  # Anthropic-format message history
 
 # ---- sidebar ----
+@st.cache_data(ttl=300, show_spinner=False)
+def _corpus_status() -> dict:
+    """Cached corpus snapshot (active embedder + chunk count + freshness) for the sidebar badge."""
+    return corpus_status(get_settings()).model_dump()
+
+
 with st.sidebar:
     st.title("📈 Stock Research Agent")
     st.caption("Research / education only — **not financial advice**.")
+    # Which embeddings filing questions are answered from (e.g. voyage-4) + corpus freshness.
+    _cs = _corpus_status()
+    _chunks = "unavailable" if _cs["chunks"] < 0 else f"{_cs['chunks']:,} chunks"
+    st.caption(f"📚 **Filing search:** `{_cs['embedder']}` — {_chunks}")
+    if _cs["latest"]:
+        st.caption(f"{_cs['tickers']} tickers · fresh to {_cs['latest']}")
     st.divider()
 
     st.subheader("Quick starters")

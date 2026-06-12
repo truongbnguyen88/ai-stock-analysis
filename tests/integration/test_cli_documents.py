@@ -13,6 +13,7 @@ import typer
 from stock_agent.documents.download import DEFAULT_FORMS, BulkDownloadResult, DownloadResult
 from stock_agent.documents.ticker_cik import normalize_ticker
 from stock_agent.rag.pipeline import BulkIngestResult
+from stock_agent.rag.status import CorpusStatus
 from stock_agent.settings import Settings
 
 app = importlib.import_module("stock_agent.cli.app")
@@ -190,3 +191,42 @@ def test_refresh_up_to_date_skips_ingest(monkeypatch: Any, tmp_path: Path, capsy
     )
     assert "ing_tickers" not in seen  # bulk_ingest never called
     assert "up to date" in capsys.readouterr().out.lower()
+
+
+# ---- rag status (observability: active embedder + collection + freshness) -----
+
+
+def _status(**kw: Any) -> CorpusStatus:
+    base = dict(
+        provider="voyage", embedder="voyage-voyage-4", collection="filings-voyage-voyage-4",
+        chunks=93109, filings=4461, tickers=104, earliest="2022-08-31", latest="2026-06-11",
+    )
+    base.update(kw)
+    return CorpusStatus(**base)
+
+
+def test_rag_status_reports_embedder_collection_and_freshness(
+    monkeypatch: Any, capsys: Any
+) -> None:
+    monkeypatch.setattr(app, "configure_logging", lambda s: None)
+    monkeypatch.setattr(app, "get_settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr(app, "corpus_status", lambda s: _status())
+    app.rag_status()
+    out = capsys.readouterr().out
+    assert "voyage-voyage-4" in out and "provider=voyage" in out  # active embedder
+    assert "filings-voyage-voyage-4" in out and "93,109 chunks" in out  # voyage collection
+    assert "4,461 filings across 104 tickers" in out  # coverage
+    assert "2022-08-31 → 2026-06-11" in out  # freshness range
+
+
+def test_rag_status_empty_corpus(monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setattr(app, "configure_logging", lambda s: None)
+    monkeypatch.setattr(app, "get_settings", lambda: Settings(_env_file=None))
+    monkeypatch.setattr(
+        app, "corpus_status",
+        lambda s: _status(chunks=0, filings=0, tickers=0, earliest=None, latest=None),
+    )
+    app.rag_status()
+    out = capsys.readouterr().out
+    assert "empty" in out.lower()  # 0-chunk hint
+    assert "Downloaded : none" in out  # no-download hint

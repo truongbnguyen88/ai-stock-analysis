@@ -263,3 +263,18 @@ def test_agent_routes_overview_to_research_summary(monkeypatch: pytest.MonkeyPat
     result = run_agent("Give me the full picture on NVDA.", llm=_Scripted(script), executor=ex)
     assert "research_summary" in result.tool_calls
     assert "76%" in result.text
+
+
+def test_get_retriever_builds_logs_and_memoizes(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The observability log added in _get_retriever (active embedder + collection + chunk count)
+    # must not break the build, and the retriever stays session-memoized (built once).
+    import stock_agent.agent.tools as tools_mod
+
+    store = InMemoryVectorStore()
+    monkeypatch.setattr(tools_mod, "build_embedder", lambda s: _EMB)
+    monkeypatch.setattr(tools_mod, "build_vector_store", lambda s: store)
+    ex = ToolExecutor(Settings(_env_file=None), llm=None)
+
+    retriever = ex._get_retriever()
+    assert isinstance(retriever, Retriever)
+    assert ex._get_retriever() is retriever  # memoized — not rebuilt

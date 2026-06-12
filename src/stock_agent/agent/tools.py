@@ -33,9 +33,9 @@ from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
-from stock_agent.rag.embeddings import build_embedder
+from stock_agent.rag.embeddings import build_embedder, embedding_namespace
 from stock_agent.rag.retriever import Retriever
-from stock_agent.rag.vector_store import build_vector_store
+from stock_agent.rag.vector_store import build_vector_store, collection_name_for
 from stock_agent.research.synthesis import ResearchGuardError, answer_question
 from stock_agent.schemas.backtest import BacktestResult
 from stock_agent.schemas.comparison import (
@@ -584,8 +584,21 @@ class ToolExecutor:
     def _get_retriever(self) -> Retriever:
         """Build (once) and return the shared SEC retriever for this session."""
         if self._retriever is None:
-            self._retriever = Retriever(
-                build_embedder(self._settings), build_vector_store(self._settings)
+            store = build_vector_store(self._settings)
+            self._retriever = Retriever(build_embedder(self._settings), store)
+            # One-time observability: surface which embedder + collection the agent is querying
+            # (e.g. voyage-voyage-4 -> filings-voyage-voyage-4) so the active RAG corpus is visible.
+            namespace = embedding_namespace(self._settings)
+            try:
+                n_chunks: int = store.count()
+            except Exception as exc:  # noqa: BLE001 — observability must never break retrieval
+                log.warning("agent.rag_retriever_count_failed", error=str(exc))
+                n_chunks = -1
+            log.info(
+                "agent.rag_retriever",
+                embedder=namespace,
+                collection=collection_name_for(namespace),
+                chunks=n_chunks,
             )
         return self._retriever
 

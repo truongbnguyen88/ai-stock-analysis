@@ -37,6 +37,7 @@ from stock_agent.rag.embeddings import (
 from stock_agent.rag.eval import LabeledQuery, format_reports_markdown, run_ab
 from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, bulk_ingest
 from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.status import corpus_status
 from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.research.memo import render_memo_markdown
@@ -541,6 +542,8 @@ def chat(
 
     executor = ToolExecutor(settings, llm=AnthropicClient(settings))
     agent_llm = AnthropicToolClient(settings)
+    # Show the active SEC corpus so it's clear which embeddings filing questions are answered from.
+    typer.echo(f"RAG corpus: {corpus_status(settings).one_line}")
 
     def answer(question: str, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Run one turn; return the updated transcript to carry into the next turn.
@@ -836,6 +839,30 @@ def refresh(
 # ---- rag (SEC-grounded retrieval) --------------------------------------------
 rag_app = typer.Typer(add_completion=False, help="Query the ingested SEC corpus (RAG).")
 app.add_typer(rag_app, name="rag")
+
+
+@rag_app.command("status")
+def rag_status() -> None:
+    """Show the active embedder, vector collection + chunk count, and corpus freshness.
+
+    Confirms which embeddings the chat agent / research pipeline are using (e.g. voyage-4) and how
+    current the SEC corpus is. Read-only — no network, no LLM, no embedding calls.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    cs = corpus_status(settings)
+    typer.echo(f"Embedder   : {cs.embedder}  (provider={cs.provider})")
+    if cs.chunks < 0:
+        typer.echo(f"Collection : {cs.collection}  (unavailable)")
+    else:
+        typer.echo(f"Collection : {cs.collection}  ({cs.chunks:,} chunks)")
+        if cs.chunks == 0:
+            typer.echo("             (empty — run `documents ingest --all`)")
+    if cs.filings:
+        typer.echo(f"Downloaded : {cs.filings:,} filings across {cs.tickers} tickers")
+        typer.echo(f"Freshness  : {cs.earliest} → {cs.latest} (filing dates)")
+    else:
+        typer.echo("Downloaded : none (run `documents download-sec --all`)")
 
 
 @rag_app.command("query")
