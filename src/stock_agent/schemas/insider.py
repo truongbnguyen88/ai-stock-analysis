@@ -12,11 +12,17 @@ Downstream features key off ``filing_date`` to stay leakage-safe.
 
 from __future__ import annotations
 
+import re
 from datetime import date as Date
 
 from pydantic import BaseModel
 
 _SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"
+# EDGAR's submissions index lists the Form 4 primaryDocument as the XSL-RENDERED
+# view (e.g. "xslF345X06/form4.xml") — that path serves HTML, not parseable XML.
+# The raw ownershipDocument XML lives at the same filename with this rendering
+# directory stripped. We de-render in the URL so downloads get the machine XML.
+_XSL_RENDER_DIR = re.compile(r"^xslF[0-9A-Z]+/")
 
 # Open-market, discretionary, information-bearing transaction codes. Compensation /
 # non-discretionary codes (A=grant/award, M=option exercise, F=tax withholding,
@@ -41,9 +47,15 @@ class InsiderFilingRef(BaseModel):
 
     @property
     def url(self) -> str:
-        """Absolute URL of the primary (XML) document on EDGAR."""
+        """Absolute URL of the RAW ownership-XML document on EDGAR.
+
+        Strips the ``xslF.../`` rendering-directory prefix EDGAR puts on the Form 4
+        primaryDocument, so the fetched file is the machine-readable XML (not the
+        rendered HTML view). No-op when the document is already un-prefixed.
+        """
         acc = self.accession_number.replace("-", "")
-        return f"{_SEC_ARCHIVES}/{int(self.cik)}/{acc}/{self.primary_document}"
+        doc = _XSL_RENDER_DIR.sub("", self.primary_document)
+        return f"{_SEC_ARCHIVES}/{int(self.cik)}/{acc}/{doc}"
 
     @property
     def filing_id(self) -> str:
