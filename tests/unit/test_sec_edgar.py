@@ -16,6 +16,7 @@ from stock_agent.providers.sec_edgar import (
     SecEdgarProvider,
     _parse_cik_map,
     _parse_filings,
+    _parse_form4_filings,
 )
 from stock_agent.schemas.documents import FilingRef
 from stock_agent.settings import MissingSettingError, Settings
@@ -28,15 +29,26 @@ _CIK_PAYLOAD = {
 _SUBMISSIONS = {
     "filings": {
         "recent": {
-            "form": ["10-K", "10-Q", "8-K", "10-K/A"],
-            "filingDate": ["2025-02-26", "2024-11-20", "2024-08-28", "2024-03-01"],
+            # Form 4 / 4-A rows appended (older dates, so the 10-K/10-Q ordering tests
+            # are unaffected); "4/A" is an amendment excluded by exact-match filtering.
+            "form": ["10-K", "10-Q", "8-K", "10-K/A", "4", "4", "4/A"],
+            "filingDate": [
+                "2025-02-26", "2024-11-20", "2024-08-28", "2024-03-01",
+                "2024-12-01", "2024-09-15", "2024-07-01",
+            ],
             "accessionNumber": [
                 "0001045810-25-000017",
                 "0001045810-24-000316",
                 "0001045810-24-000200",
                 "0001045810-24-000099",
+                "0001234567-24-000045",
+                "0001234567-24-000030",
+                "0001234567-24-000021",
             ],
-            "primaryDocument": ["nvda-10k.htm", "nvda-10q.htm", "nvda-8k.htm", "nvda-amend.htm"],
+            "primaryDocument": [
+                "nvda-10k.htm", "nvda-10q.htm", "nvda-8k.htm", "nvda-amend.htm",
+                "form4_a.xml", "form4_b.xml", "form4_amend.xml",
+            ],
         }
     }
 }
@@ -114,6 +126,9 @@ def _router(req: httpx.Request) -> httpx.Response:
     if "submissions" in url:
         return httpx.Response(200, json=_SUBMISSIONS)
     if "Archives/edgar/data" in url:
+        if url.endswith(".xml"):
+            return httpx.Response(200, text="<ownershipDocument><documentType>4</documentType>"
+                                            "</ownershipDocument>")
         return httpx.Response(200, text="<html><body>10-K body</body></html>")
     return httpx.Response(404)
 
@@ -131,6 +146,28 @@ def test_list_filings_and_download(tmp_path: Path) -> None:
     assert {r.form for r in refs} == {"10-K", "10-Q"}
     html = p.download_filing(refs[0])
     assert "10-K body" in html
+
+
+def test_parse_form4_filings_excludes_amendments_and_orders() -> None:
+    refs = _parse_form4_filings("NVDA", "0001045810", _SUBMISSIONS, limit=10)
+    # Two "4" filings (newest first); "4/A" amendment excluded by exact match.
+    assert [r.filing_date.isoformat() for r in refs] == ["2024-12-01", "2024-09-15"]
+    assert all(r.primary_document.endswith(".xml") for r in refs)
+
+
+def test_parse_form4_filings_since_floor() -> None:
+    refs = _parse_form4_filings(
+        "NVDA", "0001045810", _SUBMISSIONS, limit=10, since=date(2024, 10, 1)
+    )
+    assert [r.filing_date.isoformat() for r in refs] == ["2024-12-01"]  # 09-15 dropped
+
+
+def test_list_form4_filings_and_download(tmp_path: Path) -> None:
+    p = _provider(tmp_path, _router)
+    refs = p.list_form4_filings("NVDA")
+    assert len(refs) == 2
+    xml = p.download_form4(refs[0])
+    assert "ownershipDocument" in xml  # fetched the XML branch, not the HTML body
 
 
 def test_provider_builds_user_agent_header(tmp_path: Path) -> None:

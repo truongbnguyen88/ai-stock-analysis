@@ -14,9 +14,12 @@ config (params, seed, data window) + each model's serialized result.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from datetime import date as Date
 from pathlib import Path
+
+import pandas as pd
 
 from stock_agent.backtesting.runner import ModelBuilder, run_backtest, stateless_builder
 from stock_agent.data.loader import PriceLoader
@@ -71,14 +74,18 @@ def _pooled_builder(
     universe_path: Path,
     *,
     calibrate: bool = True,
+    feature_groups: Sequence[str] | None = None,
 ) -> ModelBuilder:
     """Per-fold pooled-ML builder: trains on universe data ``<= train_end``.
 
     Fetches the universe once; each fold slices every universe series to the
     training cutoff and fits a fresh pooled model, so the backtest never trains
     on data at/after the test fold (leakage-safe pooled walk-forward).
+    ``feature_groups`` opts into candidate feature groups for ablation; the trained
+    artifact records its ``feature_cols`` so the per-fold MLForecaster rebuilds the
+    matching feature set at scoring time.
     """
-    from stock_agent.data.market_context import fetch_vix
+    from stock_agent.data.market_context import fetch_market, fetch_vix
     from stock_agent.forecasting.ml import MLForecaster
     from stock_agent.forecasting.pooled import ModelType, train_pooled_from_series
     from stock_agent.forecasting.train_pooled import (
@@ -91,11 +98,29 @@ def _pooled_builder(
     universe = fetch_universe_series(tickers, registry)
     earnings = fetch_universe_earnings([s.ticker for s in universe], registry)
     mt: ModelType = model_type  # type: ignore[assignment]
-    # VIX fetched once over the universe span; build_price_feature_matrix reindexes it
-    # to each fold's sliced (<= train_end) dates, so only past VIX is ever used.
+    # VIX (+ SPY for relstr) fetched once over the universe span; build_price_feature_matrix
+    # reindexes them to each fold's sliced (<= train_end) dates, so only past values are used.
     _span = [d for s in universe for d in (s.dates[0], s.dates[-1])]
     _vix = fetch_vix(registry, start=min(_span), end=max(_span)) if _span else None
     vix = _vix if (_vix is not None and not _vix.empty) else None
+    market: pd.Series | None = None
+    if _span and feature_groups and "relstr" in feature_groups:
+        _mkt = fetch_market(registry, start=min(_span), end=max(_span))
+        market = _mkt if not _mkt.empty else None
+    # Insider (Form 4) fetched once per ticker over the full span (XML disk-cached);
+    # build_price_feature_matrix reindexes/rolls it per fold, keeping it point-in-time.
+    insider_by_ticker: dict[str, pd.DataFrame] | None = None
+    if _span and feature_groups and "insider" in feature_groups:
+        from stock_agent.data.insider import build_sec_provider, fetch_insider_by_ticker
+
+        sec = build_sec_provider(registry._settings)  # noqa: SLF001 — settings only
+        if sec is not None:
+            try:
+                insider_by_ticker = fetch_insider_by_ticker(
+                    sec, [s.ticker for s in universe], since=min(_span)
+                )
+            finally:
+                sec.close()
 
     def build(train_end: Date) -> ForecastModel:
         sliced = [
@@ -105,7 +130,8 @@ def _pooled_builder(
         sliced = [s for s in sliced if len(s) >= 60]  # drop too-short slices
         pooled = train_pooled_from_series(
             sliced, horizon_days=horizon_days, model_type=mt, earnings_by_ticker=earnings,
-            vix=vix, calibrate=calibrate,
+            vix=vix, market=market, insider_by_ticker=insider_by_ticker,
+            feature_groups=feature_groups, calibrate=calibrate,
         )
         return MLForecaster(mt, model=pooled, registry=registry)
 
@@ -125,11 +151,14 @@ def run_backtest_pipeline(
     big_move_k: float = 0.10,
     log_experiment: bool = True,
     calibrate: bool = True,
+    feature_groups: Sequence[str] | None = None,
 ) -> dict[str, BacktestResult]:
     """Backtest one or more forecasters on a ticker; return {model_name: result}.
 
     Stateless models run offline and fast; ML model names trigger a per-fold
-    pooled refit over the universe (slow). Results are logged unless disabled.
+    pooled refit over the universe (slow). ``feature_groups`` opts the ML refit
+    into candidate feature groups (ablation); ignored by stateless models. Results
+    are logged unless disabled.
     """
     registry = registry or build_default_registry(settings)
     series = (
@@ -147,7 +176,8 @@ def run_backtest_pipeline(
         elif name in _ML_MODELS:
             log.warning("backtest.ml_refit_slow", model=name)
             builder = _pooled_builder(
-                name, horizon_days, registry, universe_path, calibrate=calibrate
+                name, horizon_days, registry, universe_path,
+                calibrate=calibrate, feature_groups=feature_groups,
             )
             model_label = f"ml_{name}"
         else:

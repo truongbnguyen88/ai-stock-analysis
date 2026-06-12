@@ -19,11 +19,15 @@ by differencing the cumulative exceedance probabilities.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date as Date
 
 import pandas as pd
 
-from stock_agent.features.price_features import PRICE_FEATURE_COLS, build_price_feature_matrix
+from stock_agent.features.price_features import (
+    build_price_feature_matrix,
+    resolve_feature_cols,
+)
 from stock_agent.schemas.market import PriceSeries
 
 # Return thresholds (bucket boundaries). For each threshold θ, we train a
@@ -44,6 +48,9 @@ def build_training_matrix(
     min_rows: int = 30,
     earnings_dates: list[Date] | None = None,
     vix: pd.Series | None = None,
+    market: pd.Series | None = None,
+    insider: pd.DataFrame | None = None,
+    feature_groups: Sequence[str] | None = None,
     thresholds: list[float] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build (X, y) for training ML models on a single stock's price history.
@@ -60,7 +67,14 @@ def build_training_matrix(
         ValueError: if fewer than ``min_rows`` valid training rows exist.
     """
     thresholds = thresholds if thresholds is not None else THRESHOLDS
-    features = build_price_feature_matrix(series, earnings_dates=earnings_dates, vix=vix)
+    features = build_price_feature_matrix(
+        series,
+        earnings_dates=earnings_dates,
+        vix=vix,
+        market=market,
+        insider=insider,
+        feature_groups=feature_groups,
+    )
 
     close = pd.Series(series.closes, index=features.index)
     # Forward h-day simple return at each date t: P_{t+h}/P_t - 1.
@@ -103,7 +117,23 @@ def current_features_vector(
     *,
     earnings_dates: list[Date] | None = None,
     vix: pd.Series | None = None,
+    market: pd.Series | None = None,
+    insider: pd.DataFrame | None = None,
+    feature_groups: Sequence[str] | None = None,
 ) -> pd.Series:
-    """Return the most recent feature row for live inference."""
-    df = build_price_feature_matrix(series, earnings_dates=earnings_dates, vix=vix)
-    return df.iloc[-1][PRICE_FEATURE_COLS]
+    """Return the most recent feature row for live inference.
+
+    ``feature_groups`` must match the groups the target model was trained on (the
+    caller derives them from the artifact's ``feature_cols``); ``market`` (SPY) is
+    needed only by the ``relstr`` group and ``insider`` (Form 4 frame) only by the
+    ``insider`` group.
+    """
+    df = build_price_feature_matrix(
+        series,
+        earnings_dates=earnings_dates,
+        vix=vix,
+        market=market,
+        insider=insider,
+        feature_groups=feature_groups,
+    )
+    return df.iloc[-1][resolve_feature_cols(feature_groups)]

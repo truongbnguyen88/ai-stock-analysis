@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -19,6 +20,8 @@ from stock_agent.indicators.volatility import (
     drawdown_series,
     historical_volatility,
     max_drawdown,
+    realized_skewness,
+    semivol_ratio,
 )
 
 
@@ -60,3 +63,40 @@ def test_historical_volatility_annualized() -> None:
     assert math.isnan(out[0]) and math.isnan(out[1])
     expected = 0.07071067811865472 * math.sqrt(252)
     assert out[2] == pytest.approx(expected, rel=1e-9)
+
+
+def test_semivol_ratio_symmetric_is_one() -> None:
+    # log returns [+0.1,-0.1,+0.2,-0.2] over window 4 → equal up/down semidev → 1.
+    close = pd.Series(
+        [1.0, math.exp(0.1), math.exp(0.0), math.exp(0.2), math.exp(0.0)]
+    )
+    out = semivol_ratio(close, window=4)
+    assert out.iloc[-1] == pytest.approx(1.0)
+
+
+def test_semivol_ratio_downside_heavy_gt_one() -> None:
+    # log returns [-0.2,-0.1,+0.1], window 3:
+    #   down=sqrt(mean(0.04,0.01,0))=sqrt(0.05/3); up=sqrt(mean(0,0,0.01))=sqrt(0.01/3)
+    #   ratio = sqrt(0.05/0.01) = sqrt(5)
+    close = pd.Series([1.0, math.exp(-0.2), math.exp(-0.3), math.exp(-0.2)])
+    out = semivol_ratio(close, window=3)
+    assert math.isnan(out.iloc[2])  # warmup: < window returns
+    assert out.iloc[3] == pytest.approx(math.sqrt(5.0))
+
+
+def test_realized_skewness_sign() -> None:
+    rng = np.random.default_rng(0)
+    # Symmetric noise → skew ≈ 0.
+    sym_ret = rng.normal(0.0, 0.01, 200)
+    sym_close = pd.Series(100.0 * np.exp(np.cumsum(np.insert(sym_ret, 0, 0.0))))
+    assert abs(realized_skewness(sym_close, window=120).iloc[-1]) < 0.5
+    # Inject a large negative shock → left tail → negative skew.
+    left_ret = sym_ret.copy()
+    left_ret[150] = -0.20
+    left_close = pd.Series(100.0 * np.exp(np.cumsum(np.insert(left_ret, 0, 0.0))))
+    assert realized_skewness(left_close, window=120).iloc[-1] < 0.0
+
+
+def test_realized_skewness_warmup_nan() -> None:
+    out = realized_skewness(pd.Series([1.0, 1.1, 1.05]), window=60)
+    assert out.isna().all()

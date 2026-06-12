@@ -72,3 +72,32 @@ def max_drawdown(close: pd.Series) -> float:
     """Worst peak-to-trough decline over the series (<= 0)."""
     series = drawdown_series(close)
     return float(series.min()) if len(series) else 0.0
+
+
+def realized_skewness(close: pd.Series, window: int = 60) -> pd.Series:
+    """Rolling skewness of daily log returns (standardized 3rd moment).
+
+    Negative realized skew = a left-heavy return distribution (crash-prone);
+    documented to carry a return premium distinct from the *level* of volatility.
+    Dimensionless (standardized), hence scale-free and pooling-safe. NaN until
+    ``window`` returns are available. Uses pandas' bias-corrected skew.
+    """
+    returns = log_returns(close)
+    return returns.rolling(window=window, min_periods=window).skew()
+
+
+def semivol_ratio(close: pd.Series, window: int = 60) -> pd.Series:
+    """Downside/upside semideviation ratio of daily log returns.
+
+    Semideviations use squared one-sided returns (NaN-safe, unlike masking):
+      down = sqrt(mean(min(r,0)^2)),  up = sqrt(mean(max(r,0)^2)) over the window.
+    Ratio > 1 = downside moves dominate (asymmetric tail risk), < 1 = upside.
+    Scale-free (a ratio of like-unit quantities). NaN until ``window`` returns,
+    or when upside semideviation is 0 (no positive days in the window).
+    """
+    returns = log_returns(close)
+    downside = returns.clip(upper=0.0)
+    upside = returns.clip(lower=0.0)
+    down = (downside.pow(2).rolling(window=window, min_periods=window).mean()) ** 0.5
+    up = (upside.pow(2).rolling(window=window, min_periods=window).mean()) ** 0.5
+    return down / up
