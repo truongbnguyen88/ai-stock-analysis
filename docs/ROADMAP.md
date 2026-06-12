@@ -118,8 +118,10 @@ invariants as the forecasting core (numbers from models, non-advisory, no scrapi
 - **P9 — maturity / go-live:** **9a** embedding spend guard ✅ · **9b** retrieval-quality A/B ✅
   (voyage-4 beat local fastembed → chosen; voyage-finance-2 dropped) · **9c** per-embedder
   vector-store namespacing + **the one-time voyage-4 production embed ✅** (~93k chunks; local BGE
-  retained as $0 fallback) · **9d** bulk historical download ✅ · **9e** quarterly refresh cron —
-  *remaining*. (Request batching + `bulk_ingest` isolation/retry added during 9c-run hardening.)
+  retained as $0 fallback) · **9d** bulk historical download ✅ · **9e** quarterly refresh ✅
+  (incremental ingest — embed only *new* chunks — + `documents refresh` + local launchd schedule).
+  **RAG layer complete (P0–P9).** (Request batching + `bulk_ingest` isolation/retry added during
+  9c-run hardening.)
 - **Out of scope (V1+):** earnings transcripts, investor decks, hybrid (BM25+vector) search,
   reranking, QoQ document comparison, agentic multi-step retrieval.
 

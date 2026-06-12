@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Quarterly SEC-filings refresh for the RAG layer (RAG_TODO 9e), macOS launchd.
+  Runs `documents refresh` from the repo root so .env (SEC_USER_AGENT, VOYAGE_API_KEY,
+  EMBEDDING_PROVIDER) and the local data/ corpus resolve. Replace the two __PLACEHOLDERS__,
+  then see configs/launchd/README.md for install steps.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.stock-agent.refresh-filings</string>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PYTHONPATH</key>
+    <string>src</string>
+  </dict>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON__</string>            <!-- e.g. __REPO__/.venv/bin/python -->
+    <string>-m</string>
+    <string>stock_agent</string>
+    <string>documents</string>
+    <string>refresh</string>
+    <string>--all</string>
+    <string>--months</string>
+    <string>6</string>
+  </array>
+
+  <!-- Quarterly: 09:00 on the 1st of Jan / Apr / Jul / Oct (a missed run is caught by the
+       6-month look-back window above; download + ingest are both idempotent). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Month</key><integer>1</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>4</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>7</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Month</key><integer>10</integer><key>Day</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+
+  <key>StandardOutPath</key>
+  <string>__REPO__/outputs/logs/refresh-filings.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__REPO__/outputs/logs/refresh-filings.err.log</string>
+  <key>RunAtLoad</key>
+  <false/>
+</dict>
+</plist>

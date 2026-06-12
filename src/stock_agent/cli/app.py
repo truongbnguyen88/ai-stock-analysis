@@ -749,6 +749,90 @@ def ingest(
         )
 
 
+@documents_app.command("refresh")
+def refresh(
+    ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")] = None,
+    refresh_all: Annotated[
+        bool, typer.Option("--all", help="Refresh every ticker in the universe file")
+    ] = False,
+    months: Annotated[
+        int, typer.Option("--months", help="Look-back window for newly-filed documents")
+    ] = 6,
+    limit: Annotated[
+        int, typer.Option("--limit", help="Max filings per form per ticker (within the window)")
+    ] = 20,
+    forms: Annotated[
+        list[str] | None,
+        typer.Option("--forms", help="Filing forms (repeatable); default 10-K 10-Q 8-K"),
+    ] = None,
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file used with --all")
+    ] = Path("configs/universe.txt"),
+) -> None:
+    """Pull newly-filed SEC documents + **incrementally** ingest them (RAG_TODO 9e refresh).
+
+    Cheap to repeat on a schedule (e.g. quarterly via launchd; see `make refresh-filings`): only
+    filings newer than the last download arrive, and only **new** chunks are embedded (existing
+    ones are skipped), so a refresh costs a small fraction of a full rebuild. Embeds with the
+    configured production embedder (e.g. voyage-4) under the `rag_max_embed_tokens` ceiling.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    if not settings.sec_user_agent:
+        typer.echo(
+            "SEC_USER_AGENT is not set. SEC fair-access requires a contact User-Agent — "
+            "add SEC_USER_AGENT=\"Your Name your@email.com\" to your .env."
+        )
+        raise typer.Exit(code=1)
+    if forms:
+        bad = [f for f in forms if f not in _ALLOWED_FORMS]
+        if bad:
+            typer.echo(f"Unsupported forms {bad}; allowed: {list(_ALLOWED_FORMS)}")
+            raise typer.Exit(code=1)
+        forms_t = cast("tuple[DocumentType, ...]", tuple(forms))
+    else:
+        forms_t = DEFAULT_FORMS
+
+    since_floor = date.today() - timedelta(days=30 * months)
+    tickers = _ingest_tickers(refresh_all, ticker, universe)  # reuse --ticker/--all resolver
+
+    # 1) Pull newly-filed documents (idempotent; manifest skips what's already on disk).
+    cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
+    provider = SecEdgarProvider(settings, cache)
+    dl = bulk_download(
+        tickers, provider, documents_dir=settings.documents_dir,
+        forms=forms_t, limit=limit, since=since_floor,
+    )
+    changed = [r.ticker for r in dl.per_ticker if r.downloaded]
+    typer.echo(
+        f"Downloaded {dl.downloaded} new filing(s) across {len(changed)} ticker(s) "
+        f"since {since_floor.isoformat()}."
+    )
+    # 2) Incrementally ingest ONLY the tickers that got new filings (and only their new chunks).
+    if changed:
+        embedder = build_embedder(settings)
+        store = build_vector_store(settings)
+        try:
+            ing = bulk_ingest(
+                changed, documents_dir=settings.documents_dir, embedder=embedder, store=store,
+                chunk_tokens=settings.rag_chunk_tokens, chunk_overlap=settings.rag_chunk_overlap,
+                max_embed_tokens=settings.rag_max_embed_tokens, incremental=True,
+            )
+        except EmbedBudgetExceeded as exc:
+            typer.echo(f"Aborting: {exc}")
+            raise typer.Exit(code=1) from exc
+        typer.echo(
+            f"Ingested {ing.chunks:,} new chunk(s) (~{ing.embed_tokens:,} embed tokens; "
+            f"{ing.skipped_existing:,} already present), failed {len(ing.failed_tickers)}."
+        )
+        for fail in ing.failed_tickers:
+            typer.echo(f"  ! ingest {fail}")
+    else:
+        typer.echo("Corpus is up to date — nothing new to ingest.")
+    for fail in dl.failed_tickers:
+        typer.echo(f"  ! download {fail}")
+
+
 # ---- rag (SEC-grounded retrieval) --------------------------------------------
 rag_app = typer.Typer(add_completion=False, help="Query the ingested SEC corpus (RAG).")
 app.add_typer(rag_app, name="rag")

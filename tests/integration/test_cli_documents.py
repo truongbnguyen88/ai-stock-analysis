@@ -12,6 +12,7 @@ import typer
 
 from stock_agent.documents.download import DEFAULT_FORMS, BulkDownloadResult, DownloadResult
 from stock_agent.documents.ticker_cik import normalize_ticker
+from stock_agent.rag.pipeline import BulkIngestResult
 from stock_agent.settings import Settings
 
 app = importlib.import_module("stock_agent.cli.app")
@@ -126,3 +127,66 @@ def test_download_sec_bad_since_exits(monkeypatch: Any, tmp_path: Path) -> None:
             universe=Path("x"),
         )
     assert exc.value.exit_code == 1
+
+
+# ---- 9e: documents refresh (download new + incremental ingest) ---------------
+
+
+def _patch_refresh(
+    monkeypatch: Any, tmp_path: Path, *, downloaded: dict[str, list[str]]
+) -> dict[str, Any]:
+    """Patch settings/logging + capture refresh's download + ingest calls. ``downloaded`` maps
+    each ticker to its list of newly-downloaded filing ids (empty = nothing new)."""
+    seen: dict[str, Any] = {}
+
+    def fake_bulk_download(tickers: Any, provider: Any, *, documents_dir, forms, limit, since):  # type: ignore[no-untyped-def]
+        seen["dl_tickers"] = list(tickers)
+        seen["since"] = since
+        per = [DownloadResult(ticker=t, downloaded=downloaded[t], skipped=[]) for t in tickers]
+        return BulkDownloadResult(
+            tickers=len(per), downloaded=sum(len(d) for d in downloaded.values()),
+            skipped=0, errors=0, failed_tickers=[], per_ticker=per,
+        )
+
+    def fake_bulk_ingest(tickers: Any, **kw: Any) -> BulkIngestResult:
+        seen["ing_tickers"] = list(tickers)
+        seen["incremental"] = kw.get("incremental")
+        return BulkIngestResult(
+            tickers=len(list(tickers)), chunks=5, embed_tokens=100, skipped_existing=3,
+        )
+
+    monkeypatch.setattr(app, "configure_logging", lambda s: None)
+    monkeypatch.setattr(
+        app, "get_settings",
+        lambda: Settings(
+            _env_file=None, sec_user_agent="T t@e.com", documents_dir=tmp_path,
+            cache_dir=tmp_path / ".cache",
+        ),
+    )
+    monkeypatch.setattr(app, "bulk_download", fake_bulk_download)
+    monkeypatch.setattr(app, "bulk_ingest", fake_bulk_ingest)
+    monkeypatch.setattr(app, "build_embedder", lambda s: object())
+    monkeypatch.setattr(app, "build_vector_store", lambda s: object())
+    return seen
+
+
+def test_refresh_ingests_only_changed_tickers_incrementally(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(app, "load_universe", lambda p: ["NVDA", "MSFT"])
+    seen = _patch_refresh(monkeypatch, tmp_path, downloaded={"NVDA": ["d1"], "MSFT": []})
+    app.refresh(
+        ticker=None, refresh_all=True, months=6, limit=20, forms=None, universe=tmp_path / "u.txt"
+    )
+    assert seen["dl_tickers"] == ["NVDA", "MSFT"]  # download scans the whole universe
+    assert seen["ing_tickers"] == ["NVDA"]  # but only NVDA got new filings -> only it is ingested
+    assert seen["incremental"] is True  # and only NEW chunks are embedded
+
+
+def test_refresh_up_to_date_skips_ingest(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    seen = _patch_refresh(monkeypatch, tmp_path, downloaded={"NVDA": []})  # nothing new
+    app.refresh(
+        ticker="NVDA", refresh_all=False, months=6, limit=20, forms=None, universe=Path("x")
+    )
+    assert "ing_tickers" not in seen  # bulk_ingest never called
+    assert "up to date" in capsys.readouterr().out.lower()

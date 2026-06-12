@@ -203,6 +203,42 @@ def test_bulk_ingest_isolates_failure_and_retries_transient(
     assert calls["BAD"] == 3  # initial + 2 retries, then recorded
 
 
+def test_incremental_ingest_embeds_only_new_chunks(tmp_path: Path) -> None:
+    # 9e: a refresh must re-embed only NEW chunks, never the whole ticker again.
+    _make_filing(tmp_path, dtype="10-K", filing="2025-02-26")
+    store = InMemoryVectorStore()
+    emb = _CountingEmbedder()
+    inc = {"documents_dir": tmp_path, "embedder": emb, "store": store, "incremental": True}
+    first = ingest_ticker("NVDA", **inc)  # type: ignore[arg-type]
+    assert first.chunks >= 2 and first.skipped_existing == 0
+    assert emb.calls == 1  # embedded once
+
+    # Re-ingest with nothing new -> all chunks already present -> no embedding call at all.
+    again = ingest_ticker("NVDA", **inc)  # type: ignore[arg-type]
+    assert again.chunks == 0 and again.skipped_existing == first.chunks
+    assert emb.calls == 1  # unchanged — no re-embed
+    assert again.embed_tokens == 0
+
+    # Add a NEW filing -> only its chunks are embedded; the old ones are skipped.
+    _make_filing(tmp_path, dtype="10-Q", filing="2025-05-20")
+    delta = ingest_ticker("NVDA", **inc)  # type: ignore[arg-type]
+    assert delta.chunks >= 1 and delta.skipped_existing == first.chunks
+    assert emb.calls == 2  # embedded exactly once more (only the new chunks)
+    assert store.count() == first.chunks + delta.chunks
+
+
+def test_bulk_ingest_incremental_passes_through(tmp_path: Path) -> None:
+    _make_filing(tmp_path, ticker="NVDA")
+    store = InMemoryVectorStore()
+    bulk_ingest(["NVDA"], documents_dir=tmp_path, embedder=_EMB, store=store, sleep=_nosleep)
+    # Second pass incremental -> everything already present, nothing re-embedded.
+    res = bulk_ingest(
+        ["NVDA"], documents_dir=tmp_path, embedder=_EMB, store=store,
+        incremental=True, sleep=_nosleep,
+    )
+    assert res.chunks == 0 and res.skipped_existing == store.count() and res.skipped_existing > 0
+
+
 def test_bulk_ingest_budget_exceeded_aborts_not_isolated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

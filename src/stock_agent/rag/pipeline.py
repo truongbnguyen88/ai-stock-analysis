@@ -52,8 +52,9 @@ class IngestResult(BaseModel):
 
     ticker: str
     filings: int
-    chunks: int
+    chunks: int  # chunks embedded + stored this run (in incremental mode: only the NEW ones)
     embed_tokens: int = 0  # estimated embedding tokens (spend-guard proxy, RAG_TODO 9a)
+    skipped_existing: int = 0  # chunks already in the store, skipped (incremental mode, 9e)
 
 
 def iter_filing_dirs(documents_dir: Path, ticker: str) -> list[Path]:
@@ -97,20 +98,31 @@ def ingest_ticker(
     chunk_tokens: int = _DEFAULT_CHUNK_TOKENS,
     chunk_overlap: float = _DEFAULT_CHUNK_OVERLAP,
     max_embed_tokens: int | None = None,
+    incremental: bool = False,
 ) -> IngestResult:
     """Parse → chunk → embed → upsert every downloaded filing for ``ticker``.
 
-    Embeds all of the ticker's chunks in one batch, then a single ``store.add`` (upsert).
+    Embeds the ticker's chunks in one batch, then a single ``store.add`` (upsert).
     Re-ingesting the same corpus is a no-op on count (ids are stable).
 
+    ``incremental`` (RAG_TODO 9e — quarterly refresh): when True, chunks whose ``chunk_id`` is
+    already in the store are **skipped** (not re-embedded), so a refresh only pays to embed *new*
+    filings' chunks. Without it a re-ingest re-embeds the whole ticker (full upsert) — fine for a
+    one-off rebuild, far too costly for a recurring refresh against a paid embedder.
+
     ``max_embed_tokens`` (RAG_TODO 9a) is a client-side spend ceiling: when the estimated
-    embedding tokens exceed it, the run is **refused before any embedding call** (raising
-    ``EmbedBudgetExceeded``) — nothing is embedded or stored. ``None`` disables the guard.
+    embedding tokens (of the chunks actually being embedded) exceed it, the run is **refused
+    before any embedding call** (raising ``EmbedBudgetExceeded``). ``None`` disables the guard.
     """
     dirs = iter_filing_dirs(documents_dir, ticker)
     chunks = build_chunks(
         ticker, documents_dir=documents_dir, chunk_tokens=chunk_tokens, chunk_overlap=chunk_overlap
     )
+    skipped = 0
+    if incremental and chunks:
+        present = store.existing_ids([c.chunk_id for c in chunks])
+        skipped = len(present)
+        chunks = [c for c in chunks if c.chunk_id not in present]  # embed only the new ones
     embed_tokens = estimate_tokens([c.text for c in chunks]) if chunks else 0
     # Refuse BEFORE embedding so an over-budget run incurs no provider spend.
     if max_embed_tokens is not None and embed_tokens > max_embed_tokens:
@@ -120,10 +132,11 @@ def ingest_ticker(
         store.add(chunks, vectors)
     log.info(
         "rag.ingest", ticker=ticker, filings=len(dirs), chunks=len(chunks),
-        embed_tokens=embed_tokens,
+        embed_tokens=embed_tokens, skipped_existing=skipped,
     )
     return IngestResult(
-        ticker=ticker, filings=len(dirs), chunks=len(chunks), embed_tokens=embed_tokens
+        ticker=ticker, filings=len(dirs), chunks=len(chunks),
+        embed_tokens=embed_tokens, skipped_existing=skipped,
     )
 
 
@@ -131,8 +144,9 @@ class BulkIngestResult(BaseModel):
     """Aggregate summary of a multi-ticker ingest run (RAG_TODO 9c-run hardening)."""
 
     tickers: int
-    chunks: int  # total chunks embedded + stored across all tickers
+    chunks: int  # total chunks embedded + stored across all tickers (new ones in incremental mode)
     embed_tokens: int  # total proxy embed tokens
+    skipped_existing: int = 0  # total chunks already present, skipped (incremental, RAG_TODO 9e)
     failed_tickers: list[str] = Field(default_factory=list)  # "TICKER: message"
     per_ticker: list[IngestResult] = Field(default_factory=list)
 
@@ -146,6 +160,7 @@ def bulk_ingest(
     chunk_tokens: int = _DEFAULT_CHUNK_TOKENS,
     chunk_overlap: float = _DEFAULT_CHUNK_OVERLAP,
     max_embed_tokens: int | None = None,
+    incremental: bool = False,
     retries: int = 2,
     sleep: Callable[[float], None] = time.sleep,
 ) -> BulkIngestResult:
@@ -176,6 +191,7 @@ def bulk_ingest(
                         chunk_tokens=chunk_tokens,
                         chunk_overlap=chunk_overlap,
                         max_embed_tokens=max_embed_tokens,
+                        incremental=incremental,
                     )
                 )
                 last_exc = None
@@ -196,6 +212,7 @@ def bulk_ingest(
         tickers=len(syms),
         chunks=sum(r.chunks for r in per_ticker),
         embed_tokens=sum(r.embed_tokens for r in per_ticker),
+        skipped_existing=sum(r.skipped_existing for r in per_ticker),
         failed_tickers=failed,
         per_ticker=per_ticker,
     )

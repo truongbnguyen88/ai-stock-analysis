@@ -57,6 +57,10 @@ class VectorStore(Protocol):
         """Number of stored chunks."""
         ...
 
+    def existing_ids(self, ids: Sequence[str]) -> set[str]:
+        """Subset of ``ids`` already stored — lets incremental ingest skip re-embedding them."""
+        ...
+
 
 def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
     """Cosine similarity (robust to non-unit vectors; unit vectors -> plain dot product)."""
@@ -101,6 +105,9 @@ class InMemoryVectorStore:
 
     def count(self) -> int:
         return len(self._chunks)
+
+    def existing_ids(self, ids: Sequence[str]) -> set[str]:
+        return {cid for cid in ids if cid in self._chunks}
 
 
 def _chunk_metadata(chunk: DocumentChunk) -> dict[str, Any]:
@@ -236,6 +243,14 @@ class ChromaVectorStore:
 
     def count(self) -> int:
         return int(self._ensure().count())
+
+    def existing_ids(self, ids: Sequence[str]) -> set[str]:
+        if not ids:
+            return set()
+        # Chroma's get(ids=...) returns only the ids that exist (missing ones are silently absent);
+        # include=[] skips fetching documents/metadata/embeddings — we only need the id set.
+        res = self._ensure().get(ids=list(ids), include=[])
+        return set(res["ids"])
 
 
 def collection_name_for(namespace: str) -> str:

@@ -1,4 +1,4 @@
-.PHONY: install check test lint typecheck format clean ui pull-models verify-models
+.PHONY: install check test lint typecheck format clean ui pull-models verify-models refresh-filings
 
 install:  ## editable install with dev tooling
 	pip install -e ".[dev]"
@@ -35,6 +35,9 @@ pull-models:  ## download the latest CI-trained models + conformal.json into out
 
 verify-models:  ## structural sanity-check of the trained artifacts (CI promote gate)
 	PYTHONPATH=src python -m stock_agent verify-models
+
+refresh-filings:  ## RAG quarterly refresh: pull new SEC filings + incrementally embed them (local)
+	PYTHONPATH=src python -m stock_agent documents refresh --all --months 6
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage

@@ -217,6 +217,17 @@ def test_collection_name_for_is_chroma_safe() -> None:
     assert collection_name_for("") == "filings"  # degenerate -> base name
 
 
+def test_existing_ids_reports_stored_subset() -> None:
+    # Incremental ingest (9e) skips chunks already in the store, so existing_ids must report
+    # exactly the present subset of the queried ids.
+    store = InMemoryVectorStore()
+    chunks = [_chunk(0, "a"), _chunk(1, "b")]
+    store.add(chunks, _EMB.embed_documents([c.text for c in chunks]))
+    queried = [c.chunk_id for c in chunks] + ["NVDA:10-K:2026-02-25:999"]  # last one absent
+    assert store.existing_ids(queried) == {chunks[0].chunk_id, chunks[1].chunk_id}
+    assert store.existing_ids([]) == set()
+
+
 def test_build_vector_store_isolates_collections_by_provider() -> None:
     # Switching local -> voyage (384-d -> 1024-d) must target a DIFFERENT collection, so the
     # two corpora never share one (a dimension mismatch would corrupt search). Construction is

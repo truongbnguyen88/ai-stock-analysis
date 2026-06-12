@@ -311,8 +311,21 @@ summary) intact rather than handing raw chunks to the agent and hoping it cites 
       re-run, CLI floor computation (`--years`/`--since`/precedence/bad-date) + summary. **Run:**
       `documents download-sec --all --years 3 --limit 60` (free, resumable). The actual bulk run is a
       live-network op (your machine), not executed in CI.
-- [ ] **9e — Quarterly refresh scheduling.** Cron/CI (reuse the retrain-workflow pattern) to
-      pull newly-filed documents + incrementally ingest them each quarter.
+- [x] **9e — Quarterly refresh scheduling.** Pull newly-filed documents + **incrementally**
+      ingest them each quarter — cheap to repeat because only *new* chunks are embedded. The
+      cost-correctness crux: a naive quarterly `ingest --all` would re-embed the whole ~80M-token
+      corpus every quarter (4×/yr > the 200M pool). Built: `VectorStore.existing_ids(ids)`
+      (Protocol + InMemory + Chroma `get(ids=…)`) → `ingest_ticker(…, incremental=True)` embeds
+      **only chunk_ids not already in the store** (`IngestResult.skipped_existing`; the spend guard
+      + token count apply to the new chunks) → `bulk_ingest(incremental=…)` passthrough → CLI
+      `documents refresh --all --months N`: `bulk_download(since=today−N months)` then
+      `bulk_ingest(incremental=True)` on **only the tickers that got new filings** (so it parses few
+      tickers + embeds only their new chunks). **Scheduling = local launchd** (`make refresh-filings`
+      + `configs/launchd/*.plist.template` + setup README), *not* CI — the production vector store +
+      voyage key are local, so the CI-train/local-serve model pattern doesn't transfer (a CI variant
+      could do the free download half only). Tests (offline): `existing_ids`; incremental ingest
+      re-embeds only new chunks (counting embedder: 0 calls when nothing new, 1 when a filing is
+      added); `refresh` ingests only changed tickers with `incremental=True`; up-to-date → no ingest.
 
 ---
 

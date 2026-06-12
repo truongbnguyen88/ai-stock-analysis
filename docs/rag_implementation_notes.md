@@ -3,9 +3,10 @@
 > **Living build journal.** One section per implemented phase explaining *what the
 > mechanism does, how it works, and how the next phase uses it* — written right after
 > each phase lands. Companion to [RAG_TODO.md](RAG_TODO.md) (the ordered checklist)
-> and [rag_concepts.md](rag_concepts.md) (the theory). Updated as P3→P8 ship.
+> and [rag_concepts.md](rag_concepts.md) (the theory). Updated as each phase ships.
 >
-> **Status:** P0 ✅ · P1 ✅ · P2 ✅ · P3 ✅ · P4 ✅ · P5 ✅ · P6 ✅ · P7 ✅ · P8 ✅ — **MVP complete**.
+> **Status:** P0–P8 ✅ (MVP) · P8.5 ✅ (chat agent) · P9a–P9e ✅ (go-live: spend guard · A/B →
+> voyage-4 · namespacing + production embed · bulk download · quarterly refresh) — **RAG layer complete**.
 
 ---
 
@@ -745,3 +746,47 @@ hyperactive 8-K filers would require fetching the older `filings.files` JSON sha
 date-floor filtering; `bulk_download` aggregation, whole-ticker isolation (one ticker raises → others
 still download), idempotent re-run; CLI `--years` floor math, explicit `--since` precedence over
 `--years`, bad-date exit, `--all` universe routing + summary. No live SEC calls.
+
+---
+
+## P9e — Quarterly refresh (incremental ingest + local schedule)
+
+**Role.** Keep the SEC corpus current on a schedule without re-paying for the whole corpus. The
+constraint that shapes the design: a naive quarterly `ingest --all` re-embeds **every** chunk
+(~80M voyage tokens) — 4×/yr would exceed the 200M free pool. So the refresh must embed **only new
+chunks**. P9e is the last RAG phase; the MVP corpus stays SEC-filings-only.
+
+**Mechanism (key files).**
+1. `rag/vector_store.py` `VectorStore.existing_ids(ids) -> set[str]` (Protocol + both backends):
+   InMemory intersects its id dict; Chroma uses `collection.get(ids=…, include=[])` (returns only
+   the present ids, no documents/embeddings fetched). The primitive incremental ingest needs.
+2. `rag/pipeline.py` `ingest_ticker(…, incremental=True)`: after chunking, `store.existing_ids(...)`
+   partitions chunks into present vs new; **embeds + stores only the new ones**;
+   `IngestResult.skipped_existing` reports the rest; the spend guard + token estimate apply to the
+   *new* chunks only (so a refresh's cost reflects what it actually embeds). `bulk_ingest` threads
+   `incremental` through + aggregates `skipped_existing`. Default `incremental=False` preserves the
+   full-rebuild behavior (a one-off `ingest --all`).
+3. `cli/app.py` `documents refresh --all --months N`: (a) `bulk_download(since=today−N months)`
+   pulls newly-filed docs (manifest-idempotent); (b) re-ingest **only the tickers whose download
+   returned new filings** with `incremental=True` — so it parses a handful of tickers and embeds
+   only their new chunks. "Corpus is up to date" when nothing changed; reports new chunks + tokens
+   + `skipped_existing` + any failures. Uses the configured production embedder under the 9a ceiling.
+
+**Scheduling = local launchd (not CI) — a deliberate decision.** The model-retrain workflow trains
+in CI and publishes a small artifact for `make pull-models`. That doesn't transfer here: the
+production vector store is the **local** Chroma `data/vectorstore`, and the embedder is **voyage-4**
+(a paid key in the local `.env`). A CI job can't update a local store without shipping a large
+vectorstore artifact + holding the voyage secret. So the refresh runs locally:
+`make refresh-filings` + `configs/launchd/com.stock-agent.refresh-filings.plist.template` (Jan/Apr/
+Jul/Oct, 09:00; the 6-month window + idempotency absorb a missed run) + `configs/launchd/README.md`
+(install/manage, plus a Linux cron one-liner). A CI **download-only** variant remains possible (free,
+no secret) if pre-fetching filings is ever wanted — the ingest stays local regardless.
+
+**Tested** (offline): `existing_ids` reports the present subset (+ empty); incremental ingest with a
+counting embedder — first ingest embeds once, a no-new re-ingest embeds **zero** times
+(`skipped_existing` = all), adding a filing embeds **once** more (only the new chunks);
+`bulk_ingest(incremental=True)` second pass embeds nothing; CLI `refresh` scans the whole universe to
+download but ingests **only changed tickers** with `incremental=True`, and skips ingest entirely when
+nothing is new. No live SEC/voyage calls.
+
+**RAG layer complete (P0–P9).**
