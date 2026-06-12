@@ -53,6 +53,7 @@ Key choices:
 - **Indicators / feature engineering are pure functions** over DataFrames → testable, leakage-free by construction when point-in-time discipline holds.
 - **Forecasting models share one interface** (`ForecastModel` Protocol: a `name` + `forecast(series, *, horizon_days, as_of) -> ScenarioForecast`) so baseline, Monte Carlo, and ML are swappable and directly comparable in backtests.
 - **Two front-ends, one core.** The CLI and the chat agent are independent entry points over the *same* `pipelines/` and `forecasting/` logic.
+- **A parallel RAG stack** (SEC filings → grounded research memo) follows the same downward-only dependency rule and the same numbers-vs-narrative invariant; it is reachable from both front-ends (`research` CLI; `search_filings` / `research_summary` agent tools). Full design in **§13**.
 
 ## 3. Three LLM roles (keep separate)
 
@@ -90,6 +91,8 @@ src/stock_agent/agent/
 | `run_forecast(ticker, horizon, model?)` | `pipelines.forecast` | bucket probs, E[r], VaR, CIs (any model) | ✅ |
 | `run_backtest(ticker, horizon, model?)` | `pipelines.backtest` | OOS metric suite + calibration + trust label | ✅ |
 | `get_calibration(ticker, horizon, model?)` | `pipelines.backtest` | reliability table, ECE/MCE, trust label, post-hoc recal | ✅ |
+| `search_filings(ticker, question, top_k?)` | `research.synthesis` over `rag/` | cited answer from the SEC filings (citation + number guarded) | ✅ |
+| `research_summary(ticker, days?)` | `pipelines.research` (P8 memo) | integrated brief (filings + news + forecast), cited | ✅ |
 
 Data tools surface `data_warnings` (stale/sparse) so the agent can caveat. Backtest/calibration let a user ask *"is your 30-day NVDA forecast well-calibrated?"* and be answered from `get_calibration`, not the model's own reasoning — bounded for chat cost (fast offline models only, horizon 5–60d, wall-clock timeout, per-session result cache; ML backtests stay a CLI op). Numbers in every tool result feed the grounding guard, so the agent may only state figures that came from a tool.
 
@@ -139,27 +142,31 @@ ai-stock-analysis/
 │   ├── __main__.py              # python -m stock_agent
 │   ├── settings.py              # pydantic-settings (.env binding)
 │   ├── logging_config.py        # structlog
-│   ├── schemas/                 # market · news · forecast · report · earnings · synthesis · backtest (+ConformalReport)
-│   ├── providers/               # base(Protocols: price/news/earnings) · registry · av · finnhub · yfinance · marketaux · _cache
+│   ├── schemas/                 # market · news · forecast · report · earnings · synthesis · backtest (+ConformalReport) · documents · retrieval · research
+│   ├── providers/               # base(Protocols: price/news/earnings) · registry · av · finnhub · yfinance · marketaux · sec_edgar (EDGAR official API) · _cache
 │   ├── data/                    # loader · validation · earnings (context + cadence) · market_context (VIX)
 │   ├── indicators/              # trend · momentum · volatility · returns
 │   ├── features/                # price_features · news_features (display) · news_history (GDELT, leakage-safe) · assembler
 │   ├── news/                    # fetch · dedup · rank · clean · aggregate · gdelt_ingest (BigQuery)
+│   ├── documents/               # ticker_cik · download (+bulk_download, date-floor) · parsers (HTML→text + section detect) · manifest
+│   ├── rag/                     # embeddings (Protocol: fastembed/openai/voyage, batched) · chunking · vector_store (Protocol: InMemory/Chroma, per-embedder namespaced) · retriever · pipeline (ingest/bulk_ingest) · eval (A/B)
+│   ├── research/                # synthesis (single grounded call + citation guard) · memo · evidence · prompts
 │   ├── llm/                     # client · prompts · news_summarizer (A) · synthesizer (C) · guards
 │   ├── forecasting/             # base · buckets · historical · monte_carlo · ml · pooled · train_pooled ·
 │   │                            #   ensemble · quantiles · conformal(+_calibrate · train_conformal) · large_move · verify · regime
 │   ├── backtesting/             # splitter · runner · metrics · calibration
 │   ├── reports/                 # builder · render_md
 │   ├── agent/                   # runtime · tools · prompts · guards
-│   ├── pipelines/               # analyze · forecast · backtest
-│   └── cli/                     # app.py (analyze · forecast · backtest · train · conformal-calibrate · verify-models · ingest-news · chat)
+│   ├── pipelines/               # analyze · forecast · backtest · research (SEC memo)
+│   └── cli/                     # app.py (analyze · forecast · backtest · train · conformal-calibrate · verify-models · ingest-news · chat · documents download-sec/ingest · rag query/eval · research)
 ├── configs/  (default.yaml · models.yaml · providers.yaml · universe.txt · ticker_aliases.json)
 ├── ui/                          # chat_app.py (Streamlit frontend)
 ├── scripts/                     # one-off tools (cost est. · validate_news/ensemble/xgboost experiments)
 ├── tests/  (unit · integration · data · fixtures)
 ├── notebooks/                   # exploration only — no core logic
 ├── outputs/  (reports · experiments · models [+conformal.json] · news_sentiment — gitignored)
-└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST · app_enhancements)
+├── data/     (raw [SEC filings] · processed · vectorstore [Chroma] — gitignored; the RAG corpus)
+└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST · app_enhancements · RAG_TODO · RAG_IMPLEMENTATION_PLAN · rag_concepts · rag_implementation_notes)
 ```
 
 ## 6. Module responsibilities
@@ -174,6 +181,9 @@ ai-stock-analysis/
 | `indicators` | Pure fns: prices → indicator series | No lookahead; stateless; vectorized |
 | `features` | Point-in-time feature matrix (price + news) | Leakage prevention is the core concern |
 | `news` | Fetch, dedup, clean, rank | Dedup before LLM (cost + quality) |
+| `documents` | Download SEC filings (official EDGAR API), parse HTML→text, detect sections | Official API only (no scraping); raw never overwritten; idempotent |
+| `rag` | Chunk, embed (once, at ingestion), store, retrieve (filter + top-k + dedup) | Embedder + store behind Protocols; **no LLM in retrieval** |
+| `research` | One grounded synthesis call → cited memo / answer | Citation guard: every cite ∈ retrieved set; non-advisory |
 | `llm` | Summarize news, extract signals, cite URLs | **No numbers**; schema-validated output |
 | `forecasting` | Scenario probabilities, E[r], VaR, CIs | All probabilities model-derived; common interface |
 | `backtesting` | Walk-forward OOS eval + calibration | Strict temporal separation |
@@ -272,3 +282,80 @@ The ML artifacts are **trained in CI and served locally** — the repo never car
 - **Distribution** — the workflow tars the artifacts **and `conformal.json`** into a rolling **`models-latest` GitHub Release** (plus a dated snapshot for rollback). Local side pulls with **`make pull-models`** (auth-free `curl`, public repo); the app loads from `outputs/models/`, falling back to historical-sim (and un-conformalized CIs) when an artifact is absent.
 - **Train/serve pickle parity** — the serialization-sensitive deps are pinned to a single minor band (`scikit-learn>=1.9,<1.10`, `lightgbm>=4.6,<5`, `joblib>=1.5,<2`). Without this, a CI/local sklearn skew triggers `InconsistentVersionWarning` on load and risks silently wrong deserialization. Both sides install the pins via `pip install -e .`.
 - **Schedule liveness** — GitHub auto-disables a scheduled workflow after 60 days of no repo activity; the retrain pushes a small **keepalive commit** on every run (before training, so a failed/slow run still resets the timer), keeping the ~30-day cadence self-sustaining without manual intervention.
+
+## 13. SEC-grounded research layer (RAG)
+
+A second, self-contained layer turns **SEC filings (10-K / 10-Q / 8-K)** into a grounded research
+assistant. It is independent of the forecasting core but held to the **same invariants** — numbers
+come from the models (RAG returns *qualitative evidence + citations only*), no recommendations, no
+scraping — and obeys the same **downward-only** dependency rule. Detailed build steps + locked
+decisions live in [RAG_TODO.md](RAG_TODO.md); per-phase mechanisms in
+[rag_implementation_notes.md](rag_implementation_notes.md).
+
+### Pipeline (dependencies point downward only)
+
+```
+providers/sec_edgar   EDGAR OFFICIAL API client (Protocol; throttle ≤10 rps; UA; DiskCache)   ← lowest
+        ▼
+documents/            download (+bulk, date-floor, idempotent) · parse HTML→text · detect Item sections · manifest
+        ▼
+rag/                  chunk (section-aware, pure) · embed ONCE (Embedder Protocol) · store (VectorStore Protocol) · retrieve (filter+top-k+dedup, NO LLM)
+        ▼
+research/             ONE grounded synthesis call (llm/ + guards) → GroundedAnswer / ResearchMemo
+        ▼
+pipelines/research · cli (research) · agent tools (search_filings · research_summary)
+```
+
+`rag/` depends on `documents/` + an `Embedder`; `research/` depends on `rag/` + `pipelines/`
+(forecast/analyze for the integrated memo) + `llm/`. Never inverted.
+
+### Embedding strategy (the key design decisions)
+
+- **Embeddings are computed once, at ingestion** — never per query over the corpus. Both the
+  embedder and the vector store sit behind **Protocols** (`Embedder`, `VectorStore`), so providers
+  swap without touching chunking/retrieval/synthesis code.
+- **Production embedder = Voyage `voyage-4`**, chosen by a **labeled retrieval A/B** (`rag/eval.py`)
+  on a 25-question / 5-ticker set: voyage-4 beat local fastembed on ranking quality (MRR 0.72→0.89,
+  precision@8 0.63→0.76, hit@8 tied); the finance-tuned `voyage-finance-2` *lost* and was dropped.
+  Local **`fastembed`/BGE** (onnxruntime, no torch → dodges the macOS torch+lightgbm OpenMP segfault,
+  $0, unlimited) remains a **complete on-disk fallback**.
+- **Per-embedder collection namespacing.** Different embedders have different vector dimensions
+  (BGE 384-d vs voyage-4 1024-d). `build_vector_store` derives the Chroma collection name from the
+  embedder identity (`embedding_namespace`), so the local and voyage corpora live in **separate
+  collections** — switching `EMBEDDING_PROVIDER` targets a fresh collection instead of corrupting one.
+- **Cost controls.** A configurable `rag_max_embed_tokens` ceiling **refuses an ingest before it
+  embeds** (no provider spend on an over-budget run). For large corpora, `embed_documents` **batches**
+  requests under the provider's per-request caps, and `bulk_ingest` **isolates + retries per ticker**,
+  so one transient network blip during a multi-hour embed never aborts the whole run (failed tickers
+  are reported for an idempotent backfill).
+
+### The single paid call + guards
+
+The **only paid LLM call** in the whole flow is the final synthesis (`research/synthesis.py`):
+download, parse, chunk, embed, and retrieval are 100% local. Two guards protect it (analogues of the
+forecasting layer's anti-forecast / numeric-grounding guards):
+
+- **Citation guard** — every cited marker (inline `[n]` and the `citations` list) must resolve to a
+  source in the *retrieved* evidence set; a fabricated cite triggers one corrective retry, then raises.
+- **Number grounding** — reuses `llm.guards.NumberGrounding`, seeded from the retrieved texts (and, in
+  the integrated memo, the forecast + snapshot + news), so the synthesis may quote SEC figures but
+  never invent them. Empty retrieval short-circuits to *"Insufficient evidence found."* — **no LLM call**.
+
+The integrated memo (`research/memo.py`, `pipelines/research.py`) copies quant sections (technical
+indicators, probability scenarios) **verbatim from the models** and lets the LLM write only the
+narrative with cited SEC claims — **no recommendation field**, same as the analyze report.
+
+### Front-ends
+
+- **CLI:** `documents download-sec` → `documents ingest` → `rag query [--answer]` → `research`.
+- **Chat agent:** two guarded tools — `search_filings(ticker, question)` (a specific filing question,
+  cited) and `research_summary(ticker)` (the integrated brief). Both make their own guarded synthesis
+  call and return *validated, cited* output, so the agent's grounding guard stays intact (it never
+  hands raw chunks to the model). Reachable only after a ticker's filings are ingested.
+
+### Production state
+
+Built incrementally P0–P9 (`RAG_TODO.md`). The MVP corpus = SEC filings only (transcripts / decks /
+hybrid search / reranking are V1+). As shipped: ~3 years of 10-K/10-Q/8-K across the universe
+(≈93k chunks) embedded with **voyage-4** in production (local BGE collection retained as fallback);
+the production embedder is selected by `EMBEDDING_PROVIDER` in `.env`.

@@ -102,6 +102,27 @@ Sequenced pipeline beyond the original phases — the ML-quality + MLOps track. 
 4. **[DONE — ❌ neither promoted] Sequence / regime model exploration (Task 8).** Gaussian-HMM regime forecaster (*tied* the baselines) and a pooled LSTM (heavy 3–4 layer + LayerNorm, LR sweep, full universe, 114-ticker validation, four calibration methods incl. `CalibratedClassifierCV(cv=3)`) — the LSTM extracts a **real but redundant** vol signal and **loses Brier/ECE on ~75% of tickers**; no calibration helps. Conclusion: the binding constraint is **information, not model class or calibration**. Both kept as isolated experimental code (torch env-gated). Transformer/TFT ruled out by the same logic.
 5. **[DONE — ✅ promoted] GARCH conditional-volatility forecaster (Task 9).** `monte_carlo_garch` (GJR-GARCH(1,1)-t via `arch`) — the **first new model to beat the baselines on the deployable proper score**, *because it adds a different mechanism* (forward vol mean-reversion + leverage + fat tails) rather than more capacity over the same inputs. Ties bootstrap at h20, **wins Brier at h30 (9/12) and h60 (10/12)**, highest big-move AUC at every horizon. Promoted into the default comparison set + the chat agent (the two promoted MC methods are bootstrap + GARCH; `gbm` dropped from the agent). Follow-up: surface GARCH as the preferred long-horizon baseline in the deterministic written report.
 
+## SEC-grounded research layer (RAG) — separate track, P0–P9
+
+A second scope tier, built incrementally and tracked in its own plan
+([RAG_TODO.md](RAG_TODO.md)): turn SEC filings into a grounded research assistant, under the same
+invariants as the forecasting core (numbers from models, non-advisory, no scraping — EDGAR's
+*official* API only). Architecture in [ARCHITECTURE.md §13](ARCHITECTURE.md).
+
+- **MVP (P0–P8) ✅** — `providers/sec_edgar` (official EDGAR API; throttle + cache) → `documents/`
+  (download · parse HTML→text · detect Item sections) → `rag/` (section-aware chunking · embed-once
+  behind an `Embedder` Protocol · Chroma `VectorStore` Protocol · filtered top-k retrieval, no LLM)
+  → `research/` (one grounded synthesis call + **citation guard**) → the `research` memo
+  (filings + news + forecast, cited, no recommendation field).
+- **P8.5 ✅** — wired into the chat agent as two guarded tools (`search_filings`, `research_summary`).
+- **P9 — maturity / go-live:** **9a** embedding spend guard ✅ · **9b** retrieval-quality A/B ✅
+  (voyage-4 beat local fastembed → chosen; voyage-finance-2 dropped) · **9c** per-embedder
+  vector-store namespacing + **the one-time voyage-4 production embed ✅** (~93k chunks; local BGE
+  retained as $0 fallback) · **9d** bulk historical download ✅ · **9e** quarterly refresh cron —
+  *remaining*. (Request batching + `bulk_ingest` isolation/retry added during 9c-run hardening.)
+- **Out of scope (V1+):** earnings transcripts, investor decks, hybrid (BM25+vector) search,
+  reranking, QoQ document comparison, agentic multi-step retrieval.
+
 ## CLI / chat surface
 
 ```bash
@@ -111,10 +132,17 @@ python -m stock_agent train    --all                          # retrain logistic
 python -m stock_agent forecast --ticker MSFT  --horizon 30  --model lightgbm
 python -m stock_agent backtest --ticker AAPL                  # Phase 6
 
-# Conversational agent (same core)
+# SEC-grounded research (RAG layer)
+python -m stock_agent documents download-sec --all --years 3  # official EDGAR API (free, idempotent)
+python -m stock_agent documents ingest --all                  # parse→chunk→embed→store ($0 local, or voyage)
+python -m stock_agent rag query --ticker NVDA --question "AI growth drivers?" --answer
+python -m stock_agent research --ticker NVDA                  # technicals + forecast + news + filings → cited memo
+
+# Conversational agent (same core; also answers filing questions over the RAG layer)
 python -m stock_agent chat
 > Analyze NVDA over the last 3 months and forecast 15 and 30 days
 > Is your 30-day NVDA forecast well-calibrated?
+> What are NVDA's key risk factors per its latest 10-K?
 
 # Browser chat frontend (Streamlit)
 make ui   # → http://localhost:8501

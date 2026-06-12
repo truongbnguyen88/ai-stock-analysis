@@ -43,7 +43,15 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   identical folds. CIs are **conformally calibrated** (`conformal-calibrate` → a pooled,
   distribution-free correction so a stated 90% interval actually covers ~90% OOS).
 - **`chat`** — a conversational agent (Role C) that orchestrates the tools, grounds
-  every number, and can export an executive summary to PDF/DOCX/Markdown.
+  every number, and can export an executive summary to PDF/DOCX/Markdown. It can also
+  answer **SEC-filing questions** (`search_filings`) and produce an **integrated brief**
+  (`research_summary`) over the RAG layer below — both cited.
+- **`research`** — a **SEC-grounded equity research memo** (RAG): fuses filings
+  (10-K/10-Q/8-K) + news + the forecast into one cited, non-advisory brief. Retrieval is
+  100% local; every filing claim carries a citation, and a citation + number guard rejects
+  anything not in the retrieved evidence (same numbers-vs-narrative invariant).
+- **`documents` / `rag`** — manage the SEC corpus: `documents download-sec` (official EDGAR
+  API) → `documents ingest` (parse → chunk → embed → store) → `rag query` (grounded filing QA).
 
 ## Quickstart
 
@@ -68,6 +76,12 @@ python -m stock_agent forecast --ticker MSFT --horizon 30 --model monte_carlo_ga
 python -m stock_agent backtest --ticker AAPL
 python -m stock_agent chat                 # conversational agent (CLI)
 make ui                                     # Streamlit chat frontend
+
+# 5. SEC-grounded research (RAG) — optional; needs the [rag] extra + SEC_USER_AGENT
+python -m stock_agent documents download-sec --all --years 3   # official EDGAR API (free)
+python -m stock_agent documents ingest --all                   # parse→chunk→embed→store
+python -m stock_agent rag query --ticker NVDA --question "What AI growth drivers did management cite?" --answer
+python -m stock_agent research --ticker NVDA                   # technicals + forecast + news + filings → cited memo
 ```
 
 `analyze`/`chat` degrade gracefully without `ANTHROPIC_API_KEY` (numbers still
@@ -84,6 +98,29 @@ is **logistic** (stable names) + **tuned lightgbm** (volatile names' big-move ta
 at horizons **{20, 30, 60}**, isotonic-calibrated (`CalibratedClassifierCV(cv=3)`). The
 interactive default is the **`ensemble`** — a calibrated pool of these plus the
 Monte-Carlo / GARCH baselines (OOS-validated as the robust no-regret choice).
+
+## SEC-grounded research (RAG layer)
+
+A second, self-contained layer turns SEC filings into a **grounded research assistant** —
+distinct from the forecasting core and held to the same invariants (numbers from models, no
+recommendations, no scraping). Pipeline: `providers/sec_edgar` (official EDGAR API, throttled +
+cached) → `documents/` (download · parse · section-detect) → `rag/` (chunk · embed · store ·
+retrieve) → `research/` (one grounded synthesis call → cited memo).
+
+- **Embeddings are computed once at ingestion**, never per query, each behind a Protocol.
+  **Production = Voyage `voyage-4`** (chosen via a labeled retrieval A/B that beat local — MRR
+  0.72→0.89; `voyage-finance-2` lost); **local `fastembed`/BGE** (onnxruntime, no torch, $0)
+  remains a complete fallback. The vector store (Chroma) namespaces a **separate collection per
+  embedder**, so switching providers never mixes vector dimensions.
+- **Only one paid LLM call** in the whole flow — the final memo synthesis. Download, parse,
+  chunk, embed, and retrieval are 100% local. A **citation guard** rejects any cited
+  source/chunk not in the retrieved set; empty retrieval → *"Insufficient evidence found."*
+- **Cost ceiling:** a configurable `rag_max_embed_tokens` refuses an ingest before it embeds;
+  large corpus embeds batch + retry per ticker so a transient blip never aborts the run.
+
+Build steps + locked decisions: [docs/RAG_TODO.md](docs/RAG_TODO.md); concepts:
+[docs/rag_concepts.md](docs/rag_concepts.md); per-phase mechanism notes:
+[docs/rag_implementation_notes.md](docs/rag_implementation_notes.md).
 
 ## Development
 
@@ -103,10 +140,13 @@ canned responses) — no live API calls in tests.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, module boundaries, agent design, model lifecycle |
 | [docs/models_explanation.md](docs/models_explanation.md) | Every forecasting model, math, assumptions, failure modes |
 | [docs/validations_results.md](docs/validations_results.md) | Backtest / tuning / calibration results |
+| [docs/RAG_TODO.md](docs/RAG_TODO.md) · [docs/rag_concepts.md](docs/rag_concepts.md) · [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md) | SEC-grounded RAG layer: build plan, concepts, per-phase mechanism notes |
 | [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/TASKS.md](docs/TASKS.md) | Build plan + progress log |
 
 ## Data & secrets
 
 Free/official data providers only (yfinance keyless; Alpha Vantage / Finnhub /
 Marketaux optional). Respect each provider's terms and rate limits. Secrets live only
-in `.env` (gitignored).
+in `.env` (gitignored). The RAG layer adds: **`SEC_USER_AGENT`** (a name + contact email,
+required by EDGAR's fair-access policy for downloads) and an optional **`VOYAGE_API_KEY`**
+(only when `EMBEDDING_PROVIDER=voyage`; the default local `fastembed` needs no key).
