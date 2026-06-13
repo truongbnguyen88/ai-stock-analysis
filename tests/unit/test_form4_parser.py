@@ -76,3 +76,15 @@ def test_insider_filing_ref_url() -> None:
         "https://www.sec.gov/Archives/edgar/data/1045810/000123456724000045/wk-form4.xml"
     )
     assert ref.filing_id == "NVDA:4:2024-05-10:0001234567-24-000045"
+
+
+def test_insider_filing_ref_url_strips_xsl_render_prefix() -> None:
+    # EDGAR's primaryDocument for Form 4 is the rendered HTML path; the URL must
+    # de-render it to the raw XML (strip the xslF.../ directory).
+    ref = InsiderFilingRef(
+        ticker="MSFT", cik="0000789019", filing_date=_FILING_DATE,
+        accession_number="0000789019-26-000109", primary_document="xslF345X06/form4.xml",
+    )
+    assert ref.url == (
+        "https://www.sec.gov/Archives/edgar/data/789019/000078901926000109/form4.xml"
+    )

@@ -516,7 +516,7 @@ construction.
 
 ```mermaid
 flowchart TD
-    X["Feature vector x<br/>18 scale-free features"] --> C0["clf θ = −10%"]
+    X["Feature vector x<br/>24 scale-free features"] --> C0["clf θ = −10%"]
     X --> C1["clf θ = −5%"]
     X --> C2["clf θ = 0%"]
     X --> C3["clf θ = +5%"]
@@ -554,7 +554,7 @@ $$
 \text{upside} = 0.17+0.18+0.20 = 0.55\ (= m_2)
 $$
 
-### 3.2 The 18 features (all scale-free)
+### 3.2 The 24 features (all scale-free)
 
 The feature vector $\mathbf{x}$ is **price-derived and scale-free** — ratios and
 bounded indicators, never raw price levels. Scale-freeness is what makes pooling
@@ -580,6 +580,22 @@ space). Defined in
 | 16 | `vix_level` | VIX / 100 — market-wide annualized vol (real-time, leakage-safe); mainly sharpens the big-move/vol signal |
 | 17 | `vix_rel` | VIX / its own 20-day average (>1 = market vol rising) |
 | 18 | `days_to_next_earnings` | Leakage-safe earnings-proximity estimate (below) |
+| 19 | `rvol_20` | Relative volume: $v_t/\overline{v}_{20}$ (trailing mean excl. current bar) |
+| 20 | `dollar_vol_z_20` | Z-score of dollar volume $P_t v_t$ vs its trailing 20-day distribution |
+| 21 | `overnight_ret_20d` | 20-day mean overnight return $O_t/C_{t-1}-1$ |
+| 22 | `intraday_ret_20d` | 20-day mean intraday return $C_t/O_t-1$ |
+| 23 | `realized_skew_60` | 60-day rolling skewness of log returns (tail asymmetry) |
+| 24 | `semivol_ratio_60` | 60-day downside/upside semideviation ratio $\sqrt{\overline{\min(r,0)^2}}/\sqrt{\overline{\max(r,0)^2}}$ |
+
+Features 19–24 were added in the Phase 1.6 feature-expansion study (the **`volume`**,
+**`session`**, and **`shape`** groups). They were promoted from an opt-in,
+ablation-gated staging set into the baseline only after a walk-forward logistic
+ablation (8-ticker spread × h20/h30/h60) showed they help or don't hurt
+Brier/ECE/big-move-AUC; `shape` was the robust winner (positive on every metric at
+every horizon, effect strengthening with horizon). Candidates that **hurt**
+calibration (`high52w` nearness-to-52w-high, `relstr` market-relative strength)
+were rejected and remain opt-in only. All six are OHLCV-derived, so they add no
+new data dependency. Full tables → [validations_results.md](validations_results.md).
 
 Missing values (e.g. `ma50_to_ma200` before 200 bars exist, or `vol_ratio` going
 inf on a degenerate window → replaced by NaN) are handled per model type
@@ -619,7 +635,7 @@ from XOM live in the same space.
    its earnings dates.
 2. Build the point-in-time $(X, y)$ matrix
    ([assembler.py](../src/stock_agent/features/assembler.py)):
-   - $X$ = the 18 features at each date $t$ (data up to and including $t$).
+   - $X$ = the 24 features at each date $t$ (data up to and including $t$).
    - $y$ = five binary columns, $\mathbb{1}[\,r_{t \to t+h} > \theta_k\,]$,
      where the target uses `close.shift(-horizon)` — **strictly future**.
    - A leakage assertion checks the feature index equals the price-date index
@@ -634,7 +650,7 @@ from XOM live in the same space.
 ```mermaid
 flowchart TD
     U["Universe ~50-100 tickers<br/>configs/universe.txt"] --> FE["Per ticker: fetch ~6y prices<br/>+ earnings dates"]
-    FE --> PIT["Point-in-time matrix per ticker:<br/>X = 18 features at t (data ≤ t)<br/>y_k = 1 if future h-day return above θ_k"]
+    FE --> PIT["Point-in-time matrix per ticker:<br/>X = 24 features at t (data ≤ t)<br/>y_k = 1 if future h-day return above θ_k"]
     PIT --> ST["Stack all tickers → pooled rows<br/>replace ±inf with NaN"]
     ST --> FIT["For each threshold θ_k:<br/>fit one binary classifier"]
     FIT --> ART["PooledModel artifact<br/>5 classifiers + imputer + metadata<br/>→ joblib (gitignored)"]
@@ -830,7 +846,7 @@ model under-covered (a "90%" CI really covered ~76–87%, worst at h60) → conf
 | | Historical Sim | Monte Carlo (GBM/bootstrap/jump/GARCH) | ML (pooled) |
 |---|---|---|---|
 | **Type** | Empirical, unconditional | Parametric / semi-parametric simulation | Conditional supervised |
-| **Conditions on today's state?** | No | Via recent $\mu,\sigma$ (+ earnings for jump); **GARCH forecasts vol forward, mean-reverting** | **Yes** (18 features) |
+| **Conditions on today's state?** | No | Via recent $\mu,\sigma$ (+ earnings for jump); **GARCH forecasts vol forward, mean-reverting** | **Yes** (24 features) |
 | **Distributional assumption** | None | GBM: Normal log-returns; bootstrap: none; jump: + empirical jump; GARCH: GJR-GARCH-t conditional variance | None on returns; learned mapping |
 | **Data needed** | This ticker's prices | This ticker's prices (+ earnings for jump) | Universe history + a trained artifact |
 | **Captures fat tails?** | Yes (empirically) | GBM no; bootstrap/jump yes | Via thresholds; tails data-starved |
