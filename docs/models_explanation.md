@@ -554,7 +554,7 @@ $$
 \text{upside} = 0.17+0.18+0.20 = 0.55\ (= m_2)
 $$
 
-### 3.2 The 24 features (all scale-free)
+### 3.2 The 27 features (24 always-on + 3 config-gated insider; all scale-free)
 
 The feature vector $\mathbf{x}$ is **price-derived and scale-free** — ratios and
 bounded indicators, never raw price levels. Scale-freeness is what makes pooling
@@ -586,6 +586,11 @@ space). Defined in
 | 22 | `intraday_ret_20d` | 20-day mean intraday return $C_t/O_t-1$ |
 | 23 | `realized_skew_60` | 60-day rolling skewness of log returns (tail asymmetry) |
 | 24 | `semivol_ratio_60` | 60-day downside/upside semideviation ratio $\sqrt{\overline{\min(r,0)^2}}/\sqrt{\overline{\max(r,0)^2}}$ |
+| 25 † | `insider_buy_conviction_63d` | 63-day sum of opportunistic-**buy** Δ-ownership (Form 4 code P, non-10b5-1; per-trade capped at 1.0) |
+| 26 † | `insider_senior_buy_63d` | 63-day count of **CEO/CFO** opportunistic buys |
+| 27 † | `insider_sell_pressure_63d` | 63-day sum of opportunistic-**sell** Δ-ownership magnitude (capped) |
+
+† **Config-gated** (`insider` group via `settings.model_feature_groups`) — present in production artifacts but **not** in the always-on baseline; needs `SEC_USER_AGENT`, NaN without it. See the insider note below.
 
 Features 19–24 were added in the Phase 1.6 feature-expansion study (the **`volume`**,
 **`session`**, and **`shape`** groups). They were promoted from an opt-in,
@@ -606,6 +611,63 @@ mega-caps; validated). The universe was broadened into that segment to realize t
 lift. They need `SEC_USER_AGENT` (train + inference); absent it they are NaN. Inference
 auto-includes them whenever the loaded artifact's `feature_cols` contain them. Details:
 §3.2 of [validations_results.md](validations_results.md) (insider entry).
+
+#### What each feature captures (and why it's in the set)
+
+Grouped by the signal family they encode. The guiding constraint throughout:
+**scale-free** (so a \$20 and a \$900 stock share one feature space → pooling is valid)
+and **point-in-time** (every value at $t$ uses only data available at $t$).
+
+- **Trailing returns — `ret_1d/5d/20d/60d` (1–4).** The same move at four horizons.
+  Short windows (1–5d) carry **short-term reversal**; longer windows (20–60d) carry
+  **intermediate momentum**. Giving the model all four lets it tell a one-day spike
+  apart from a sustained trend rather than collapsing them into one number.
+- **Momentum oscillators — `rsi14`, `macd_hist` (5–6).** RSI measures
+  overbought/oversold *pressure* (mean-reversion potential at extremes); the MACD
+  histogram measures momentum *acceleration* (is a trend strengthening or rolling
+  over). They describe the **state and turn** of momentum, not its level.
+- **Location vs. trend — `price_to_ma20/50`, `ma50_to_ma200` (7–9).** How stretched
+  price is above/below its own moving averages (mean-reversion vs. trend-following
+  tension), and the **slow-trend regime** — `ma50_to_ma200 > 0` is a golden cross
+  (up-regime), `< 0` a death cross.
+- **Volatility / risk — `hist_vol_20/60`, `vol_ratio`, `atr_pct`, `drawdown`,
+  `B_perc` (10–15).** Realized vol at two windows; `vol_ratio` flags vol
+  **expanding vs. compressing** (a regime shift, not a level); `atr_pct` is the
+  normalized daily range; `drawdown` is distance below the running peak (a **stress
+  state**); `B_perc` places price inside its Bollinger band (≈0 at the lower band,
+  ≈1 at the upper, outside [0,1] on a breakout). This block is where the model gets
+  most of its **big-move / tail** skill.
+- **Market regime — `vix_level`, `vix_rel` (16–17).** Market-wide annualized vol and
+  whether it's rising vs. its own 20-day norm. Identical across tickers on a date, so
+  it sharpens the **volatility / big-move** prediction (a market-wide state), not the
+  cross-sectional *direction*.
+- **Event proximity — `days_to_next_earnings` (18).** A leakage-safe cadence estimate
+  (next section). Vol systematically rises into earnings, so this **conditions the
+  vol/big-move signal** on the earnings calendar without leaking the real date.
+- **Volume / liquidity — `rvol_20`, `dollar_vol_z_20` (19–20).** Participation
+  relative to the stock's own norm: `rvol_20` is today's share volume over its
+  20-day mean (a **participation surge** confirms/precedes moves); `dollar_vol_z_20`
+  is the z-score of *dollar* volume (a **liquidity surprise** in traded notional).
+  Normalizing against each ticker's own history keeps them scale-free.
+- **Session decomposition — `overnight_ret_20d`, `intraday_ret_20d` (21–22).** Splits
+  the daily move into the **close→open** (overnight, reaction to after-hours news/order
+  flow) and **open→close** (regular session) components, smoothed over 20 days. The two
+  sessions are documented to behave differently (overnight drift vs. intraday
+  mean-reversion); the split exposes which one is driving the trend.
+- **Return-distribution shape — `realized_skew_60`, `semivol_ratio_60` (23–24).** The
+  *asymmetry* of the return distribution, orthogonal to its *level* (which the vol
+  block already has). Negative `realized_skew` = a left-heavy, crash-prone tail;
+  `semivol_ratio > 1` = downside vol dominates upside. The ablation's **robust
+  winner** — its edge grows with horizon, as tail shape matters more over longer windows.
+- **Insider / Form 4 — `insider_buy_conviction_63d`, `insider_senior_buy_63d`,
+  `insider_sell_pressure_63d` (25–27, config-gated).** Discretionary insider activity,
+  engineered around what the literature finds informative: **buys, not sells**, are the
+  signal, so the buy and sell channels are **kept separate (never netted)**; buys are
+  weighted by **Δ-ownership conviction** (how much an insider moved their *own* stake,
+  not raw dollars) and by **seniority** (CEO/CFO buys are the highest-signal subset);
+  Rule **10b5-1** pre-scheduled trades are excluded as non-discretionary. Validated to
+  lift Brier/calibration on **mid/small-caps** (nil on mega-caps, whose insiders mostly
+  sell on schedule). Keyed off `filing_date` (the public date) for leakage safety.
 
 Missing values (e.g. `ma50_to_ma200` before 200 bars exist, or `vol_ratio` going
 inf on a degenerate window → replaced by NaN) are handled per model type
