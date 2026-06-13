@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+from collections.abc import Sequence
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
@@ -34,12 +35,23 @@ from stock_agent.rag.embeddings import (
     VoyageEmbedder,
     build_embedder,
 )
-from stock_agent.rag.eval import LabeledQuery, format_reports_markdown, run_ab
+from stock_agent.rag.eval import (
+    LabeledQuery,
+    SystemReport,
+    evaluate_system,
+    format_reports_markdown,
+    run_ab,
+)
+from stock_agent.rag.hybrid import SparseRetriever
 from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, bulk_ingest
-from stock_agent.rag.read_path import build_retrieval_system
-from stock_agent.rag.sparse_store import build_sparse_store
+from stock_agent.rag.read_path import (
+    LATTICE_SYSTEMS,
+    build_named_system,
+    build_retrieval_system,
+)
+from stock_agent.rag.sparse_store import InMemoryBM25Store, build_sparse_store
 from stock_agent.rag.status import corpus_status
-from stock_agent.rag.vector_store import build_vector_store
+from stock_agent.rag.vector_store import InMemoryVectorStore, build_vector_store
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.research.memo import render_memo_markdown
 from stock_agent.research.synthesis import answer_question
@@ -928,38 +940,10 @@ def _named_embedder(name: str, settings: Settings) -> Embedder:
     )
 
 
-@rag_app.command("eval")
-def rag_eval(
-    queries: Annotated[
-        Path, typer.Option("--queries", "-q", help="JSON file: list of labeled queries")
-    ],
-    compare: Annotated[
-        str,
-        typer.Option("--compare", help="Comma list: local,voyage,voyage-finance,openai"),
-    ] = "local",
-    top_k: Annotated[
-        int | None, typer.Option("--top-k", help="Chunks per query (default settings.rag_top_k)")
-    ] = None,
-    report: Annotated[
-        Path | None,
-        typer.Option("--report", help="Also write the reports as JSON to this path"),
-    ] = None,
-) -> None:
-    """A/B retrieval quality across embedders on a labeled query set (RAG_TODO 9b; A1 metrics).
-
-    The labeled-query file is a JSON list of
-    ``{query, relevant_spans[], ticker?, top_k?, expected_document_types?, expected_sections?}``
-    (see configs/rag_eval_queries.example.json). The corpus is the already-ingested filings for
-    the tickers referenced; chunking is held constant (compares embedders, not chunking). Reports
-    hit@k / MRR / nDCG@k / precision@k / recall@k; ``--report`` dumps them as JSON (for a local
-    baseline). Run via ``make rag-eval`` for the real local corpus (not CI — see eval.py).
-    """
-    settings = get_settings()
-    configure_logging(settings)
-    labeled = [LabeledQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
-    tickers = sorted({q.ticker for q in labeled if q.ticker})
+def _eval_corpus(settings: Settings, labeled: list[LabeledQuery]) -> list[DocumentChunk]:
+    """Build the chunk corpus for the tickers referenced by the labeled queries (chunking fixed)."""
     corpus: list[DocumentChunk] = []
-    for sym in tickers:
+    for sym in sorted({q.ticker for q in labeled if q.ticker}):
         corpus.extend(
             build_chunks(
                 sym,
@@ -968,12 +952,109 @@ def rag_eval(
                 chunk_overlap=settings.rag_chunk_overlap,
             )
         )
+    return corpus
+
+
+def _eval_lattice(
+    settings: Settings,
+    labeled: list[LabeledQuery],
+    corpus: list[DocumentChunk],
+    *,
+    system_names: list[str],
+    rerank_provider: str,
+    diagnostic: bool,
+    top_k: int,
+) -> list[SystemReport]:
+    """Score the named retrieval lattice on one corpus (embedder + chunking held constant).
+
+    Embeds + BM25-indexes the corpus ONCE, then builds each named config (`dense` / `reranked` /
+    `hybrid` / `hybrid+rerank`) via `build_named_system` and scores it with `evaluate_system`, so
+    the systems differ only in the retrieval *stage*. `--diagnostic` appends a sparse-only (BM25)
+    baseline — a reference point, not a deployable mode. In-memory stores; offline except the
+    configured embedder / (for rerank-bearing systems) the local reranker model.
+    """
+    emb = build_embedder(settings)
+    store = InMemoryVectorStore()
+    store.add(corpus, emb.embed_documents([c.text for c in corpus]))
+    sparse = InMemoryBM25Store()
+    sparse.add(corpus)
+    reports: list[SystemReport] = []
+    for name in system_names:
+        system = build_named_system(
+            name, settings, store=store, sparse_store=sparse, rerank_provider=rerank_provider
+        )
+        reports.append(evaluate_system(system, labeled, top_k=top_k, corpus_chunks=corpus))
+    if diagnostic:
+        reports.append(
+            evaluate_system(SparseRetriever(sparse), labeled, top_k=top_k, corpus_chunks=corpus)
+        )
+    return reports
+
+
+@rag_app.command("eval")
+def rag_eval(
+    queries: Annotated[
+        Path, typer.Option("--queries", "-q", help="JSON file: list of labeled queries")
+    ],
+    compare: Annotated[
+        str,
+        typer.Option("--compare", help="Embedder A/B: comma list local,voyage,openai"),
+    ] = "local",
+    systems: Annotated[
+        str | None,
+        typer.Option(
+            "--systems",
+            help="Lattice mode: comma list of " + ",".join(LATTICE_SYSTEMS),
+        ),
+    ] = None,
+    rerank: Annotated[
+        str, typer.Option("--rerank", help="Reranker for rerank-bearing systems: local|voyage")
+    ] = "local",
+    diagnostic: Annotated[
+        bool,
+        typer.Option("--diagnostic", help="Add a sparse-only BM25 baseline (not deployable)"),
+    ] = False,
+    top_k: Annotated[
+        int | None, typer.Option("--top-k", help="Chunks per query (default settings.rag_top_k)")
+    ] = None,
+    report: Annotated[
+        Path | None,
+        typer.Option("--report", help="Also write the reports as JSON to this path"),
+    ] = None,
+) -> None:
+    """Score retrieval quality on a labeled query set (A1 metrics: hit@k / MRR / nDCG@k / P / R).
+
+    Two modes over the same corpus (ingested filings for the query tickers, chunking fixed):
+    - **Embedder A/B** (default, `--compare`): compare embedders, each as a dense retriever (P9b).
+    - **Lattice** (`--systems`): compare retrieval *stages* — dense / reranked / hybrid /
+      hybrid+rerank — holding the embedder fixed, to decide which stage to promote. `--diagnostic`
+      adds a sparse-only baseline.
+
+    `--report` dumps the reports as JSON. Run via `make rag-eval` for the real local corpus.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    labeled = [LabeledQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    corpus = _eval_corpus(settings, labeled)
     if not corpus:
         typer.echo("No downloaded filings for the query tickers. Run download-sec + ingest first.")
         raise typer.Exit(code=1)
-    names = [s for s in compare.split(",") if s.strip()]
-    embedders = {n: _named_embedder(n, settings) for n in names}
-    reports = run_ab(corpus, labeled, embedders, top_k=top_k or settings.rag_top_k)
+    k = top_k or settings.rag_top_k
+    reports: Sequence[SystemReport]
+    if systems:
+        names = [s.strip() for s in systems.split(",") if s.strip()]
+        unknown = [n for n in names if n not in LATTICE_SYSTEMS]
+        if unknown:
+            raise typer.BadParameter(
+                f"unknown system(s) {unknown}; choose from {list(LATTICE_SYSTEMS)}"
+            )
+        reports = _eval_lattice(
+            settings, labeled, corpus,
+            system_names=names, rerank_provider=rerank, diagnostic=diagnostic, top_k=k,
+        )
+    else:
+        embedders = {n: _named_embedder(n, settings) for n in compare.split(",") if n.strip()}
+        reports = run_ab(corpus, labeled, embedders, top_k=k)
     typer.echo(format_reports_markdown(reports))
     if report is not None:
         report.parent.mkdir(parents=True, exist_ok=True)

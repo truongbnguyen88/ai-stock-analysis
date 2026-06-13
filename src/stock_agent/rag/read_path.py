@@ -49,3 +49,45 @@ def build_retrieval_system(
     if settings.rerank_provider != "none":
         base = RerankingRetriever(base, build_reranker(settings), fetch_k=settings.rerank_fetch_k)
     return base
+
+
+# The named, deployable retrieval configurations — each a (retrieval_mode, needs_rerank) recipe over
+# `build_retrieval_system`. This is BOTH the eval-lattice's `--systems` menu AND the seed of the A6
+# action space: a retrieval-selection policy (contextual bandit) chooses among exactly these per
+# query. Promotion (the eval winner) only changes the *default* in settings — every config here
+# stays reachable, so the A6 action set is preserved regardless of the eval outcome.
+LATTICE_SYSTEMS: tuple[str, ...] = ("dense", "reranked", "hybrid", "hybrid+rerank")
+_LATTICE: dict[str, tuple[str, bool]] = {
+    "dense": ("dense", False),
+    "reranked": ("dense", True),
+    "hybrid": ("hybrid", False),
+    "hybrid+rerank": ("hybrid", True),
+}
+
+
+def build_named_system(
+    name: str,
+    settings: Settings,
+    *,
+    store: VectorStore | None = None,
+    sparse_store: SparseStore | None = None,
+    rerank_provider: str = "local",
+) -> RetrievalSystem:
+    """Build a named lattice config (``dense`` / ``reranked`` / ``hybrid`` / ``hybrid+rerank``).
+
+    A thin recipe over ``build_retrieval_system``: it overrides ``retrieval_mode`` and
+    ``rerank_provider`` per the named config, holding the embedder + chunking fixed, so the systems
+    differ only in the retrieval *stages* being compared. ``rerank_provider`` selects which reranker
+    the rerank-bearing configs use (``local`` onnx default, or ``voyage``). The same function is the
+    intended A6 action-executor.
+    """
+    if name not in _LATTICE:
+        raise ValueError(f"unknown retrieval system '{name}'; choose from {LATTICE_SYSTEMS}")
+    mode, needs_rerank = _LATTICE[name]
+    cfg = settings.model_copy(
+        update={
+            "retrieval_mode": mode,
+            "rerank_provider": rerank_provider if needs_rerank else "none",
+        }
+    )
+    return build_retrieval_system(cfg, store=store, sparse_store=sparse_store)

@@ -984,5 +984,35 @@ counting embedder proving **0 embed calls**.
 
 **How A4+ uses it.** The production retrieval base is now `rerank(hybrid(dense, sparse))` purely by
 config — A4 agentic retrieval calls `build_retrieval_system` per sub-query and inherits whatever stack
-is enabled. **Deferred (now unblocked):** the `--systems dense,hybrid,reranked` eval CLI and the
-full-lattice `make rag-eval` run that decides which stages to promote ON by default.
+is enabled.
+
+## Eval lattice (`rag eval --systems …`) — A1/A3 follow-up + A6 groundwork
+
+**Role.** Measure the *deployable* retrieval configs on the A1 benchmark so a promotion (which stage
+to default ON) is decided on numbers, not vibes. **Not** a dense-vs-sparse-vs-hybrid bake-off: sparse
+(BM25) is only the lexical half of hybrid, never a standalone read path, so the systems compared are
+the four configs you could actually ship.
+
+**Key files / mechanism.**
+- `rag/read_path.py` — `LATTICE_SYSTEMS = ("dense","reranked","hybrid","hybrid+rerank")` + `_LATTICE`
+  (name → `(retrieval_mode, needs_rerank)`) + **`build_named_system(name, settings, *, store,
+  sparse_store, rerank_provider)`**: a thin recipe over `build_retrieval_system` that overrides
+  `retrieval_mode`/`rerank_provider` per the named config, holding the embedder + chunking fixed. This
+  registry is deliberately the **seed of the A6 action space** — a retrieval-selection policy chooses
+  among exactly these per query; promotion changes only the *default*, every config stays reachable.
+- `rag/hybrid.py` — `SparseRetriever(sparse)`: BM25-only as a `RetrievalSystem`, **diagnostic/eval
+  only** (not wired into `build_retrieval_system`), for the optional `--diagnostic` baseline column.
+- `cli/app.py` — `rag eval` gains `--systems` (lattice mode, overrides the embedder-A/B `--compare`),
+  `--rerank local|voyage` (reranker for the rerank-bearing configs), `--diagnostic` (add sparse-only),
+  reusing `--report`/`--top-k`. `_eval_lattice` embeds + BM25-indexes the corpus **once** (in-memory),
+  builds each named system, and scores it with `evaluate_system` — so the systems differ only in the
+  retrieval *stage* (embedder held constant).
+
+**Tested (offline):** `build_named_system` composition types for all four (+ unknown → `ValueError`);
+**every** lattice config scored through `evaluate_system` with a `FakeReranker` injected via
+`build_reranker` (no onnx download); `SparseRetriever` protocol conformance + BM25 ranking + empty.
+
+**Caveat for the run.** The A1 benchmark uses answer-span labels (semantic-leaning), which may
+*understate* hybrid's exact-term edge — if hybrid looks flat, add exact-term queries
+(tickers/section-names/figures) before concluding, don't dismiss it. **Deferred:** the actual local
+`make rag-eval --systems …` run + the promotion decision (which stage to default ON).

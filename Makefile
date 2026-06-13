@@ -39,10 +39,11 @@ verify-models:  ## structural sanity-check of the trained artifacts (CI promote 
 refresh-filings:  ## RAG quarterly refresh: pull new SEC filings + incrementally embed them (local)
 	PYTHONPATH=src python -m stock_agent documents refresh --all --months 6
 
-rag-eval:  ## advanced-RAG A1: local retrieval-eval benchmark on the real corpus (NOT in `make check`)
+rag-eval:  ## advanced-RAG: local retrieval lattice (dense/reranked/hybrid/hybrid+rerank) — NOT in `make check`
 	PYTHONPATH=src python -m stock_agent rag eval \
-	  --queries configs/rag_eval_queries.json --compare local \
-	  --report outputs/rag_eval/local.json
+	  --queries configs/rag_eval_queries.json \
+	  --systems dense,reranked,hybrid,hybrid+rerank --diagnostic \
+	  --report outputs/rag_eval/lattice.json
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage
