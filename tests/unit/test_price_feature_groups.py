@@ -82,15 +82,15 @@ def test_unknown_group_raises() -> None:
 
 
 def _insider_frame(series: PriceSeries, n_filings: int = 8) -> pd.DataFrame:
-    # Sparse Form 4 activity on in-range trading dates; net-buy-heavy (6 buys, 2 sells)
-    # so the net value and the buy/sell imbalance are both nonzero (a real signal).
+    # Sparse Form 4 activity on in-range trading dates; buy-heavy (6 buys, 2 sells)
+    # with one senior buy, so all three re-engineered columns are nonzero.
     dates = [pd.Timestamp(b.date) for b in series.bars[40:40 + n_filings]]
     is_buy = [i < 6 for i in range(n_filings)]
     return pd.DataFrame(
         {
-            "net_value": [1e6 if b else -1e6 for b in is_buy],
-            "n_buys": [1 if b else 0 for b in is_buy],
-            "n_sells": [0 if b else 1 for b in is_buy],
+            "buy_conviction": [0.05 if b else 0.0 for b in is_buy],
+            "senior_buy_n": [1.0 if i == 0 else 0.0 for i in range(n_filings)],
+            "sell_pressure": [0.0 if b else 0.10 for b in is_buy],
         },
         index=pd.DatetimeIndex(dates),
     )
@@ -113,12 +113,13 @@ def test_group_adds_exactly_its_columns(group: str) -> None:
 
 def test_insider_is_nan_without_frame() -> None:
     df = build_price_feature_matrix(_series(), feature_groups=["insider"])  # no insider=
-    assert df["insider_net_63d"].isna().all()
-    assert df["insider_imb_63d"].isna().all()
+    for col in FEATURE_GROUPS["insider"]:
+        assert df[col].isna().all()
 
 
-def test_insider_net_ratio_is_scale_free_in_dollar_volume() -> None:
-    # Net insider $ normalized by dollar volume → invariant to a uniform 10x price level.
+def test_insider_features_populate_and_are_price_level_invariant() -> None:
+    # The re-engineered insider features are Δ-ownership / role based — purely from the
+    # Form 4 frame — so they're invariant to the stock's price level by construction.
     base = _series(seed=11)
     scaled = PriceSeries(
         ticker="TST",
@@ -129,18 +130,15 @@ def test_insider_net_ratio_is_scale_free_in_dollar_volume() -> None:
         ],
     )
     ins = _insider_frame(base)  # filings on bars[40:48]
-    # Scale the insider $ by the same 10x (same shares, 10x price) to mirror the level.
-    ins_scaled = ins.copy()
-    ins_scaled["net_value"] = ins_scaled["net_value"] * 10
     # Evaluate at row 70: the trailing 63-day window still contains the filings.
     a = build_price_feature_matrix(base, feature_groups=["insider"], insider=ins).iloc[70]
-    b = build_price_feature_matrix(
-        scaled, feature_groups=["insider"], insider=ins_scaled
-    ).iloc[70]
-    assert a["insider_net_63d"] == pytest.approx(b["insider_net_63d"], rel=1e-9)
-    assert abs(a["insider_net_63d"]) > 0  # filings are in-window → a real (nonzero) signal
-    # Imbalance is a pure count ratio → identical regardless of level.
-    assert a["insider_imb_63d"] == pytest.approx(b["insider_imb_63d"], rel=1e-9)
+    b = build_price_feature_matrix(scaled, feature_groups=["insider"], insider=ins).iloc[70]
+    # Trailing sums of the in-window filings: 6 buys × 0.05, 1 senior buy, 2 sells × 0.10.
+    assert a["insider_buy_conviction_63d"] == pytest.approx(6 * 0.05)
+    assert a["insider_senior_buy_63d"] == pytest.approx(1.0)
+    assert a["insider_sell_pressure_63d"] == pytest.approx(2 * 0.10)
+    for col in FEATURE_GROUPS["insider"]:  # identical at 10x price level
+        assert a[col] == pytest.approx(b[col], rel=1e-9)
 
 
 def test_relstr_is_nan_without_market() -> None:

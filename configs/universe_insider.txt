@@ -1,0 +1,62 @@
+# Mid-cap-focused universe for the INSIDER feature ablation (Phase 1.6 re-engineering).
+# The insider-buy anomaly is strongest in small/mid-caps where insiders have a real
+# informational edge — unlike the mega-cap production universe, where insider activity
+# is dominated by routine scheduled SELLS. Weighted toward insider-buy-prone segments:
+# regional banks, energy E&P, and mid-cap industrials/consumer/healthcare/tech.
+
+# Regional / mid-cap banks (executives frequently buy their own stock, esp. on dips)
+RF
+KEY
+CFG
+HBAN
+FITB
+ZION
+CMA
+WAL
+EWBC
+SNV
+WBS
+OZK
+FHN
+VLY
+CADE
+
+# Energy E&P (open-market insider buying common)
+AR
+RRC
+SM
+MUR
+CNX
+MTDR
+
+# Mid-cap industrials
+OSK
+AGCO
+GGG
+WWD
+NDSN
+CR
+FLS
+
+# Mid-cap consumer
+CROX
+WING
+TXRH
+BJ
+FIVE
+
+# Mid-cap healthcare
+EXEL
+HALO
+CRL
+MEDP
+LNTH
+
+# Mid-cap tech / semis
+LSCC
+MKSI
+ONTO
+FORM
+COHR
+NTNX
+PSTG

@@ -125,9 +125,9 @@ def _insider_by_ticker(universe: list[PriceSeries]) -> dict[str, pd.DataFrame]:
         dates = [pd.Timestamp(b.date) for b in s.bars[30:42]]  # 12 filings in-range
         out[s.ticker.upper()] = pd.DataFrame(
             {
-                "net_value": [1e6 if i < 8 else -1e6 for i in range(len(dates))],
-                "n_buys": [1 if i < 8 else 0 for i in range(len(dates))],
-                "n_sells": [0 if i < 8 else 1 for i in range(len(dates))],
+                "buy_conviction": [0.05 if i < 8 else 0.0 for i in range(len(dates))],
+                "senior_buy_n": [1.0 if i == 0 else 0.0 for i in range(len(dates))],
+                "sell_pressure": [0.0 if i < 8 else 0.10 for i in range(len(dates))],
             },
             index=pd.DatetimeIndex(dates),
         )
@@ -143,7 +143,8 @@ def test_train_infer_roundtrip_insider_no_registry_is_safe() -> None:
         universe, horizon_days=20, model_type="logistic", min_total_rows=100,
         calibrate=False, feature_groups=["insider"], insider_by_ticker=_insider_by_ticker(universe),
     )
-    assert "insider_net_63d" in model.feature_cols and "insider_imb_63d" in model.feature_cols
+    assert "insider_buy_conviction_63d" in model.feature_cols
+    assert "insider_sell_pressure_63d" in model.feature_cols
     fc = MLForecaster("logistic", model=model).forecast(  # no registry → no insider fetch
         _noisy_series("NVDA", seed=7), horizon_days=20
     )

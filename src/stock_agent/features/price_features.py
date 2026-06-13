@@ -74,7 +74,13 @@ PRICE_FEATURE_COLS: list[str] = [
 FEATURE_GROUPS: dict[str, list[str]] = {
     "high52w": ["pct_from_52w_high"],  # ablation-rejected; retained as opt-in
     "relstr": ["rel_strength_20d", "rel_strength_60d"],  # rejected; requires market= (SPY)
-    "insider": ["insider_net_63d", "insider_imb_63d"],  # unevaluated; requires insider= (Form 4)
+    # Re-engineered insider signal (requires insider= Form 4 frame): separates the
+    # informative BUY channel from sells, weights by Δ-ownership conviction + senior role.
+    "insider": [
+        "insider_buy_conviction_63d",
+        "insider_senior_buy_63d",
+        "insider_sell_pressure_63d",
+    ],
 }
 
 # Trailing window (trading days) for insider aggregation: insider signals are slow,
@@ -223,9 +229,11 @@ def build_price_feature_matrix(
             df["rel_strength_20d"] = float("nan")
             df["rel_strength_60d"] = float("nan")
     if "insider" in requested:
-        # Insider (Form 4) net open-market activity, made scale-free and point-in-time:
-        #   insider_net_63d = trailing-63d net signed insider $ / trailing-63d dollar volume
-        #   insider_imb_63d = (buys − sells) / (buys + sells) over the trailing window
+        # Re-engineered insider (Form 4) signal — separate buy/sell channels, weighted
+        # by Δ-ownership conviction + senior role, 10b5-1 filtered (see data/insider.py):
+        #   insider_buy_conviction_63d = trailing-63d Σ opportunistic-buy Δ-ownership
+        #   insider_senior_buy_63d     = trailing-63d count of CEO/CFO opportunistic buys
+        #   insider_sell_pressure_63d  = trailing-63d Σ opportunistic-sell |Δ-ownership|
         # Activity is keyed by filing_date (public date) and reindexed to price dates
         # (0 = no filing), so the trailing rolling sums only ever see past filings.
         if insider is not None and not insider.empty:
@@ -234,17 +242,13 @@ def build_price_feature_matrix(
             def _roll(s: pd.Series) -> pd.Series:
                 return s.rolling(_INSIDER_WINDOW, min_periods=_INSIDER_MIN_PERIODS).sum()
 
-            net = _roll(aligned["net_value"])
-            dollar_vol = _roll(close * frame["volume"])
-            df["insider_net_63d"] = net / dollar_vol
-            buys = _roll(aligned["n_buys"])
-            sells = _roll(aligned["n_sells"])
-            total = buys + sells
-            # Imbalance is NaN when no filings in the window (0/0) — a true "no signal".
-            df["insider_imb_63d"] = (buys - sells) / total.where(total > 0)
+            df["insider_buy_conviction_63d"] = _roll(aligned["buy_conviction"])
+            df["insider_senior_buy_63d"] = _roll(aligned["senior_buy_n"])
+            df["insider_sell_pressure_63d"] = _roll(aligned["sell_pressure"])
         else:
-            df["insider_net_63d"] = float("nan")
-            df["insider_imb_63d"] = float("nan")
+            df["insider_buy_conviction_63d"] = float("nan")
+            df["insider_senior_buy_63d"] = float("nan")
+            df["insider_sell_pressure_63d"] = float("nan")
 
     return df[cols]
 

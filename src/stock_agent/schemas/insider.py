@@ -81,6 +81,14 @@ class InsiderTransaction(BaseModel):
     price_per_share: float | None
     is_derivative: bool
     owner_name: str | None = None
+    # --- Enrichment for sharper feature engineering (Phase 1.6 re-engineering) ---
+    owner_cik: str | None = None  # reporting-owner CIK → distinct-insider (cluster) counts
+    is_officer: bool = False
+    is_director: bool = False
+    is_ten_pct_owner: bool = False
+    officer_title: str | None = None  # e.g. "CFO", "Chief Executive Officer"
+    shares_owned_after: float | None = None  # post-transaction holdings → conviction (Δ-ownership)
+    is_planned_10b5_1: bool = False  # Rule 10b5-1 scheduled trade (non-discretionary → filter out)
 
     @property
     def signed_value(self) -> float:
@@ -94,3 +102,40 @@ class InsiderTransaction(BaseModel):
             return 0.0
         sign = 1.0 if self.acquired_disposed == "A" else -1.0
         return sign * self.shares * self.price_per_share
+
+    @property
+    def prior_holdings(self) -> float | None:
+        """Shares held immediately BEFORE this trade (post ∓ traded), or None if unknown."""
+        if self.shares_owned_after is None:
+            return None
+        delta = self.shares if self.acquired_disposed == "A" else -self.shares
+        return self.shares_owned_after - delta
+
+    @property
+    def ownership_change_fraction(self) -> float | None:
+        """Fractional change in the insider's own position from this trade (conviction).
+
+        ``± shares / prior_holdings`` (sign from acquired/disposed). This is the
+        scale-free "how much did the insider move their *own* stake" measure that
+        the dollar-value features miss. None when prior holdings are unknown or
+        non-positive (e.g. a brand-new position: prior = 0 → ratio undefined).
+        """
+        prior = self.prior_holdings
+        if prior is None or prior <= 0:
+            return None
+        sign = 1.0 if self.acquired_disposed == "A" else -1.0
+        return sign * self.shares / prior
+
+    @property
+    def is_senior(self) -> bool:
+        """CEO/CFO (or equivalent) by officer title — the most predictive insiders.
+
+        Matches the two roles the insider-trading literature finds most informative;
+        kept deliberately narrow (not every VP/"officer").
+        """
+        if not self.officer_title:
+            return False
+        t = self.officer_title.lower()
+        return any(
+            k in t for k in ("chief executive", "ceo", "chief financial", "cfo")
+        )

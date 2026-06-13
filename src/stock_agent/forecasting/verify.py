@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from stock_agent.features.price_features import PRICE_FEATURE_COLS
 from stock_agent.forecasting.buckets import thresholds_for_horizon
 from stock_agent.forecasting.conformal_calibrate import CONFORMAL_FILE, ConformalArtifact
 from stock_agent.forecasting.pooled import PooledModel, default_model_path
@@ -43,7 +42,6 @@ def verify_artifacts(
     disable the gate (used by structural-only unit tests).
     """
     problems: list[str] = []
-    dummy = pd.DataFrame([{c: 0.0 for c in PRICE_FEATURE_COLS}])
     for model in models:
         for horizon in horizons:
             tag = f"{model} h{horizon}"
@@ -74,6 +72,9 @@ def verify_artifacts(
                     f"{tag}: trained on {m.n_train_rows:,} rows (need >= {min_rows:,}) "
                     "— degraded data month?"
                 )
+            # Probe with the artifact's OWN feature columns (may extend the baseline
+            # with opt-in groups, e.g. `insider`), so the shape matches predict_exceedance.
+            dummy = pd.DataFrame([{c: 0.0 for c in m.feature_cols}])
             try:
                 probs = m.predict_exceedance(dummy)
             except Exception as exc:  # noqa: BLE001

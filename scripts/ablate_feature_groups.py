@@ -47,13 +47,17 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--min-train", type=int, default=252)
     p.add_argument("--test-size", type=int, default=6)
+    p.add_argument(
+        "--universe", type=Path, default=Path("configs/universe.txt"),
+        help="universe file the pooled model trains on (per-fold)",
+    )
     p.add_argument("--out", type=Path, default=None, help="JSON output path (default: outputs/)")
     return p.parse_args()
 
 
 def _run_label(
     tickers: list[str], horizon: int, model: str, groups: list[str] | None,
-    *, min_train: int, test_size: int, settings: object,
+    *, min_train: int, test_size: int, settings: object, universe: Path,
 ) -> list[BacktestResult]:
     """Backtest the ML model on each ticker for one feature-group selection."""
     results: list[BacktestResult] = []
@@ -61,7 +65,7 @@ def _run_label(
         out = run_backtest_pipeline(
             ticker, horizon, model_names=[model], settings=settings,  # type: ignore[arg-type]
             min_train=min_train, test_size=test_size, log_experiment=False,
-            feature_groups=groups,
+            feature_groups=groups, universe_path=universe,
         )
         results.append(out[model])
     return results
@@ -72,16 +76,18 @@ def main() -> None:
     settings = get_settings()
     by_label: dict[str, list[BacktestResult]] = {}
 
-    log.info("ablation.baseline", tickers=args.tickers)
+    log.info("ablation.baseline", tickers=args.tickers, universe=str(args.universe))
     by_label["baseline"] = _run_label(
         args.tickers, args.horizon, args.model, None,
         min_train=args.min_train, test_size=args.test_size, settings=settings,
+        universe=args.universe,
     )
     for group in args.groups:
         log.info("ablation.group", group=group)
         by_label[group] = _run_label(
             args.tickers, args.horizon, args.model, [group],
             min_train=args.min_train, test_size=args.test_size, settings=settings,
+            universe=args.universe,
         )
 
     rows = ablation_table(by_label)

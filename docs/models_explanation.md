@@ -597,6 +597,16 @@ calibration (`high52w` nearness-to-52w-high, `relstr` market-relative strength)
 were rejected and remain opt-in only. All six are OHLCV-derived, so they add no
 new data dependency. Full tables → [validations_results.md](validations_results.md).
 
+**Plus a config-gated 25–27 (insider, segment-specific):** production artifacts also
+carry three **insider** (SEC Form 4) features — `insider_buy_conviction_63d`,
+`insider_senior_buy_63d`, `insider_sell_pressure_63d` — enabled for production training
+via `settings.model_feature_groups`. Unlike 1–24 they are **not** in the always-on
+baseline, because they lift Brier/calibration only on **mid/small-caps** (nil on
+mega-caps; validated). The universe was broadened into that segment to realize the
+lift. They need `SEC_USER_AGENT` (train + inference); absent it they are NaN. Inference
+auto-includes them whenever the loaded artifact's `feature_cols` contain them. Details:
+§3.2 of [validations_results.md](validations_results.md) (insider entry).
+
 Missing values (e.g. `ma50_to_ma200` before 200 bars exist, or `vol_ratio` going
 inf on a degenerate window → replaced by NaN) are handled per model type
 (Section 3.4).

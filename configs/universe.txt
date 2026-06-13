@@ -140,3 +140,54 @@ VGT
 SOXX
 SMH
 IWM
+
+# --- Mid/small-cap segment (added 2026-06-13) ---
+# Broadens the pooled universe into the segment where the INSIDER (Form 4) feature
+# carries signal — regional banks, energy E&P, and mid-cap industrials/consumer/
+# healthcare/tech are insider-buy-prone (validated: insider lifts Brier/calibration
+# here; nil on mega-caps). Enables the config-gated `insider` feature group.
+RF
+KEY
+CFG
+HBAN
+FITB
+ZION
+CMA
+WAL
+EWBC
+SNV
+WBS
+OZK
+FHN
+VLY
+CADE
+AR
+RRC
+SM
+MUR
+CNX
+MTDR
+OSK
+AGCO
+GGG
+WWD
+NDSN
+CR
+FLS
+CROX
+WING
+TXRH
+BJ
+FIVE
+EXEL
+HALO
+CRL
+MEDP
+LNTH
+LSCC
+MKSI
+ONTO
+FORM
+COHR
+NTNX
+PSTG

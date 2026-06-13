@@ -1,4 +1,9 @@
-"""Insider activity aggregation + fetch orchestration (offline, fake provider)."""
+"""Re-engineered insider aggregation + fetch orchestration (offline, fake provider).
+
+The signal separates the informative BUY channel from sells, weights buys by
+Δ-ownership conviction + senior (CEO/CFO) role, and excludes Rule 10b5-1
+(pre-scheduled, non-discretionary) trades.
+"""
 
 from __future__ import annotations
 
@@ -18,35 +23,53 @@ from stock_agent.schemas.insider import InsiderFilingRef, InsiderTransaction
 _FIXTURE = Path(__file__).parent.parent / "fixtures" / "form4_sample.xml"
 
 
-def _txn(code: str, ad: str, shares: float, price: float | None, fdate: date) -> InsiderTransaction:
+def _txn(
+    code: str, ad: str, shares: float, fdate: date, *,
+    owned_after: float | None = None, senior: bool = False, planned: bool = False,
+) -> InsiderTransaction:
     return InsiderTransaction(
         ticker="NVDA", filing_date=fdate, transaction_date=fdate, code=code,
-        acquired_disposed=ad, shares=shares, price_per_share=price, is_derivative=False,
+        acquired_disposed=ad, shares=shares, price_per_share=100.0, is_derivative=False,
+        shares_owned_after=owned_after, officer_title="CEO" if senior else None,
+        is_officer=senior, is_planned_10b5_1=planned,
     )
 
 
-def test_aggregate_keeps_only_open_market_and_sums_signed() -> None:
+def test_buy_and_sell_channels_are_separate_never_netted() -> None:
+    # A buy and a sell on the same day must NOT cancel — they land in different columns.
     txns = [
-        _txn("P", "A", 1000, 100.0, date(2024, 5, 9)),   # +100k buy
-        _txn("S", "D", 400, 110.0, date(2024, 5, 9)),    # −44k sell (same day)
-        _txn("A", "A", 5000, 0.0, date(2024, 5, 9)),     # grant → excluded
-        _txn("M", "A", 2000, 50.0, date(2024, 5, 9)),    # option exercise → excluded
-        _txn("P", "A", 200, 90.0, date(2024, 6, 1)),     # +18k buy, later day
+        _txn("P", "A", 1000, date(2024, 5, 9), owned_after=11000),  # prior 10000 → +0.10
+        _txn("S", "D", 2000, date(2024, 5, 9), owned_after=8000),   # prior 10000 → |−0.20|
     ]
     df = aggregate_transactions(txns)
     assert list(df.columns) == ACTIVITY_COLS
-    assert len(df) == 2  # two distinct filing dates
-    may9 = df.loc["2024-05-09"]
-    assert may9["net_value"] == pytest.approx(1000 * 100.0 - 400 * 110.0)
-    assert may9["n_buys"] == 1 and may9["n_sells"] == 1
-    jun1 = df.loc["2024-06-01"]
-    assert jun1["net_value"] == pytest.approx(200 * 90.0)
-    assert jun1["n_buys"] == 1 and jun1["n_sells"] == 0
+    row = df.loc["2024-05-09"]
+    assert row["buy_conviction"] == pytest.approx(0.10)   # not diluted by the sell
+    assert row["sell_pressure"] == pytest.approx(0.20)    # tracked independently
+    assert row["senior_buy_n"] == 0.0
 
 
-def test_aggregate_empty_when_no_open_market_trades() -> None:
-    df = aggregate_transactions([_txn("A", "A", 5000, 0.0, date(2024, 5, 9))])
-    assert df.empty and list(df.columns) == ACTIVITY_COLS
+def test_excludes_grants_exercises_and_10b5_1() -> None:
+    txns = [
+        _txn("A", "A", 5000, date(2024, 5, 9)),                       # grant → excluded
+        _txn("M", "A", 2000, date(2024, 5, 9)),                       # option exercise → excluded
+        _txn("S", "D", 400, date(2024, 5, 9), owned_after=9600, planned=True),  # 10b5-1 → excluded
+    ]
+    assert aggregate_transactions(txns).empty
+
+
+def test_senior_buy_counted_and_conviction_capped() -> None:
+    txns = [
+        # Senior (CEO) buy establishing position (no prior holdings) → conviction capped at 1.0.
+        _txn("P", "A", 500, date(2024, 6, 1), owned_after=None, senior=True),
+    ]
+    row = aggregate_transactions(txns).loc["2024-06-01"]
+    assert row["senior_buy_n"] == 1.0
+    assert row["buy_conviction"] == pytest.approx(1.0)  # unknown prior → max conviction, capped
+
+
+def test_aggregate_empty_when_no_discretionary_trades() -> None:
+    assert aggregate_transactions([_txn("A", "A", 5000, date(2024, 5, 9))]).empty
 
 
 class _FakeProvider:
@@ -78,10 +101,11 @@ def _ref(fdate: date, acc: str) -> InsiderFilingRef:
 def test_fetch_insider_activity_parses_fixture() -> None:
     provider = _FakeProvider([_ref(date(2024, 5, 10), "0001-24-1")], _FIXTURE.read_text())
     df = fetch_insider_activity(provider, "NVDA")  # type: ignore[arg-type]
-    # Fixture has one P (1000@120.50) and one S (400@121.00) open-market trade.
-    assert df.loc["2024-05-10", "net_value"] == pytest.approx(1000 * 120.50 - 400 * 121.00)
-    assert df.loc["2024-05-10", "n_buys"] == 1
-    assert df.loc["2024-05-10", "n_sells"] == 1
+    row = df.loc["2024-05-10"]
+    # Fixture: CFO buys 1000 (prior 25000 → +0.04); the sell is a 10b5-1 plan → excluded.
+    assert row["buy_conviction"] == pytest.approx(1000 / 25000)
+    assert row["senior_buy_n"] == 1.0          # CFO is senior
+    assert row["sell_pressure"] == pytest.approx(0.0)  # 10b5-1 sell filtered out
 
 
 def test_fetch_insider_activity_download_failure_is_graceful() -> None:
