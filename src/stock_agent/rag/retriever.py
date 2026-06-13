@@ -9,6 +9,7 @@ calls here; this stage just decides *which* chunks become the grounding.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Protocol, runtime_checkable
 
 from stock_agent.rag.embeddings import Embedder
 from stock_agent.rag.vector_store import VectorStore
@@ -17,6 +18,28 @@ from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChu
 # Fetch this many × top_k from the store before dedup, so removing duplicate text still
 # leaves enough unique chunks to fill top_k.
 _OVER_FETCH = 4
+
+
+@runtime_checkable
+class RetrievalSystem(Protocol):
+    """A named "query (+filter) -> ranked evidence" engine — the one retrieval contract.
+
+    Every retrieval variant in the advanced track satisfies this: the dense ``Retriever`` (A1),
+    the A2 ``RerankingRetriever``, the A3 hybrid retriever, the A5 graph retriever. Consumers
+    (``research/``, the agent tools, the eval harness) depend only on this Protocol, never a
+    concrete class — so adding a retrieval mode is a wiring change, not a signature change.
+    (Defined here, beside ``Retriever``, because it is the retrieval contract; re-exported from
+    ``rag.eval`` for back-compat with A1.)
+    """
+
+    @property
+    def name(self) -> str:
+        """Identifier used in eval reports to distinguish retrieval systems (read-only)."""
+        ...
+
+    def retrieve(self, query: str, *, top_k: int, where: ChunkFilter | None = None) -> EvidenceSet:
+        """Return up to ``top_k`` ranked chunks for ``query`` (optionally scoped by ``where``)."""
+        ...
 
 
 def _dedup_by_text(hits: Iterable[RetrievedChunk]) -> list[RetrievedChunk]:

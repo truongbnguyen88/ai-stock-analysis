@@ -148,6 +148,13 @@ class Settings(BaseSettings):
     rag_chunk_tokens: int = 900  # target chunk size (section-aware; never crosses a section)
     rag_chunk_overlap: float = 0.15  # fractional overlap between adjacent chunks
     rag_top_k: int = 8  # chunks retrieved per query (deduped before synthesis)
+    # Reranking (advanced-RAG A2). "none" (default) = dense retrieval only, byte-identical to A1;
+    # "local" = fastembed onnx cross-encoder (no torch, $0); "voyage" = Voyage rerank API (opt-in,
+    # reuses voyage_api_key). When on, retrieval over-fetches rerank_fetch_k candidates, the
+    # cross-encoder rescores them, and the top rag_top_k survive. rerank_model="" → default.
+    rerank_provider: Literal["none", "local", "voyage"] = "none"
+    rerank_fetch_k: int = 30  # candidates over-fetched before reranking (must be ≥ rag_top_k)
+    rerank_model: str = ""  # override the per-provider default cross-encoder; "" = default
     # Client-side hard ceiling on embedding tokens per ingest run (RAG_TODO 9a). Independent
     # of the provider dashboard — protects the one-time paid voyage ingest (9c) from surprise
     # over-spend. None = unlimited (the default; local fastembed is free, so no ceiling needed).

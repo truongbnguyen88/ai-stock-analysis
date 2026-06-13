@@ -25,16 +25,18 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Callable, Mapping, Sequence
-from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 from stock_agent.rag.embeddings import Embedder
-from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.retriever import RetrievalSystem, Retriever
 from stock_agent.rag.vector_store import InMemoryVectorStore, VectorStore
 from stock_agent.schemas.documents import DocumentChunk, DocumentType
 from stock_agent.schemas.research import GroundedAnswer
 from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet
+
+# ``RetrievalSystem`` is the retrieval contract; it lives next to ``Retriever`` (see retriever.py)
+# and is referenced in the ``evaluate_*`` signatures below.
 
 _WS = re.compile(r"\s+")
 
@@ -42,28 +44,6 @@ _WS = re.compile(r"\s+")
 def _normalize(text: str) -> str:
     """Lowercase + collapse whitespace so span matching ignores casing/line-wrap noise."""
     return _WS.sub(" ", text).strip().lower()
-
-
-@runtime_checkable
-class RetrievalSystem(Protocol):
-    """A named "query (+filter) -> ranked evidence" engine — the unit the harness scores.
-
-    Every retrieval variant in the advanced track satisfies this one contract: the existing dense
-    ``Retriever`` (A1), the A2 reranking wrapper, the A3 hybrid retriever, the A5 graph retriever.
-    Because the metric code depends only on this Protocol — never a concrete class — adding a
-    retrieval mode never touches eval, synthesis, memo, or the agent tools.
-    """
-
-    @property
-    def name(self) -> str:
-        """Identifier used in eval reports to distinguish retrieval systems (read-only)."""
-        ...
-
-    def retrieve(
-        self, query: str, *, top_k: int, where: ChunkFilter | None = None
-    ) -> EvidenceSet:
-        """Return up to ``top_k`` ranked chunks for ``query`` (optionally scoped by ``where``)."""
-        ...
 
 
 class LabeledQuery(BaseModel):
