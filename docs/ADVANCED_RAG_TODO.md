@@ -93,8 +93,8 @@ forecasting track's LSTM/news-feature negatives).
 > as back-compat wrappers); `Retriever.name`; `rag eval --report` + `make rag-eval`. Mechanism →
 > [rag_implementation_notes.md](rag_implementation_notes.md) §A1; math → [rag_concepts.md](rag_concepts.md) §11.
 > **Deferred (opt-in, by design):** LLM-judge **faithfulness** metric; **baseline.json regression
-> gate**; growing the benchmark to 60–100 Q. `--systems dense,hybrid,reranked` lands with A2/A3
-> (only the dense system exists today).
+> gate**; growing the benchmark to 60–100 Q. (`--systems` lattice CLI — **DONE** as an A1/A3
+> follow-up once A2/A3 existed; see the eval-lattice note in `rag_implementation_notes.md`.)
 
 **Learning objective.** Rigorous IR evaluation: Precision@k, Recall@k, MRR, **nDCG@k**, plus the
 RAG-specific **citation-accuracy** and **answer-faithfulness**; regression-gating retrieval changes.
@@ -204,8 +204,10 @@ Voyage rerank cost (small, opt-in).
 > `retrieval_mode="dense"|hybrid`, `hybrid_rrf_k=60`, `hybrid_dense_k`/`hybrid_sparse_k=30`,
 > `sparse_store_dir`. Default-OFF (`retrieval_mode="dense"`). Mechanism →
 > [rag_implementation_notes.md](rag_implementation_notes.md) §A3; math → [rag_concepts.md](rag_concepts.md) §13.
-> `make check` green (660 passed). **Deferred:** the `--systems dense,hybrid,reranked` eval CLI +
-> the full-lattice `make rag-eval` promotion run (now unblocked — A1/A2/A3 all exist).
+> `make check` green (660 passed). **Eval-lattice CLI: DONE** — `rag eval --systems
+> dense,reranked,hybrid,hybrid+rerank [--diagnostic]` + `build_named_system` (the A6 action-space
+> seed) landed as an A1/A3 follow-up (669 passed). **Deferred:** the actual local `make rag-eval`
+> lattice run + the promotion decision (which stage to default ON).
 
 **Learning objective.** Sparse/BM25 retrieval and **rank fusion**; why dense and sparse are
 complementary (semantics vs exact terms: tickers, section names, defined terms, dollar figures).

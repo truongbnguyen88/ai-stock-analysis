@@ -99,3 +99,30 @@ class HybridRetriever:
             if cid in by_id  # defensive: skip an id neither side can materialize
         ]
         return EvidenceSet(query=query, chunks=chunks)
+
+
+class SparseRetriever:
+    """BM25-only retrieval exposed as a ``RetrievalSystem`` — **diagnostic / eval use only**.
+
+    Not a production read path: lexical-only retrieval loses all semantic recall (paraphrase,
+    synonyms), which is exactly what the dense half exists for. This adapter lets the eval harness
+    score sparse-on-its-own as a *baseline* (the ``rag eval --diagnostic`` column), to confirm BM25
+    is contributing signal — it is deliberately **not** wired into ``build_retrieval_system``.
+    """
+
+    def __init__(self, sparse: SparseStore) -> None:
+        self._sparse = sparse
+
+    @property
+    def name(self) -> str:
+        return f"sparse({self._sparse.name})"
+
+    def retrieve(
+        self, query: str, *, top_k: int, where: ChunkFilter | None = None
+    ) -> EvidenceSet:
+        hits = self._sparse.search(query, top_k=top_k, where=where)
+        by_id = self._sparse.fetch([cid for cid, _ in hits])
+        chunks = [
+            RetrievedChunk(chunk=by_id[cid], score=score) for cid, score in hits if cid in by_id
+        ]
+        return EvidenceSet(query=query, chunks=chunks)
