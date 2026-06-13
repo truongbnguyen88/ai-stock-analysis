@@ -272,9 +272,9 @@ def test_get_retriever_builds_logs_and_memoizes(monkeypatch: pytest.MonkeyPatch)
 
     store = InMemoryVectorStore()
     # _get_retriever builds the store directly (for the count log) and delegates retriever
-    # construction to build_retrieval_system, which builds the embedder via rag.rerank.
+    # construction to build_retrieval_system, which builds the embedder via rag.read_path.
     monkeypatch.setattr(tools_mod, "build_vector_store", lambda s: store)
-    monkeypatch.setattr("stock_agent.rag.rerank.build_embedder", lambda s: _EMB)
+    monkeypatch.setattr("stock_agent.rag.read_path.build_embedder", lambda s: _EMB)
     ex = ToolExecutor(Settings(_env_file=None), llm=None)
 
     retriever = ex._get_retriever()

@@ -155,6 +155,14 @@ class Settings(BaseSettings):
     rerank_provider: Literal["none", "local", "voyage"] = "none"
     rerank_fetch_k: int = 30  # candidates over-fetched before reranking (must be ≥ rag_top_k)
     rerank_model: str = ""  # override the per-provider default cross-encoder; "" = default
+    # Hybrid search (advanced-RAG A3). "dense" (default) = vector-only, byte-identical to A1/A2;
+    # "hybrid" = fuse dense (semantic) + sparse BM25 (exact terms) by Reciprocal Rank Fusion. Each
+    # side over-fetches its own k; RRF then ranks by sum_i 1/(rrf_k + rank_i). The sparse index is
+    # SQLite FTS5 (stdlib, $0), maintained alongside the vector store at ingest.
+    retrieval_mode: Literal["dense", "hybrid"] = "dense"
+    hybrid_rrf_k: int = 60  # RRF damping constant (larger → flatter rank weighting; 60 is standard)
+    hybrid_dense_k: int = 30  # dense candidates over-fetched per query before fusion
+    hybrid_sparse_k: int = 30  # sparse (BM25) candidates over-fetched per query before fusion
     # Client-side hard ceiling on embedding tokens per ingest run (RAG_TODO 9a). Independent
     # of the provider dashboard — protects the one-time paid voyage ingest (9c) from surprise
     # over-spend. None = unlimited (the default; local fastembed is free, so no ceiling needed).
@@ -163,6 +171,7 @@ class Settings(BaseSettings):
     documents_dir: Path = Path("data/raw")  # downloaded filings
     processed_dir: Path = Path("data/processed")  # parsed text + chunks
     vector_store_dir: Path = Path("data/vectorstore")  # persistent Chroma store
+    sparse_store_dir: Path = Path("data/sparse")  # persistent SQLite FTS5 BM25 index (A3 hybrid)
 
     @property
     def earnings_priority(self) -> list[str]:

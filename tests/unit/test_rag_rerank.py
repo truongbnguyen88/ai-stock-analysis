@@ -13,12 +13,12 @@ from datetime import date
 import pytest
 
 from stock_agent.rag.embeddings import FakeEmbedder
+from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.rerank import (
     NoOpReranker,
     Reranker,
     RerankingRetriever,
     build_reranker,
-    build_retrieval_system,
 )
 from stock_agent.rag.retriever import RetrievalSystem, Retriever
 from stock_agent.rag.vector_store import InMemoryVectorStore

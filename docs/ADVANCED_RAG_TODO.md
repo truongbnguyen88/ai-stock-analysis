@@ -73,7 +73,7 @@ implementations of the same "query (+filter) → ranked chunks" contract, so `re
 |---|---|---|---|---|
 | **A1 ✅** | Retrieval Evaluation | The measuring stick; extends `rag/eval.py`; lowest risk | Foundation | **Low–Med** (~1.5d) |
 | **A2 ✅** | Reranking | Biggest quality win per effort; local-first, self-contained | Ship value | **Low–Med** (~1.5d) |
-| **A3** | Hybrid Search | Fixes a *different* failure mode (exact ticker/section/number terms) | Ship value | **Med** (~2d) |
+| **A3 ✅** | Hybrid Search | Fixes a *different* failure mode (exact ticker/section/number terms) | Ship value | **Med** (~2d) |
 | **A4** | Agentic RAG | Needs strong retrieval primitives first; bounded LLM cost | Ship value | **Med–High** (~2.5d) |
 | **A5** | GraphRAG | Heaviest infra; lower near-term ROI for SEC QA | Learning-first | **High** (~3–4d) |
 | **A6** | Retrieval + RL | Capstone; needs A1 metrics + usage logs to define a reward | Learning-first | **High** (~3–4d) |
@@ -193,6 +193,19 @@ Voyage rerank cost (small, opt-in).
 ---
 
 ## A3 — Hybrid Search (dense ⊕ sparse, RRF)
+
+> **Status: DONE (2026-06-13).** Shipped `rag/sparse_store.py` (`SparseStore` Protocol +
+> `Fts5SparseStore` [SQLite FTS5, stdlib, persistent] + `InMemoryBM25Store` [pure-Python Okapi
+> BM25] + `build_sparse_store`); `rag/hybrid.py` (`reciprocal_rank_fusion` pure fn +
+> `HybridRetriever`, a `RetrievalSystem`); `rag/read_path.py` — moved `build_retrieval_system` here
+> (composition root) and extended it to the full lattice `rerank(hybrid(dense, sparse))`; ingest
+> (`ingest_ticker`/`bulk_ingest` + `documents ingest`/`refresh`) now maintains the BM25 index in
+> lockstep ($0), backfilling on the next refresh for pre-A3 corpora. Config:
+> `retrieval_mode="dense"|hybrid`, `hybrid_rrf_k=60`, `hybrid_dense_k`/`hybrid_sparse_k=30`,
+> `sparse_store_dir`. Default-OFF (`retrieval_mode="dense"`). Mechanism →
+> [rag_implementation_notes.md](rag_implementation_notes.md) §A3; math → [rag_concepts.md](rag_concepts.md) §13.
+> `make check` green (660 passed). **Deferred:** the `--systems dense,hybrid,reranked` eval CLI +
+> the full-lattice `make rag-eval` promotion run (now unblocked — A1/A2/A3 all exist).
 
 **Learning objective.** Sparse/BM25 retrieval and **rank fusion**; why dense and sparse are
 complementary (semantics vs exact terms: tickers, section names, defined terms, dollar figures).

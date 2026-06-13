@@ -7,8 +7,9 @@ score is a coarse cosine. A **cross-encoder** instead feeds ``(query, chunk)`` t
 whole corpus. The standard fix is two-stage: cheap bi-encoder retrieves a wide candidate set
 (``fetch_k`` ≈ 30), the cross-encoder rescores just those and we keep the top ``top_k`` (5–8).
 
-Everything here is **default-OFF**: with ``rerank_provider="none"`` the factory returns the plain
-``Retriever`` and the pipeline is byte-identical to A1. Rerankers sit behind a ``Reranker`` Protocol
+Everything here is **default-OFF**: with ``rerank_provider="none"`` the read-path factory
+(``rag/read_path.py``) skips reranking and the pipeline is byte-identical to A1. Rerankers sit
+behind a ``Reranker`` Protocol
 (local ``fastembed`` onnx cross-encoder — **no torch**; Voyage ``rerank`` API; or a no-op), and
 ``RerankingRetriever`` wraps ANY ``RetrievalSystem`` (dense today, hybrid at A3) so the eval
 harness, ``research/``, and the agent tools never change. Reranking only **reorders** chunks — it
@@ -21,9 +22,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from stock_agent.rag.embeddings import build_embedder
-from stock_agent.rag.retriever import RetrievalSystem, Retriever
-from stock_agent.rag.vector_store import VectorStore, build_vector_store
+from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChunk
 from stock_agent.settings import Settings
 
@@ -173,18 +172,3 @@ class RerankingRetriever:
             return wide  # nothing to rerank → preserve the empty-retrieval refusal path
         reranked = self._reranker.rerank(query, list(wide.chunks))
         return EvidenceSet(query=query, chunks=reranked[:top_k])
-
-
-def build_retrieval_system(
-    settings: Settings, *, store: VectorStore | None = None
-) -> RetrievalSystem:
-    """Build the configured read-path retriever — the single gated factory the app wires in.
-
-    Returns the dense ``Retriever`` by default; wraps it in a ``RerankingRetriever`` only when
-    ``rerank_provider != "none"``. ``store`` is injectable (tests pass an in-memory store; prod lets
-    it default to ``build_vector_store``). All backends are lazy, so this stays cheap and offline.
-    """
-    base = Retriever(build_embedder(settings), store or build_vector_store(settings))
-    if settings.rerank_provider == "none":
-        return base
-    return RerankingRetriever(base, build_reranker(settings), fetch_k=settings.rerank_fetch_k)

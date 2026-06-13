@@ -22,7 +22,8 @@
 10. [How this repository instantiates RAG](#10-how-this-repository-instantiates-rag)
 11. [Evaluation in practice — the A-track metrics](#11-evaluation-in-practice--the-a-track-metrics)
 12. [Reranking — bi-encoders, cross-encoders, two-stage retrieval](#12-reranking--bi-encoders-cross-encoders-two-stage-retrieval)
-13. [References](#13-references)
+13. [Hybrid search — BM25 and Reciprocal Rank Fusion](#13-hybrid-search--bm25-and-reciprocal-rank-fusion)
+14. [References](#14-references)
 
 ---
 
@@ -975,7 +976,95 @@ win** over the dense baseline on the labeled set (`make rag-eval`). Default-OFF 
 
 ---
 
-## 13. References
+## 13. Hybrid search — BM25 and Reciprocal Rank Fusion
+
+§4.5 sketched sparse retrieval and hybrid search; this is the operational theory behind phase A3
+(`rag/sparse_store.py`, `rag/hybrid.py`). The premise: dense and sparse retrieval **fail
+differently**, so fusing them recovers each other's misses.
+
+### 13.1 Why a second, lexical retriever
+
+Dense (bi-encoder) retrieval scores by *meaning* (§12.1), which is exactly why it blurs **exact
+tokens**: a ticker (`AVGO`), a section name ("Item 7A"), a defined product ("Hopper"), a precise
+dollar figure. Embeddings map near-synonyms close together, so an exact, rare string isn't specially
+privileged — a chunk that merely *talks about* the topic can outscore the one that contains the
+literal term. A **lexical** retriever (BM25) has the opposite bias: it scores by term overlap, so it
+nails the exact string but is blind to paraphrase. Running both and merging is **hybrid search**.
+
+### 13.2 BM25 — the sparse scorer
+
+BM25 ("Best Match 25", Robertson & Zaragoza) scores a document $d$ for a query $q$ by summing, over
+the query terms, three intuitions: a term matters more if it's **rare** (IDF), if it appears **often**
+in $d$ (term frequency, but with diminishing returns), and **less** if $d$ is long (length
+normalization):
+
+$$
+s(q, d) \;=\; \sum_{t \in q} \mathrm{IDF}(t)\;\cdot\;\frac{f(t, d)\,(k_1 + 1)}{f(t, d) + k_1\big(1 - b + b\,\frac{\lvert d\rvert}{\mathrm{avgdl}}\big)},
+$$
+
+term by term, in plain English:
+- $f(t, d)$ — how many times term $t$ occurs in $d$. The numerator grows with it, but the same $f$
+  in the denominator makes it **saturate**: the 5th occurrence of a word adds far less than the 1st
+  (controlled by $k_1$, here $1.5$). Without this, one keyword-stuffed chunk would dominate.
+- $\lvert d\rvert / \mathrm{avgdl}$ — the document's length over the corpus average. $b$ (here $0.75$)
+  tunes how hard long documents are penalized; it stops a long chunk from scoring high just by
+  containing more words.
+- $\mathrm{IDF}(t) = \ln\!\big(\frac{N - n_t + 0.5}{n_t + 0.5} + 1\big)$ — inverse document
+  frequency: $N$ is the corpus size, $n_t$ the number of chunks containing $t$. A term in *every*
+  chunk ($n_t \approx N$) gets IDF $\approx 0$ (it discriminates nothing); a **rare** term gets a
+  large IDF. The $+1$ inside the log keeps IDF non-negative. This is why matching "Hopper" (rare)
+  counts for much more than matching "the" (everywhere).
+
+So BM25 ranks a chunk highly when it contains **rare query terms, several times, without being
+bloated** — exactly the exact-term sensitivity dense search lacks.
+
+### 13.3 Reciprocal Rank Fusion — combining the two rankings
+
+Now we have two ranked lists (dense by cosine, sparse by BM25) and must merge them. Their **scores
+are not comparable** — a cosine of $0.7$ and a BM25 of $11.3$ live on different scales — so averaging
+raw scores is meaningless and needs fragile normalization. **Reciprocal Rank Fusion** (Cormack et
+al.) sidesteps this by using only each item's **rank**:
+
+$$
+\mathrm{RRF}(d) \;=\; \sum_{L}\; \frac{1}{k + \mathrm{rank}_L(d)},
+$$
+
+where the sum is over the lists $L$ (dense, sparse), $\mathrm{rank}_L(d)$ is $d$'s 1-based position
+in list $L$ (a list that doesn't contain $d$ contributes $0$), and $k$ (here $60$) is a damping
+constant. In words: each list "votes" for a document with weight $1/(k+\text{rank})$ — rank 1 votes
+most, later ranks less, and the $k$ flattens the curve so the very top of one list can't single-
+handedly dominate. A document ranked decently by **both** retrievers accumulates two moderate votes
+and beats a document ranked highly by only one. Rank-based fusion means we never touch the raw
+cosine/BM25 magnitudes.
+
+**Worked example** (the values asserted in the tests): dense returns $[a, b, c]$, sparse returns
+$[b, d]$, $k = 60$:
+
+| doc | dense rank → vote | sparse rank → vote | RRF score |
+|---|---|---|---|
+| $b$ | 2 → $1/62$ | 1 → $1/61$ | $1/62 + 1/61 = 0.03252$ |
+| $a$ | 1 → $1/61$ | — | $0.01639$ |
+| $d$ | — | 2 → $1/62$ | $0.01613$ |
+| $c$ | 3 → $1/63$ | — | $0.01587$ |
+
+Fused order: $[\,b, a, d, c\,]$. Note $b$ wins despite being *first* in neither list — it's the only
+doc both retrievers liked. Ties (e.g. a dense-rank-1 and a sparse-rank-1 each scoring $1/61$) are
+broken by id for determinism.
+
+### 13.4 The hybrid pipeline + grounding
+
+`HybridRetriever` over-fetches `dense_k` from the embedder and `sparse_k` from the BM25 index (same
+`ChunkFilter` on both), fuses by RRF, and keeps `top_k`. Chunks the dense side never returned
+(sparse-only hits) are **materialized** from the sparse store, which holds the text + metadata. With
+no sparse hits (empty index, or a query whose terms match nothing) it returns the dense ranking
+unchanged — hybrid never does *worse* than dense on recall. Like reranking, fusion only reorders and
+selects chunks, so citations and number-grounding are untouched. And because `HybridRetriever` is a
+`RetrievalSystem`, the production read path composes to `rerank(hybrid(dense, sparse))` by config,
+and A1's harness scores it directly — we enable hybrid only on a measured `make rag-eval` win.
+
+---
+
+## 14. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -987,6 +1076,8 @@ win** over the dense baseline on the labeled set (`make rag-eval`). Default-OFF 
   and the exponential-gain formulation used in §11.2.
 - Nogueira & Cho (2019), *Passage Re-ranking with BERT* — the cross-encoder reranker and the
   retrieve-then-rerank two-stage pattern of §12.
+- Cormack, Clarke & Büttcher (2009), *Reciprocal Rank Fusion Outperforms Condorcet and Individual
+  Rank Learning Methods* — the RRF fusion of §13.3.
 - Malkov & Yashunin (2018), *Efficient and robust approximate nearest neighbor search using
   HNSW graphs*.
 - Carbonell & Goldstein (1998), *The Use of MMR for Reordering Documents*.

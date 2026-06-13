@@ -36,7 +36,8 @@ from stock_agent.rag.embeddings import (
 )
 from stock_agent.rag.eval import LabeledQuery, format_reports_markdown, run_ab
 from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, bulk_ingest
-from stock_agent.rag.rerank import build_retrieval_system
+from stock_agent.rag.read_path import build_retrieval_system
+from stock_agent.rag.sparse_store import build_sparse_store
 from stock_agent.rag.status import corpus_status
 from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
@@ -717,6 +718,9 @@ def ingest(
     configure_logging(settings)
     embedder = build_embedder(settings)
     store = build_vector_store(settings)
+    # Maintain the BM25 sparse index alongside the vector store ($0, stdlib FTS5) so A3 hybrid is
+    # ready without a separate backfill; harmless when retrieval_mode="dense".
+    sparse_store = build_sparse_store(settings)
     tickers = _ingest_tickers(ingest_all, ticker, universe)
     try:
         # bulk_ingest isolates + retries per-ticker failures so one transient network blip
@@ -729,6 +733,7 @@ def ingest(
             chunk_tokens=settings.rag_chunk_tokens,
             chunk_overlap=settings.rag_chunk_overlap,
             max_embed_tokens=settings.rag_max_embed_tokens,
+            sparse_store=sparse_store,
         )
     except EmbedBudgetExceeded as exc:
         # Spend ceiling hit (RAG_TODO 9a): abort loud — deliberate budget stop, not a transient
@@ -815,11 +820,13 @@ def refresh(
     if changed:
         embedder = build_embedder(settings)
         store = build_vector_store(settings)
+        sparse_store = build_sparse_store(settings)  # keep BM25 index in lockstep (A3)
         try:
             ing = bulk_ingest(
                 changed, documents_dir=settings.documents_dir, embedder=embedder, store=store,
                 chunk_tokens=settings.rag_chunk_tokens, chunk_overlap=settings.rag_chunk_overlap,
                 max_embed_tokens=settings.rag_max_embed_tokens, incremental=True,
+                sparse_store=sparse_store,
             )
         except EmbedBudgetExceeded as exc:
             typer.echo(f"Aborting: {exc}")
