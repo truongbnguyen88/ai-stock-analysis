@@ -932,12 +932,19 @@ def rag_eval(
     top_k: Annotated[
         int | None, typer.Option("--top-k", help="Chunks per query (default settings.rag_top_k)")
     ] = None,
+    report: Annotated[
+        Path | None,
+        typer.Option("--report", help="Also write the reports as JSON to this path"),
+    ] = None,
 ) -> None:
-    """A/B retrieval quality across embedders on a labeled query set (RAG_TODO 9b).
+    """A/B retrieval quality across embedders on a labeled query set (RAG_TODO 9b; A1 metrics).
 
-    The labeled-query file is a JSON list of ``{query, relevant_spans[], ticker?, top_k?}``
-    (see configs/rag_eval_queries.example.json). The corpus is the already-ingested filings
-    for the tickers referenced; chunking is held constant (compares embedders, not chunking).
+    The labeled-query file is a JSON list of
+    ``{query, relevant_spans[], ticker?, top_k?, expected_document_types?, expected_sections?}``
+    (see configs/rag_eval_queries.example.json). The corpus is the already-ingested filings for
+    the tickers referenced; chunking is held constant (compares embedders, not chunking). Reports
+    hit@k / MRR / nDCG@k / precision@k / recall@k; ``--report`` dumps them as JSON (for a local
+    baseline). Run via ``make rag-eval`` for the real local corpus (not CI — see eval.py).
     """
     settings = get_settings()
     configure_logging(settings)
@@ -960,3 +967,9 @@ def rag_eval(
     embedders = {n: _named_embedder(n, settings) for n in names}
     reports = run_ab(corpus, labeled, embedders, top_k=top_k or settings.rag_top_k)
     typer.echo(format_reports_markdown(reports))
+    if report is not None:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            json.dumps([r.model_dump(mode="json") for r in reports], indent=2), encoding="utf-8"
+        )
+        typer.echo(f"Wrote {len(reports)} report(s) to {report}")
