@@ -108,6 +108,13 @@ class Settings(BaseSettings):
     # Apply the offline pooled conformal interval-correction (outputs/models/conformal.json)
     # to served CIs/VaR so the stated coverage is honest. No-op if the artifact is absent.
     conformal_intervals: bool = True
+    # Candidate feature groups folded into PRODUCTION training on top of the baseline
+    # (CSV; see features/price_features.FEATURE_GROUPS). The artifact records its
+    # feature_cols, so inference auto-rebuilds the matching groups — no inference flag.
+    # `insider` (Form 4) is enabled because it lifts Brier/calibration on mid/small-caps
+    # (validated; nil on mega-caps) and the universe now spans that segment. It requires
+    # SEC_USER_AGENT at train time (CI secret); absent it, insider columns train as NaN.
+    model_feature_groups: str = "insider"
 
     # ---- Promote gate (scheduled-retrain data-quality guard) ----
     # The CI retrain publishes an artifact only if `verify-models` passes. Beyond the
@@ -169,6 +176,11 @@ class Settings(BaseSettings):
     def topic_priority(self) -> list[str]:
         """Ordered topic-news provider fallback chain (highest priority first)."""
         return _split_csv(self.provider_topic_priority)
+
+    @property
+    def feature_groups(self) -> list[str]:
+        """Candidate feature groups to include in production training (empty = baseline)."""
+        return _split_csv(self.model_feature_groups)
 
     def require(self, attr: str, *, capability: str) -> str:
         """Return a required secret/value or raise a clear, actionable error.

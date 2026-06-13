@@ -20,7 +20,13 @@ concurrency:
 jobs:
   retrain:
     runs-on: ubuntu-latest
-    timeout-minutes: 300 # cv=3 lightgbm over the universe is slow on 2-core runners
+    timeout-minutes: 360 # cv=3 lightgbm + a one-time Form 4 warm over the universe
+    env:
+      # The `insider` feature group (config: model_feature_groups) needs EDGAR access.
+      # Set this repo secret to a descriptive UA per SEC fair-access (e.g.
+      # "your-app you@example.com"). Absent it, insider columns train as NaN (degraded,
+      # not broken) — set it so the published models actually carry the insider signal.
+      SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +51,18 @@ jobs:
           cache: pip
 
       - name: Install package
-        run: pip install -e . # training needs no API keys (yfinance is keyless)
+        run: pip install -e . # prices are keyless (yfinance); insider needs SEC_USER_AGENT (above)
+
+      - name: Warm insider (Form 4) cache
+        # Pre-download the universe's Form 4 XML once via the pooled-client + retry warmer
+        # (avoids EDGAR fair-access throttling); training then reads it from cache. Skips
+        # cleanly if SEC_USER_AGENT is unset (training proceeds with NaN insider columns).
+        run: |
+          if [ -n "$SEC_USER_AGENT" ]; then
+            python scripts/warm_insider_cache.py --universe configs/universe.txt
+          else
+            echo "SEC_USER_AGENT unset — skipping insider warm (insider features will be NaN)"
+          fi
 
       - name: Train calibrated toolkit
         run: python -m stock_agent train --all

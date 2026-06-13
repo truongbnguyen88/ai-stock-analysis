@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import date as Date
 from pathlib import Path
 
+import pandas as pd
 from pydantic import ValidationError
 
 from stock_agent.data.loader import PriceLoader
@@ -66,6 +67,27 @@ def fetch_universe_earnings(
     return out
 
 
+def _fetch_universe_insider(
+    tickers: list[str], settings: Settings, *, since: Date
+) -> dict[str, pd.DataFrame] | None:
+    """Bulk Form 4 insider frames for the universe via a pooled client + retry.
+
+    Returns None if SEC is unconfigured (no User-Agent) — training then proceeds with
+    NaN insider columns rather than failing. The pooled keep-alive client + per-request
+    retry are what make a universe-scale fetch survive EDGAR's fair-access throttling.
+    """
+    from stock_agent.data.insider import build_hardened_sec_provider, fetch_insider_by_ticker
+
+    provider = build_hardened_sec_provider(settings)
+    if provider is None:
+        log.warning("train.insider_unconfigured", reason="SEC_USER_AGENT not set")
+        return None
+    try:
+        return fetch_insider_by_ticker(provider, tickers, since=since, retries=5)
+    finally:
+        provider.close()
+
+
 def train_pooled(
     universe_path: Path,
     settings: Settings,
@@ -89,10 +111,24 @@ def train_pooled(
     earnings_by_ticker = fetch_universe_earnings([s.ticker for s in series_list], registry)
 
     # Market-wide VIX over the universe's date span (one fetch; shared by all tickers).
-    from stock_agent.data.market_context import fetch_vix
+    from stock_agent.data.market_context import fetch_market, fetch_vix
 
     span = [d for s in series_list for d in (s.dates[0], s.dates[-1])]
     vix = fetch_vix(registry, start=min(span), end=max(span))
+
+    # Production candidate feature groups (config-gated). `relstr` needs SPY; `insider`
+    # needs Form 4 (fetched once per ticker over the span via a POOLED client + retry to
+    # avoid EDGAR throttling at universe scale). The trained artifact records its
+    # feature_cols, so inference rebuilds the same groups automatically.
+    groups = settings.feature_groups
+    market = None
+    if "relstr" in groups:
+        m = fetch_market(registry, start=min(span), end=max(span))
+        market = m if not m.empty else None
+    insider_by_ticker = None
+    if "insider" in groups:
+        insider_by_ticker = _fetch_universe_insider([s.ticker for s in series_list], settings,
+                                                     since=min(span))
 
     model = train_pooled_from_series(
         series_list,
@@ -100,6 +136,9 @@ def train_pooled(
         model_type=model_type,
         earnings_by_ticker=earnings_by_ticker,
         vix=vix if not vix.empty else None,
+        market=market,
+        insider_by_ticker=insider_by_ticker,
+        feature_groups=groups or None,
         calibrate=settings.calibrate_ml,
     )
 

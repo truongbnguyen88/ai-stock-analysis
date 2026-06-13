@@ -13,19 +13,24 @@ feature layer — Form 4 XML is never re-downloaded inside the fold loop.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from datetime import date as Date
+from functools import partial
+from typing import TypeVar
 
 import pandas as pd
 
 from stock_agent.documents.form4 import parse_form4_xml
 from stock_agent.logging_config import get_logger
-from stock_agent.providers.base import ProviderError
+from stock_agent.providers.base import ProviderError, SymbolNotFound
 from stock_agent.providers.sec_edgar import SecEdgarProvider
 from stock_agent.schemas.insider import OPEN_MARKET_BUY, OPEN_MARKET_SELL, InsiderTransaction
 from stock_agent.settings import Settings
 
 log = get_logger(__name__)
+
+_T = TypeVar("_T")
 
 
 def build_sec_provider(settings: Settings) -> SecEdgarProvider | None:
@@ -33,11 +38,66 @@ def build_sec_provider(settings: Settings) -> SecEdgarProvider | None:
 
     SEC requires a descriptive User-Agent; without it we cannot make EDGAR calls, so
     callers should treat None as "insider data unavailable" (features become NaN).
+    Per-request client — fine for low-volume single-ticker inference fetches. For
+    BULK fetches (training / warm over a whole universe) use
+    ``build_hardened_sec_provider``, which pools connections to avoid throttling.
     """
     from stock_agent.providers._cache import DiskCache
 
     provider = SecEdgarProvider(settings, DiskCache(settings.cache_dir, settings.cache_ttl_seconds))
     return provider if provider.available() else None
+
+
+def build_hardened_sec_provider(
+    settings: Settings, *, rps: float = 5.0, timeout: float = 30.0
+) -> SecEdgarProvider | None:
+    """SEC provider for BULK Form 4 fetches: pooled keep-alive client + polite rate.
+
+    A fresh TLS handshake per request (the per-call-client default) trips EDGAR's
+    fair-access throttling at universe scale (thousands of downloads). A single
+    reused connection pool eliminates that. ``rps`` stays under SEC's 10 req/s
+    ceiling. Returns None if SEC is unconfigured. CALLER MUST ``close()`` it.
+    """
+    import httpx
+
+    from stock_agent.providers._cache import DiskCache
+    from stock_agent.providers._http import HttpJson
+    from stock_agent.providers.sec_edgar import _NAME
+
+    ua = settings.sec_user_agent
+    if not ua:
+        return None
+    headers = {"User-Agent": ua, "Accept-Encoding": "gzip, deflate"}
+    client = httpx.Client(
+        timeout=timeout,
+        headers=headers,
+        limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
+    )
+    http = HttpJson(_NAME, client=client, headers=headers)
+    cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
+    return SecEdgarProvider(settings, cache, http=http, min_request_interval=1.0 / rps)
+
+
+def with_retry(
+    fn: Callable[[], _T], *, what: str, retries: int, base_backoff: float = 1.0
+) -> _T:
+    """Call ``fn`` with exponential backoff on transient ProviderError; reraise if exhausted.
+
+    ``SymbolNotFound`` is not transient (e.g. an ETF with no CIK) and is reraised
+    immediately. Cached calls (a warm cache hit) never fail, so this is a no-op there.
+    """
+    for attempt in range(retries + 1):
+        try:
+            return fn()
+        except SymbolNotFound:
+            raise
+        except ProviderError as exc:
+            if attempt == retries:
+                raise
+            sleep = base_backoff * (2**attempt)
+            log.warning("insider.retry", what=what, attempt=attempt + 1, error=str(exc))
+            time.sleep(sleep)
+    raise RuntimeError("unreachable")
 
 # Columns of the daily activity frame (indexed by filing_date). The re-engineered
 # signal (Phase 1.6) separates the BUY channel from the SELL channel — never nets
@@ -106,15 +166,25 @@ def _empty_activity() -> pd.DataFrame:
 
 
 def fetch_insider_activity(
-    provider: SecEdgarProvider, ticker: str, *, since: Date | None = None, limit: int = 200
+    provider: SecEdgarProvider,
+    ticker: str,
+    *,
+    since: Date | None = None,
+    limit: int = 200,
+    retries: int = 0,
 ) -> pd.DataFrame:
     """Fetch + parse + aggregate one ticker's Form 4 history into a daily frame.
 
     Empty frame (never raises) on any provider/parse failure, so dependent features
-    simply become NaN/0 rather than breaking the pipeline.
+    simply become NaN/0 rather than breaking the pipeline. ``retries`` retries each
+    transient EDGAR call with backoff (use for bulk train/warm; default 0 = inference,
+    where a miss just degrades that one forecast).
     """
     try:
-        refs = provider.list_form4_filings(ticker, since=since, limit=limit)
+        refs = with_retry(
+            partial(provider.list_form4_filings, ticker, since=since, limit=limit),
+            what=f"list:{ticker}", retries=retries,
+        )
     except ProviderError as exc:
         log.warning("insider.list_failed", ticker=ticker, error=str(exc))
         return _empty_activity()
@@ -122,7 +192,10 @@ def fetch_insider_activity(
     transactions: list[InsiderTransaction] = []
     for ref in refs:
         try:
-            xml = provider.download_form4(ref)
+            xml = with_retry(
+                partial(provider.download_form4, ref), what=f"dl:{ref.filing_id}",
+                retries=retries,
+            )
         except ProviderError as exc:
             log.warning("insider.download_failed", filing=ref.filing_id, error=str(exc))
             continue
@@ -133,7 +206,14 @@ def fetch_insider_activity(
 
 
 def fetch_insider_by_ticker(
-    provider: SecEdgarProvider, tickers: Sequence[str], *, since: Date | None = None
+    provider: SecEdgarProvider,
+    tickers: Sequence[str],
+    *,
+    since: Date | None = None,
+    retries: int = 0,
 ) -> dict[str, pd.DataFrame]:
     """Per-ticker insider activity frames for a universe (empty frames where absent)."""
-    return {t.upper(): fetch_insider_activity(provider, t, since=since) for t in tickers}
+    return {
+        t.upper(): fetch_insider_activity(provider, t, since=since, retries=retries)
+        for t in tickers
+    }

@@ -24,16 +24,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import time
 from datetime import date, timedelta
+from functools import partial
 
-import httpx
-
+from stock_agent.data.insider import build_hardened_sec_provider, with_retry
 from stock_agent.logging_config import configure_logging, get_logger
-from stock_agent.providers._cache import DiskCache
-from stock_agent.providers._http import HttpJson
 from stock_agent.providers.base import ProviderError, SymbolNotFound
-from stock_agent.providers.sec_edgar import _NAME, SecEdgarProvider
 from stock_agent.schemas.insider import InsiderFilingRef
 from stock_agent.settings import get_settings
 
@@ -49,44 +45,11 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--universe", default="configs/universe.txt")
     p.add_argument("--lookback-days", type=int, default=_DEFAULT_LOOKBACK_DAYS)
-    p.add_argument("--limit", type=int, default=200, help="Form 4 filings/ticker (matches backtest)")
+    p.add_argument("--limit", type=int, default=200, help="Form 4 filings/ticker (per backtest)")
     p.add_argument("--rps", type=float, default=5.0, help="max requests/sec (SEC ceiling is 10)")
     p.add_argument("--retries", type=int, default=5, help="retries/request on transient failure")
     p.add_argument("--timeout", type=float, default=30.0, help="per-request HTTP timeout (s)")
     return p.parse_args()
-
-
-def _build_provider(rps: float, timeout: float) -> SecEdgarProvider:
-    """SEC provider backed by a POOLED keep-alive client (the per-request-client fix)."""
-    settings = get_settings()
-    ua = settings.require("sec_user_agent", capability="insider cache warm")
-    headers = {"User-Agent": ua, "Accept-Encoding": "gzip, deflate"}
-    # One reused connection pool → no per-download TLS handshake (the timeout cause).
-    client = httpx.Client(
-        timeout=timeout,
-        headers=headers,
-        limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
-    )
-    http = HttpJson(_NAME, client=client, headers=headers)
-    cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
-    return SecEdgarProvider(settings, cache, http=http, min_request_interval=1.0 / rps)
-
-
-def _with_retry(fn, *, what: str, retries: int, base_backoff: float = 1.0):  # type: ignore[no-untyped-def]
-    """Call ``fn`` with exponential backoff on transient ProviderError; reraise if exhausted."""
-    for attempt in range(retries + 1):
-        try:
-            return fn()
-        except SymbolNotFound:
-            raise  # not transient (e.g. an ETF with no CIK) — let caller skip it
-        except ProviderError as exc:
-            if attempt == retries:
-                raise
-            sleep = base_backoff * (2**attempt)
-            log.warning("warm.retry", what=what, attempt=attempt + 1, sleep=round(sleep, 1),
-                        error=str(exc))
-            time.sleep(sleep)
-    raise RuntimeError("unreachable")
 
 
 def _load_universe(path: str) -> list[str]:
@@ -100,7 +63,9 @@ def main() -> None:
     args = _parse_args()
     settings = get_settings()
     configure_logging(settings)
-    provider = _build_provider(args.rps, args.timeout)
+    provider = build_hardened_sec_provider(settings, rps=args.rps, timeout=args.timeout)
+    if provider is None:
+        raise SystemExit("SEC_USER_AGENT is not set — cannot warm the insider cache.")
     tickers = _load_universe(args.universe)
     since = date.today() - timedelta(days=args.lookback_days)
 
@@ -108,8 +73,8 @@ def main() -> None:
     tot_refs = tot_ok = tot_fail = no_cik = with_data = 0
     for i, tkr in enumerate(tickers, 1):
         try:
-            refs: list[InsiderFilingRef] = _with_retry(
-                lambda t=tkr: provider.list_form4_filings(t, since=since, limit=args.limit),
+            refs: list[InsiderFilingRef] = with_retry(
+                partial(provider.list_form4_filings, tkr, since=since, limit=args.limit),
                 what=f"list:{tkr}", retries=args.retries,
             )
         except SymbolNotFound:
@@ -123,8 +88,8 @@ def main() -> None:
         ok = fail = 0
         for ref in refs:
             try:
-                _with_retry(lambda r=ref: provider.download_form4(r),
-                            what=f"dl:{ref.filing_id}", retries=args.retries)
+                with_retry(partial(provider.download_form4, ref),
+                           what=f"dl:{ref.filing_id}", retries=args.retries)
                 ok += 1
             except ProviderError as exc:
                 fail += 1
