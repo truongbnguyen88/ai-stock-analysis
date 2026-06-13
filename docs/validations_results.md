@@ -636,3 +636,37 @@ The decision metric — big-move **discrimination (AUC) — is *worse* with news
 ```bash
 PYTHONPATH=src python scripts/validate_sequence_news.py
 ```
+
+## 2026-06-12 — Feature expansion: Tier 1 candidate groups (volume / session / shape promoted)
+
+**Question.** The production feature set was price/technical + VIX + earnings-cadence only. Do orthogonal, scale-free, point-in-time feature groups add out-of-sample value? P/E and other fundamentals were ruled out up front (quarterly step-functions, weak at 20–60d, point-in-time-reconstruction burden = leakage risk on free APIs). Five OHLCV(+SPY)-derived candidate groups were tested: `volume` (relative volume + dollar-volume z), `high52w` (nearness-to-52w-high), `session` (overnight/intraday return split), `shape` (realized skew + downside/upside semivol ratio), `relstr` (market-relative strength vs SPY).
+
+**Setup** (`scripts/ablate_feature_groups.py` → `backtesting/ablation.py`). Walk-forward, per-fold pooled refit over the full 114-ticker universe; 8-ticker evaluation spread (NVDA MSFT AAPL JPM XOM JNJ TSLA WMT); horizons 20/30/60; `--test-size 24`. Each group compared **individually vs baseline** on identical folds. Δ shown as *improvement* (positive = group helped): ΔBrier, ΔECE (calibration), Δbig-move-AUC. Promote gate: Brier↓ without ECE↑.
+
+**Model scope — logistic only.** The lightgbm walk-forward ablation is computationally infeasible: one cell ran **69 min without finishing even the baseline** (per-fold 400-tree refit over 114 tickers ≈ ~36h for the sweep). logistic did a full cell in ~6 min. So the *decision* is logistic-evidence-based; lightgbm is gated at retrain via the `verify-models` metric gate (granular per-artifact fallback available if it regresses).
+
+| group | h20 ΔBrier/ΔECE/ΔAUC | h30 | h60 | verdict |
+|---|---|---|---|---|
+| **shape** | +.0004 / +.0043 / +.006 | +.0012 / +.0087 / +.002 | +.0049 / +.0083 / +.014 | **promote** — positive on all 3 metrics × all 3 horizons; Brier gain grows with horizon |
+| **volume** | +.0002 / +.0027 / +.013 | −.0001 / +.0064 / +.001 | −.0007 / +.0050 / +.003 | **promote** — Brier ~flat (noise), ECE+AUC consistently +, never hurts |
+| **session** | −.0001 / −.0044 / +.019 | +.0013 / +.0056 / −.001 | −.0009 / +.0107 / +.007 | **promote (marginal)** — Brier ~noise, net-positive ECE/AUC over h30/h60; weakest of the three |
+| high52w | −.0002 / +.0001 / −.003 | −.0051 / −.0061 / −.004 | −.0101 / −.0405 / +.011 | **reject** — consistently hurts Brier + calibration (badly at h60) |
+| relstr | −.0086 / −.0024 / −.017 | −.0078 / −.0171 / −.023 | −.0022 / −.0139 / +.002 | **reject** — hurts Brier + ECE + AUC at every horizon |
+
+**Decision — promote `shape` + `volume` + `session`** into the baseline `PRICE_FEATURE_COLS` (18 → 24 features). All three are OHLCV-only, so they add **no new data dependency**. `shape` is the clear, robust winner (the tail-shape signal strengthens with horizon, as expected). `volume` is a clean low-risk add. `session` is marginal (Brier within noise) but net-positive on ECE/AUC and never harmful — included with that caveat; the retrain `verify-models` gate is the lgbm safety net. **Rejected `high52w` and `relstr`** — both degrade calibration; notably `relstr` (subtracting the market return) hurts the pooled logistic at every horizon. They remain opt-in (`FEATURE_GROUPS`) but are not in the baseline. Caveats: deltas are small and this is 8 evaluation tickers — `shape`'s cross-horizon, cross-metric *consistency* is what carries the decision, not any single cell. **Both models × {20,30,60} retrained on the 24-feature set; all calibrated; `verify-models` ✓; conformal `q` recomputed.**
+
+**Not evaluated — `insider` (Tier 2, Form 4).** Its ablation was blocked by SEC EDGAR fair-access throttling at the 114×200-filing scale (handshake timeouts). A real bug was fixed en route: EDGAR lists the Form 4 `primaryDocument` as the XSL-rendered HTML path (`xslF…/form4.xml`), which fails XML parsing — `InsiderFilingRef.url` now de-renders to the raw ownership XML. Insider stays opt-in pending a bounded, resumable cache-warm + its own ablation.
+
+**Reproduce.**
+```bash
+# Tier 1 ablation (logistic; ~6 min/cell):
+for h in 20 30 60; do
+  PYTHONPATH=src python scripts/ablate_feature_groups.py \
+    --tickers NVDA MSFT AAPL JPM XOM JNJ TSLA WMT --horizon $h --model logistic \
+    --groups volume high52w session shape relstr --test-size 24
+done
+# Retrain + recalibrate on the promoted 24-feature set:
+PYTHONPATH=src python -m stock_agent train --all
+PYTHONPATH=src python -m stock_agent conformal-calibrate
+make verify-models
+```

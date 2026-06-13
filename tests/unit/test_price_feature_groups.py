@@ -55,9 +55,25 @@ def test_default_matrix_is_baseline_only_bc() -> None:
 
 
 def test_resolve_feature_cols_appends_in_order() -> None:
-    cols = resolve_feature_cols(["volume", "shape"])
-    assert cols == [*PRICE_FEATURE_COLS, "rvol_20", "dollar_vol_z_20",
-                    "realized_skew_60", "semivol_ratio_60"]
+    cols = resolve_feature_cols(["high52w", "relstr"])
+    assert cols == [*PRICE_FEATURE_COLS, "pct_from_52w_high",
+                    "rel_strength_20d", "rel_strength_60d"]
+
+
+# The Phase 1.6 ablation promoted these into the always-computed baseline.
+PROMOTED_COLS = [
+    "rvol_20", "dollar_vol_z_20", "overnight_ret_20d",
+    "intraday_ret_20d", "realized_skew_60", "semivol_ratio_60",
+]
+
+
+def test_promoted_features_are_in_baseline() -> None:
+    # Promoted candidates now live in the default matrix (no feature_groups needed),
+    # and are NOT opt-in groups anymore.
+    df = build_price_feature_matrix(_series())
+    for col in PROMOTED_COLS:
+        assert col in df.columns and df[col].notna().any(), col
+    assert not ({"volume", "session", "shape"} & set(FEATURE_GROUPS))
 
 
 def test_unknown_group_raises() -> None:
@@ -135,6 +151,7 @@ def test_relstr_is_nan_without_market() -> None:
 
 def test_candidate_columns_are_scale_free_across_price_level() -> None:
     # Same return path, 10x price level: scale-free features must be ~identical.
+    # Covers the promoted baseline features + the remaining high52w group.
     base = _series(seed=7)
     scaled_bars = [
         PriceBar(
@@ -144,9 +161,8 @@ def test_candidate_columns_are_scale_free_across_price_level() -> None:
         for b in base.bars
     ]
     scaled = PriceSeries(ticker="TST", bars=scaled_bars)
-    groups = ["volume", "high52w", "session", "shape"]
-    a = build_price_feature_matrix(base, feature_groups=groups).iloc[-1]
-    b = build_price_feature_matrix(scaled, feature_groups=groups).iloc[-1]
-    for group in groups:
-        for col in FEATURE_GROUPS[group]:
-            assert a[col] == pytest.approx(b[col], rel=1e-9), f"{col} not scale-free"
+    cols = [*PROMOTED_COLS, *FEATURE_GROUPS["high52w"]]
+    a = build_price_feature_matrix(base, feature_groups=["high52w"]).iloc[-1]
+    b = build_price_feature_matrix(scaled, feature_groups=["high52w"]).iloc[-1]
+    for col in cols:
+        assert a[col] == pytest.approx(b[col], rel=1e-9), f"{col} not scale-free"

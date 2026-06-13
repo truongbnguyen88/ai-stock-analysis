@@ -86,10 +86,10 @@ def test_default_pooled_model_is_baseline_only_bc() -> None:
 
 @pytest.mark.parametrize("model_type", ["logistic", "lightgbm"])
 def test_train_infer_roundtrip_with_feature_groups(model_type: str) -> None:
-    # Train WITH candidate groups; the artifact records the extended feature_cols,
+    # Train WITH a remaining opt-in group; the artifact records the extended feature_cols,
     # and inference must rebuild the matching feature set (via groups_for_cols) and
     # still yield a valid bucket distribution — proving the integration end-to-end.
-    groups = ["volume", "high52w", "session", "shape"]
+    groups = ["high52w"]
     model = train_pooled_from_series(
         _universe(), horizon_days=20, model_type=model_type,  # type: ignore[arg-type]
         min_total_rows=100, calibrate=False, feature_groups=groups,

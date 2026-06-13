@@ -51,24 +51,30 @@ PRICE_FEATURE_COLS: list[str] = [
     "vix_level",  # VIX / 100 (annualized vol fraction; NaN if unavailable)
     "vix_rel",  # VIX vs its own 20-day average (>1 = market vol rising)
     "days_to_next_earnings",  # leakage-safe cadence estimate (NaN if no earnings data)
+    # --- Promoted candidate features (Phase 1.6 ablation; OHLCV-only, no extra fetch) ---
+    # Walk-forward logistic ablation across h20/30/60 promoted these (Brier/ECE/AUC):
+    # `shape` (robust winner, all metrics × all horizons), `volume` (clean low-risk add),
+    # `session` (marginal but net-positive ECE/AUC). high52w/relstr were rejected (hurt
+    # calibration). See validations_results.md.
+    "rvol_20",  # volume vs its 20d trailing mean (participation surge)
+    "dollar_vol_z_20",  # dollar-volume z-score vs 20d trailing distribution (liquidity surprise)
+    "overnight_ret_20d",  # 20d mean overnight (close→open) return
+    "intraday_ret_20d",  # 20d mean intraday (open→close) return
+    "realized_skew_60",  # 60d realized skewness of log returns (tail asymmetry)
+    "semivol_ratio_60",  # 60d downside/upside semideviation ratio
 ]
 
 # --- Candidate feature groups (opt-in, ablation-gated) -----------------------
-# These are NOT in the default ``PRICE_FEATURE_COLS`` yet. They are computed only
-# when explicitly requested via ``feature_groups`` so the default feature matrix
-# (and every committed model artifact trained on it) is unchanged. The ablation
-# harness measures each group's out-of-fold lift before any promotion into the
-# baseline. Every column here is scale-free (ratio / z-score / standardized
-# moment / return-difference) to preserve cross-ticker pooling validity, and
-# point-in-time safe (trailing windows only). ``relstr`` additionally needs a
-# market index (SPY) passed via ``market=``; absent it, its columns are NaN.
+# Remaining UNPROMOTED candidates — computed only when explicitly requested via
+# ``feature_groups`` so the default matrix (and committed artifacts) is unchanged.
+# `high52w`/`relstr` were ablation-REJECTED (hurt calibration) but kept as opt-in
+# infra; `insider` is not yet evaluated (its ablation was blocked by SEC throttling).
+# Every column is scale-free + point-in-time. ``relstr`` needs a market index (SPY)
+# via ``market=``; ``insider`` needs a Form 4 activity frame via ``insider=``.
 FEATURE_GROUPS: dict[str, list[str]] = {
-    "volume": ["rvol_20", "dollar_vol_z_20"],
-    "high52w": ["pct_from_52w_high"],
-    "session": ["overnight_ret_20d", "intraday_ret_20d"],
-    "shape": ["realized_skew_60", "semivol_ratio_60"],
-    "relstr": ["rel_strength_20d", "rel_strength_60d"],  # requires market= (SPY)
-    "insider": ["insider_net_63d", "insider_imb_63d"],  # requires insider= (Form 4 frame)
+    "high52w": ["pct_from_52w_high"],  # ablation-rejected; retained as opt-in
+    "relstr": ["rel_strength_20d", "rel_strength_60d"],  # rejected; requires market= (SPY)
+    "insider": ["insider_net_63d", "insider_imb_63d"],  # unevaluated; requires insider= (Form 4)
 }
 
 # Trailing window (trading days) for insider aggregation: insider signals are slow,
@@ -183,28 +189,27 @@ def build_price_feature_matrix(
         dtype="float64",
     )
 
-    # --- Candidate feature groups (computed only when requested) -------------
+    # --- Promoted candidate features (Phase 1.6; OHLCV-only, always computed) ---
+    # Volume normalized against its own trailing history (scale-free).
+    df["rvol_20"] = relative_volume(frame["volume"], window=20)
+    df["dollar_vol_z_20"] = dollar_volume_zscore(close, frame["volume"], window=20)
+    # Decompose the daily move into overnight (close→open) and intraday (open→close)
+    # drift; 20-day trailing means smooth the per-bar noise. Scale-free returns.
+    df["overnight_ret_20d"] = (
+        overnight_return(frame["open"], close).rolling(window=20, min_periods=20).mean()
+    )
+    df["intraday_ret_20d"] = (
+        intraday_return(frame["open"], close).rolling(window=20, min_periods=20).mean()
+    )
+    # Return-distribution shape: skew + downside/upside semideviation ratio.
+    df["realized_skew_60"] = realized_skewness(close, window=60)
+    df["semivol_ratio_60"] = semivol_ratio(close, window=60)
+
+    # --- Remaining candidate feature groups (computed only when requested) ----
     requested = set(feature_groups or [])
-    if "volume" in requested:
-        # Volume normalized against its own trailing history (scale-free).
-        df["rvol_20"] = relative_volume(frame["volume"], window=20)
-        df["dollar_vol_z_20"] = dollar_volume_zscore(close, frame["volume"], window=20)
     if "high52w" in requested:
         # Nearness-to-52w-high anchoring momentum (<= 0; 0 = at the high).
         df["pct_from_52w_high"] = pct_from_high(close, window=252, min_periods=20)
-    if "session" in requested:
-        # Decompose the daily move into overnight (close→open) and intraday (open→close)
-        # drift; 20-day trailing means smooth the per-bar noise. Scale-free returns.
-        df["overnight_ret_20d"] = (
-            overnight_return(frame["open"], close).rolling(window=20, min_periods=20).mean()
-        )
-        df["intraday_ret_20d"] = (
-            intraday_return(frame["open"], close).rolling(window=20, min_periods=20).mean()
-        )
-    if "shape" in requested:
-        # Return-distribution shape: skew + downside/upside semideviation ratio.
-        df["realized_skew_60"] = realized_skewness(close, window=60)
-        df["semivol_ratio_60"] = semivol_ratio(close, window=60)
     if "relstr" in requested:
         # Market-relative (residual) momentum: stock trailing return minus the market's,
         # which strips out beta-driven moves. NaN if no market series supplied. The market
