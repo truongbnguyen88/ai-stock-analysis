@@ -21,7 +21,8 @@
 9. [Limitations and failure modes](#9-limitations-and-failure-modes)
 10. [How this repository instantiates RAG](#10-how-this-repository-instantiates-rag)
 11. [Evaluation in practice — the A-track metrics](#11-evaluation-in-practice--the-a-track-metrics)
-12. [References](#12-references)
+12. [Reranking — bi-encoders, cross-encoders, two-stage retrieval](#12-reranking--bi-encoders-cross-encoders-two-stage-retrieval)
+13. [References](#13-references)
 
 ---
 
@@ -886,7 +887,95 @@ in CI. A metric you cannot recompute deterministically is not a regression gate.
 
 ---
 
-## 12. References
+## 12. Reranking — bi-encoders, cross-encoders, two-stage retrieval
+
+§4.8 introduced cross-encoder reranking briefly; this is the operational theory behind phase A2
+(`rag/rerank.py`). The core idea is that the *fast* model used for retrieval and the *accurate*
+model used for final ranking should be **different models**, run in two stages.
+
+### 12.1 Two ways to score a (query, passage) pair
+
+**Bi-encoder (what dense retrieval uses).** The query and each passage are embedded **independently**
+into fixed vectors, and relevance is their cosine:
+
+$$
+s_{\mathrm{bi}}(q, d) \;=\; \cos\big(E(q),\, E(d)\big),
+$$
+
+where $E(\cdot)$ is the embedding model (§4.1). In plain English: the model looks at the query and
+the passage *separately*, turns each into a point in space, and scores by angle. The win is
+**precomputation** — every passage vector $E(d)$ is built once at ingestion, so at query time you
+embed only $q$ and do an approximate-nearest-neighbor lookup (§4.4). The loss is **resolution**: the
+model never sees the query and passage *together*, so it cannot reason about which query term the
+passage actually answers, negations, or which entity a number belongs to. Two passages with similar
+vocabulary get similar scores even if only one truly answers the question.
+
+**Cross-encoder (what a reranker uses).** Concatenate the query and passage and feed them through the
+transformer **jointly**, producing a single learned relevance scalar:
+
+$$
+s_{\mathrm{ce}}(q, d) \;=\; f\big(\,[\,q \,;\, d\,]\,\big) \in \mathbb{R},
+$$
+
+where $[\,q;d\,]$ is the paired input and $f$ is the cross-encoder (a transformer + a scoring head).
+Because every layer attends over the query and passage tokens *together*, $f$ models fine-grained
+interactions — term overlap, paraphrase, negation, entity binding — and is markedly more accurate.
+The cost: $s_{\mathrm{ce}}$ **cannot be precomputed** (it needs the specific pair), so scoring $N$
+passages is $N$ full forward passes at query time. Over a whole corpus (10⁴–10⁶ chunks) that is
+hopeless; over a few dozen it is milliseconds.
+
+### 12.2 Retrieve-wide-then-narrow
+
+The two models are complementary, so use each where it is strong:
+
+1. **Stage 1 — recall (bi-encoder).** Retrieve a *wide* candidate set of `fetch_k` ≈ 30 chunks with
+   cheap dense (or, at A3, hybrid) search. Goal: get the relevant chunks *somewhere* in the set.
+2. **Stage 2 — precision (cross-encoder).** Rescore those `fetch_k` candidates with $s_{\mathrm{ce}}$
+   and keep the top `top_k` (5–8). Goal: put the *most* relevant at the very top, where the synthesis
+   LLM weighs them most.
+
+```
+question ─▶ bi-encoder ANN ─▶ fetch_k≈30 candidates ─▶ cross-encoder rescore ─▶ keep top_k≈6 ─▶ synthesis
+            (recall, cheap, precomputed)                 (precision, ~fetch_k forward passes)
+```
+
+The two knobs trade quality for latency:
+- **`fetch_k`** sets the recall ceiling. The reranker can only promote a chunk stage 1 actually
+  returned — if the answer is the 40th dense hit and `fetch_k = 30`, reranking can never recover it.
+  Larger `fetch_k` → higher ceiling but more cross-encoder passes.
+- **`top_k`** is how many survive into the prompt (the §2 context-window lever, unchanged from A1).
+
+**Added cost** is one cross-encoder forward pass per candidate, i.e. ≈ `fetch_k` passes per query —
+tens of milliseconds for a small local MiniLM-class model, zero extra **paid** tokens (the local
+reranker is onnx/$0; the Voyage reranker is the opt-in paid alternative). Retrieval stays $0/local.
+
+### 12.3 Worked intuition
+
+Query: *"What does NVIDIA disclose about U.S. export controls on China sales?"* Suppose dense
+retrieval returns, in order:
+
+1. a boilerplate sentence mentioning "China" and "sales" (high vocabulary overlap, low relevance),
+2. a generic competition risk paragraph,
+3. the actual Item 1A sentence on *export-control licensing requirements for China* (the answer).
+
+The bi-encoder ranked (1) first because, scoring query and passage separately, it rewarded surface
+word overlap. The cross-encoder, reading each *pair* jointly, recognizes that (3) directly answers
+the question and lifts it to rank 1; (1) drops. Keeping `top_k = 2` now yields `[3, 2]` instead of
+`[1, 2]` — the synthesis sees the on-point evidence first. (The A2 tests encode exactly this: a
+`FakeReranker` scoring by query-term overlap moves a buried relevant chunk to the top and truncates
+to `top_k`.)
+
+### 12.4 Grounding and measurement
+
+Reranking only **reorders and selects** chunks — it never edits their text — so every citation still
+resolves to a real retrieved chunk and the number-grounding guard is unaffected (the P7 invariants
+hold unchanged). And because `RerankingRetriever` is just another `RetrievalSystem`, A1's harness
+scores it directly: we accept reranking only if `evaluate_system` shows a **measured nDCG@k / recall
+win** over the dense baseline on the labeled set (`make rag-eval`). Default-OFF until it does.
+
+---
+
+## 13. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -896,6 +985,8 @@ in CI. A metric you cannot recompute deterministically is not a regression gate.
 - Robertson & Zaragoza (2009), *The Probabilistic Relevance Framework: BM25 and Beyond*.
 - Järvelin & Kekäläinen (2002), *Cumulated Gain-Based Evaluation of IR Techniques* — DCG / nDCG
   and the exponential-gain formulation used in §11.2.
+- Nogueira & Cho (2019), *Passage Re-ranking with BERT* — the cross-encoder reranker and the
+  retrieve-then-rerank two-stage pattern of §12.
 - Malkov & Yashunin (2018), *Efficient and robust approximate nearest neighbor search using
   HNSW graphs*.
 - Carbonell & Goldstein (1998), *The Use of MMR for Reordering Documents*.

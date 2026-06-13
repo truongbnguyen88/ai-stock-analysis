@@ -36,7 +36,7 @@ from stock_agent.rag.embeddings import (
 )
 from stock_agent.rag.eval import LabeledQuery, format_reports_markdown, run_ab
 from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, bulk_ingest
-from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.rerank import build_retrieval_system
 from stock_agent.rag.status import corpus_status
 from stock_agent.rag.vector_store import build_vector_store
 from stock_agent.reports.render_md import render_markdown
@@ -881,7 +881,8 @@ def rag_query(
     """Retrieve SEC chunks for a question; with --answer, synthesize a cited answer."""
     settings = get_settings()
     configure_logging(settings)
-    retriever = Retriever(build_embedder(settings), build_vector_store(settings))
+    # Default-OFF rerank: dense Retriever unless settings.rerank_provider is set (then wrapped).
+    retriever = build_retrieval_system(settings)
     where = ChunkFilter(ticker=normalize_ticker(ticker)) if ticker else None
     evidence = retriever.retrieve(question, top_k=top_k or settings.rag_top_k, where=where)
 

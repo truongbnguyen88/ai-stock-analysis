@@ -33,8 +33,9 @@ from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
-from stock_agent.rag.embeddings import build_embedder, embedding_namespace
-from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.embeddings import embedding_namespace
+from stock_agent.rag.rerank import build_retrieval_system
+from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.rag.vector_store import build_vector_store, collection_name_for
 from stock_agent.research.synthesis import ResearchGuardError, answer_question
 from stock_agent.schemas.backtest import BacktestResult
@@ -579,13 +580,17 @@ class ToolExecutor:
         # Lazily-built, session-memoized RAG retriever (embedder + vector store) so
         # repeated filing questions / the research summary don't reload the embedding
         # model and re-open the store each call. Tests inject a fake by setting it.
-        self._retriever: Retriever | None = None
+        self._retriever: RetrievalSystem | None = None
 
-    def _get_retriever(self) -> Retriever:
-        """Build (once) and return the shared SEC retriever for this session."""
+    def _get_retriever(self) -> RetrievalSystem:
+        """Build (once) and return the shared SEC retriever for this session.
+
+        Default-OFF rerank: ``build_retrieval_system`` returns the plain dense ``Retriever`` unless
+        ``settings.rerank_provider`` is set, in which case it wraps it in a ``RerankingRetriever``.
+        """
         if self._retriever is None:
             store = build_vector_store(self._settings)
-            self._retriever = Retriever(build_embedder(self._settings), store)
+            self._retriever = build_retrieval_system(self._settings, store=store)
             # One-time observability: surface which embedder + collection the agent is querying
             # (e.g. voyage-voyage-4 -> filings-voyage-voyage-4) so the active RAG corpus is visible.
             namespace = embedding_namespace(self._settings)

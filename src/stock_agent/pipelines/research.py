@@ -20,9 +20,8 @@ from stock_agent.llm.news_summarizer import SummaryGuardError, summarize_news
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
-from stock_agent.rag.embeddings import build_embedder
-from stock_agent.rag.retriever import Retriever
-from stock_agent.rag.vector_store import build_vector_store
+from stock_agent.rag.rerank import build_retrieval_system
+from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.research.memo import MemoGuardError, build_memo
 from stock_agent.schemas.research import ResearchMemo
 from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChunk
@@ -80,10 +79,12 @@ def _gather_sec_evidence(
     settings: Settings,
     per_query_k: int,
     *,
-    retriever: Retriever | None = None,
+    retriever: RetrievalSystem | None = None,
 ) -> EvidenceSet:
     """Retrieve SEC chunks per memo-section query, then round-robin merge for balanced coverage."""
-    retriever = retriever or Retriever(build_embedder(settings), build_vector_store(settings))
+    # Default-OFF rerank: build_retrieval_system returns the plain dense Retriever unless
+    # settings.rerank_provider is set, in which case it wraps it in a RerankingRetriever.
+    retriever = retriever or build_retrieval_system(settings)
     where = ChunkFilter(ticker=ticker)
     per_query = [
         retriever.retrieve(q, top_k=per_query_k, where=where).chunks for q in _MEMO_QUERIES
@@ -102,7 +103,7 @@ def run_research(
     days: int = 30,
     company_name: str | None = None,
     use_news: bool = True,
-    retriever: Retriever | None = None,
+    retriever: RetrievalSystem | None = None,
 ) -> ResearchMemo:
     """Gather technicals + forecast + news + SEC evidence, then build the integrated memo.
 

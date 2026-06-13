@@ -870,3 +870,60 @@ same labeled set, and must beat the dense baseline's nDCG/recall before promotio
 dense,hybrid,reranked` (the multi-system CLI surface) lands with A2/A3, when more than one system
 type exists. **Deferred (opt-in, by design):** LLM-judge faithfulness; a `baseline.json` regression
 gate; growing the benchmark to 60–100 Q.
+
+## A2 — Reranking (`rag/rerank.py`)
+
+**Role.** Add a second, more accurate scoring stage *after* dense retrieval. Dense search uses a
+**bi-encoder** (query and chunk embedded independently → coarse cosine); a **cross-encoder** scores
+each `(query, chunk)` pair *jointly* → far more accurate but too costly for the whole corpus. So:
+retrieve a wide candidate set cheaply, rerank just those, keep the best few. Default-OFF: with
+`rerank_provider="none"` the pipeline is byte-identical to A1.
+
+**Contract move (prerequisite).** The `RetrievalSystem` Protocol moved `rag/eval.py → rag/retriever.py`
+(beside `Retriever`) and is re-exported from `eval.py`. A1 put it in `eval.py`; A2 makes *production*
+code (`agent/`, `pipelines/`) depend on the retrieval contract, and importing it from `eval` is the
+wrong dependency direction. `retriever.py` is a leaf core module, so it is the correct home.
+
+**Key files / mechanism (step-by-step).**
+1. `rag/rerank.py`
+   - **`Reranker` Protocol** — `name` + `rerank(query, chunks) -> list[RetrievedChunk]` (returns a
+     **new** list, reordered best-first, with rerank scores in `.score`; never mutates chunk text →
+     citations/number-grounding untouched).
+   - **`NoOpReranker`** (`name="noop"`) — identity; the default, so "rerank off" is a real object,
+     not a branch.
+   - **`FastEmbedReranker`** (`name="fastembed-rerank"`) — lazy
+     `fastembed.rerank.cross_encoder.TextCrossEncoder` (onnx, **no torch**; default
+     `Xenova/ms-marco-MiniLM-L-6-v2`). `model.rerank(query, docs)` → one score per doc (input order);
+     we `sort` desc and rebuild `RetrievedChunk`s. Model loads on first call → construction is free,
+     CI never downloads it.
+   - **`VoyageReranker`** (`name="voyage-rerank"`) — opt-in `voyageai` `client.rerank(...)`
+     (default `rerank-2`), reuses `voyage_api_key` via `settings.require`; client lazy + injectable.
+   - **`build_reranker(settings)`** — selector mirroring `build_embedder` (`local`/`voyage`/else NoOp).
+   - **`RerankingRetriever(base: RetrievalSystem, reranker, *, fetch_k=30)`** — `retrieve` over-fetches
+     `max(fetch_k, top_k)` from `base`, reranks, slices `top_k`. **Empty base → passthrough** (the
+     insufficient-evidence refusal path survives). Satisfies `RetrievalSystem` (`name =
+     f"rerank({reranker.name})+{base.name}"`), so it composes — today it wraps the dense `Retriever`;
+     at A3 it can wrap the hybrid retriever with no change.
+   - **`build_retrieval_system(settings, *, store=None)`** — the single gated factory: plain
+     `Retriever` when `rerank_provider="none"`, else wrapped. `store` injectable (tests/agent pass one;
+     prod defaults to `build_vector_store`). All backends lazy → cheap + offline.
+2. `settings.py` — `rerank_provider: Literal["none","local","voyage"]="none"`, `rerank_fetch_k=30`,
+   `rerank_model=""` (empty → per-provider default).
+3. **Wire-in (default-OFF, one factory):** `pipelines/research._gather_sec_evidence`,
+   `agent/tools.ToolExecutor._get_retriever`, and the `rag query` CLI all build via
+   `build_retrieval_system`; their retriever annotations widened `Retriever → RetrievalSystem`. With
+   the default config every site returns a plain `Retriever`, so behavior is unchanged until a user
+   sets `RERANK_PROVIDER`.
+
+**Tested (offline, no download):** Protocol conformance (NoOp/Fake); NoOp passthrough; `FakeReranker`
+(lexical-overlap stand-in) reorders a buried-relevant chunk to the top **and** truncates to `top_k`;
+`fetch_k<top_k` clamps up (the base is asked for `top_k`, never fewer); empty passthrough;
+`RerankingRetriever` is a `RetrievalSystem`; `build_reranker("none")→NoOp`; `build_retrieval_system`
+gating (`none→Retriever`, `local→RerankingRetriever`, no model load); **A1↔A2 composition** —
+`evaluate_system` scores a `RerankingRetriever` and reports `system="rerank(fake-rerank)+dense:fake"`.
+The real onnx cross-encoder is exercised only behind `RUN_RERANK_TESTS=1` (downloads a model).
+
+**How A3 uses it.** A3's `HybridRetriever` will also be a `RetrievalSystem`; the production read path
+becomes hybrid→rerank simply by having `build_retrieval_system` wrap the hybrid base instead of the
+dense one — no change to `RerankingRetriever`, synthesis, memo, or the agent. **Deferred:** turning
+rerank on by default (gated on a measured A1 `make rag-eval` win over the dense baseline).

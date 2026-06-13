@@ -72,7 +72,7 @@ implementations of the same "query (+filter) → ranked chunks" contract, so `re
 | # | Enhancement | Order rationale | Type | Complexity |
 |---|---|---|---|---|
 | **A1 ✅** | Retrieval Evaluation | The measuring stick; extends `rag/eval.py`; lowest risk | Foundation | **Low–Med** (~1.5d) |
-| **A2** | Reranking | Biggest quality win per effort; local-first, self-contained | Ship value | **Low–Med** (~1.5d) |
+| **A2 ✅** | Reranking | Biggest quality win per effort; local-first, self-contained | Ship value | **Low–Med** (~1.5d) |
 | **A3** | Hybrid Search | Fixes a *different* failure mode (exact ticker/section/number terms) | Ship value | **Med** (~2d) |
 | **A4** | Agentic RAG | Needs strong retrieval primitives first; bounded LLM cost | Ship value | **Med–High** (~2.5d) |
 | **A5** | GraphRAG | Heaviest infra; lower near-term ROI for SEC QA | Learning-first | **High** (~3–4d) |
@@ -146,6 +146,17 @@ labeling effort → grow incrementally; the 25-Q set already works.
 ---
 
 ## A2 — Reranking
+
+> **Status: DONE (2026-06-13).** Shipped `rag/rerank.py`: `Reranker` Protocol +
+> `NoOpReranker` (default) / `FastEmbedReranker` (fastembed onnx cross-encoder, **no torch**) /
+> `VoyageReranker` (opt-in); `build_reranker`; `RerankingRetriever(base, reranker, *, fetch_k)`
+> (over-fetch→rerank→slice, wraps any `RetrievalSystem`); `build_retrieval_system` — the single
+> **default-OFF** factory wired into `pipelines/research`, `agent/tools._get_retriever`, and the
+> `rag query` CLI. Config: `rerank_provider="none"|local|voyage`, `rerank_fetch_k=30`,
+> `rerank_model`. Also moved the `RetrievalSystem` Protocol `eval.py → retriever.py` (its proper
+> home now production depends on it). Mechanism → [rag_implementation_notes.md](rag_implementation_notes.md) §A2;
+> math → [rag_concepts.md](rag_concepts.md) §12. `make check` green (635 passed). **Deferred:**
+> promoting rerank ON by default (needs an A1 `make rag-eval` win first).
 
 **Learning objective.** Cross-encoder reranking + the **retrieve-wide-then-narrow** pattern.
 

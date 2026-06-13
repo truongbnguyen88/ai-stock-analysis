@@ -10,7 +10,6 @@ from stock_agent.rag.embeddings import FakeEmbedder
 from stock_agent.rag.eval import (
     EmbedderReport,
     LabeledQuery,
-    RetrievalSystem,
     SystemReport,
     citation_accuracy,
     evaluate_query,
@@ -23,7 +22,7 @@ from stock_agent.rag.eval import (
     reciprocal_rank,
     run_ab,
 )
-from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.retriever import RetrievalSystem, Retriever
 from stock_agent.rag.vector_store import InMemoryVectorStore
 from stock_agent.schemas.documents import DocumentChunk
 from stock_agent.schemas.research import GroundedAnswer, SourceCitation
@@ -187,9 +186,7 @@ class _FixedSystem:
     def __init__(self, evidence: EvidenceSet) -> None:
         self._evidence = evidence
 
-    def retrieve(
-        self, query: str, *, top_k: int, where: ChunkFilter | None = None
-    ) -> EvidenceSet:
+    def retrieve(self, query: str, *, top_k: int, where: ChunkFilter | None = None) -> EvidenceSet:
         return self._evidence
 
 
