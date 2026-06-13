@@ -39,27 +39,57 @@ def build_sec_provider(settings: Settings) -> SecEdgarProvider | None:
     provider = SecEdgarProvider(settings, DiskCache(settings.cache_dir, settings.cache_ttl_seconds))
     return provider if provider.available() else None
 
-# Columns of the daily activity frame (indexed by filing_date).
-ACTIVITY_COLS: list[str] = ["net_value", "n_buys", "n_sells"]
+# Columns of the daily activity frame (indexed by filing_date). The re-engineered
+# signal (Phase 1.6) separates the BUY channel from the SELL channel — never nets
+# them — because insider *buys* are informative while *sells* are mostly liquidity:
+#   buy_conviction = Σ Δ-ownership of opportunistic buys (conviction, not dollars)
+#   senior_buy_n   = count of opportunistic buys by CEO/CFO (the highest-signal subset)
+#   sell_pressure  = Σ |Δ-ownership| of opportunistic sells (kept separate)
+# Rule 10b5-1 (pre-scheduled, non-discretionary) trades are excluded entirely.
+ACTIVITY_COLS: list[str] = ["buy_conviction", "senior_buy_n", "sell_pressure"]
+
+# Cap per-trade Δ-ownership at 1.0 (a 100% increase / full exit) so a tiny prior
+# holding can't produce an outlier fraction that dominates the pooled signal.
+_CONVICTION_CAP = 1.0
+
+
+def _conviction(t: InsiderTransaction) -> float:
+    """Outlier-capped |Δ-ownership| for one trade; 1.0 when prior holdings unknown.
+
+    An unknown prior (e.g. a brand-new position, prior = 0) is treated as maximal
+    conviction rather than dropped — establishing a stake is a strong signal.
+    """
+    frac = t.ownership_change_fraction
+    if frac is None:
+        return _CONVICTION_CAP
+    return min(abs(frac), _CONVICTION_CAP)
 
 
 def aggregate_transactions(transactions: Sequence[InsiderTransaction]) -> pd.DataFrame:
     """Aggregate parsed transactions into a per-``filing_date`` activity frame. Pure.
 
-    Restricts to open-market purchases/sales (codes P/S) — the discretionary,
-    information-bearing trades — and sums their signed dollar value plus buy/sell
-    counts. Returns an empty (typed) frame when there are no qualifying trades.
+    Keeps only open-market, **discretionary** trades: codes P (buy) / S (sell) that
+    are NOT Rule 10b5-1 scheduled. Buys and sells go to separate columns (never
+    netted). Returns an empty (typed) frame when no qualifying trades exist.
     """
-    rows = [
-        {
-            "filing_date": t.filing_date,
-            "net_value": t.signed_value,
-            "n_buys": 1 if t.code == OPEN_MARKET_BUY else 0,
-            "n_sells": 1 if t.code == OPEN_MARKET_SELL else 0,
-        }
-        for t in transactions
-        if t.code in (OPEN_MARKET_BUY, OPEN_MARKET_SELL)
-    ]
+    rows: list[dict[str, object]] = []
+    for t in transactions:
+        if t.is_planned_10b5_1:
+            continue  # pre-scheduled, non-discretionary → not information-bearing
+        if t.code == OPEN_MARKET_BUY and t.acquired_disposed == "A":
+            rows.append({
+                "filing_date": t.filing_date,
+                "buy_conviction": _conviction(t),
+                "senior_buy_n": 1.0 if t.is_senior else 0.0,
+                "sell_pressure": 0.0,
+            })
+        elif t.code == OPEN_MARKET_SELL and t.acquired_disposed == "D":
+            rows.append({
+                "filing_date": t.filing_date,
+                "buy_conviction": 0.0,
+                "senior_buy_n": 0.0,
+                "sell_pressure": _conviction(t),
+            })
     if not rows:
         return _empty_activity()
     df = pd.DataFrame(rows)

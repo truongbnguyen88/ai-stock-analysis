@@ -32,6 +32,9 @@
         <transactionPricePerShare><value>120.50</value></transactionPricePerShare>
         <transactionAcquiredDisposedCode><value>A</value></transactionAcquiredDisposedCode>
       </transactionAmounts>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>26000</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
     </nonDerivativeTransaction>
     <nonDerivativeTransaction>
       <securityTitle><value>Common Stock</value></securityTitle>
@@ -45,6 +48,10 @@
         <transactionPricePerShare><value>121.00</value></transactionPricePerShare>
         <transactionAcquiredDisposedCode><value>D</value></transactionAcquiredDisposedCode>
       </transactionAmounts>
+      <postTransactionAmounts>
+        <sharesOwnedFollowingTransaction><value>25600</value></sharesOwnedFollowingTransaction>
+      </postTransactionAmounts>
+      <transactionPricePerShare><footnoteId id="F1"/></transactionPricePerShare>
     </nonDerivativeTransaction>
     <nonDerivativeTransaction>
       <securityTitle><value>Common Stock</value></securityTitle>
@@ -81,4 +88,7 @@
       </transactionAmounts>
     </derivativeTransaction>
   </derivativeTable>
+  <footnotes>
+    <footnote id="F1">This sale was effected pursuant to a Rule 10b5-1 trading plan adopted by the reporting person.</footnote>
+  </footnotes>
 </ownershipDocument>

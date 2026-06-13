@@ -670,3 +670,36 @@ PYTHONPATH=src python -m stock_agent train --all
 PYTHONPATH=src python -m stock_agent conformal-calibrate
 make verify-models
 ```
+
+## 2026-06-12 — Insider (Form 4) feature: re-engineered, and the universe-dependence finding
+
+**Question.** Does insider (Form 4) activity help the pooled classifiers? A first pass (v1) said no — but it was both bluntly encoded *and* tested only on the mega-cap production universe.
+
+**v1 (rejected).** Features: `insider_net_63d` = trailing-63d net signed insider \$ ÷ dollar volume, and `insider_imb_63d` = buy/sell count imbalance. On the mega-cap universe, logistic × {20,30,60}: deltas ≤0.0003 Brier, inconsistent, **h60 exactly 0.000** — nil. Diagnosis: (1) **netting buys against sells** destroys the signal (informative buys swamped by routine sells); (2) **dollar-volume normalization** crushes a real buy to ~0 on mega-caps; (3) **sparsity** → near-zero variance; (4) no notion of *who*/*conviction*/*routine-ness*.
+
+**Re-engineering (v2).** Parser extended to pull reporting-owner CIK, role flags (`isOfficer`/`officerTitle`/…), post-transaction holdings, and the Rule 10b5-1 flag (structured + footnote-text). New features separate the channels and weight by conviction:
+- `insider_buy_conviction_63d` — Σ Δ-ownership of opportunistic **buys** (conviction, not dollars; self-normalizing; outlier-capped at 100%).
+- `insider_senior_buy_63d` — count of opportunistic **CEO/CFO** buys (the highest-signal subset).
+- `insider_sell_pressure_63d` — Σ |Δ-ownership| of opportunistic **sells**, kept **separate** (never netted).
+All exclude Rule 10b5-1 (pre-scheduled, non-discretionary) trades; all `filing_date`-anchored (leakage-safe).
+
+**Setup.** `scripts/ablate_feature_groups.py --groups insider` (now with `--universe`), logistic × {20,30,60}, `--test-size 24`, 8 eval tickers per universe. EDGAR Form 4 XML pre-warmed via `scripts/warm_insider_cache.py` (pooled keep-alive client + retry + 5 req/s — fixes the fair-access throttling that blocked the inline fetch; mid-cap 40/45 tickers, mega-cap 106/114, 0 download failures). Δ = improvement (>0 helped).
+
+| universe | h20 ΔBrier/ΔECE/ΔAUC | h30 | h60 | gate |
+|---|---|---|---|---|
+| **mid-cap** (`configs/universe_insider.txt`) | +.0007 / +.0008 / −.008 | +.0001 / +.0053 / −.027 | +.0024 / +.0171 / −.012 | candidate ×3 |
+| **mega-cap** (`configs/universe.txt`, control) | −.0001 / −.0001 / −.006 | +.0002 / −.0024 / +.009 | 0.000 / 0.000 / 0.000 | none |
+
+**Finding — structural, not encoding.** Re-engineered insider **consistently improves Brier and calibration (ECE) at all three horizons on the mid-cap universe** (strongest at h60: ECE +0.017), clearing the promote gate every time. The *same features* on the mega-cap universe are **nil** (h60 again exactly 0.000). So insider signal is **universe-dependent**: it lives in small/mid-caps where insiders make opportunistic open-market *buys*; mega-cap Form 4s are dominated by routine scheduled *sells*, so there is no signal to extract regardless of encoding. Caveat: insider is directional — it modestly **lowers big-move (|return|>k) AUC** even where it helps Brier (a calibration-vs-tail-discrimination tradeoff).
+
+**Decision.** **Keep `insider` opt-in; do NOT promote into the mega-cap production baseline** (nil there, confirmed twice). It is a **validated feature for a mid-cap-inclusive universe** (Brier + calibration gains), ready to enable in that regime. The parser enrichment, re-engineered features, and `warm_insider_cache.py` tooling are retained.
+
+**Reproduce.**
+```bash
+PYTHONPATH=src python scripts/warm_insider_cache.py --universe configs/universe_insider.txt
+for h in 20 30 60; do
+  PYTHONPATH=src python scripts/ablate_feature_groups.py --tickers RF KEY ZION FITB AR SM OSK AGCO \
+    --horizon $h --model logistic --groups insider --universe configs/universe_insider.txt --test-size 24
+done
+# mega-cap control: --tickers NVDA MSFT AAPL JPM XOM JNJ TSLA WMT --universe configs/universe.txt
+```

@@ -46,6 +46,35 @@ def test_derivative_flag() -> None:
     assert by_code["P"].is_derivative is False
 
 
+def test_owner_identity_and_role() -> None:
+    t = _parse()[0]
+    assert t.owner_cik == "0001234567"  # for distinct-insider (cluster) counts
+    assert t.is_officer is True
+    assert t.is_director is False
+    assert t.officer_title == "CFO"
+    assert t.is_senior is True  # CFO → senior insider
+
+
+def test_post_transaction_holdings_and_conviction() -> None:
+    by_code = {t.code: t for t in _parse()}
+    p = by_code["P"]  # bought 1000, holds 26000 after → prior 25000
+    assert p.shares_owned_after == pytest.approx(26000.0)
+    assert p.prior_holdings == pytest.approx(25000.0)
+    assert p.ownership_change_fraction == pytest.approx(1000 / 25000)  # +4% conviction
+    s = by_code["S"]  # sold 400, holds 25600 after → prior 26000
+    assert s.prior_holdings == pytest.approx(26000.0)
+    assert s.ownership_change_fraction == pytest.approx(-400 / 26000)  # signed negative
+    # Rows without post-transaction holdings → conviction undefined (None), not 0.
+    assert by_code["A"].shares_owned_after is None
+    assert by_code["A"].ownership_change_fraction is None
+
+
+def test_10b5_1_detected_from_footnote() -> None:
+    by_code = {t.code: t for t in _parse()}
+    assert by_code["S"].is_planned_10b5_1 is True   # footnote F1 names a 10b5-1 plan
+    assert by_code["P"].is_planned_10b5_1 is False  # opportunistic buy, no plan footnote
+
+
 def test_namespaced_xml_is_handled() -> None:
     ns = (
         '<ownershipDocument xmlns="http://www.sec.gov/edgar/ownership">'
