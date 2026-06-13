@@ -763,35 +763,92 @@ nDCG consumes.
 
 ### 11.2 nDCG@k — graded, rank-discounted quality
 
-Discounted cumulative gain rewards high grades early in the ranking and discounts later positions:
+These four quantities build on each other. The goal is **one number for ranking quality** that
+satisfies three intuitions: (1) retrieving a relevant chunk is good; (2) a chunk that answers *more*
+of the question is worth more than one that answers a little (graded, not binary); (3) a relevant
+chunk at rank 1 is worth more than the same chunk at rank 10. Each metric below adds exactly one of
+these.
+
+**CG — Cumulative Gain (the starting point, not reported).** Give each retrieved chunk a *gain*
+$g_i$ = its relevance grade (here, the distinct-span count from §11.1). Cumulative gain is just their
+sum down to depth $k$:
 
 $$
-\mathrm{DCG@}k \;=\; \sum_{i=1}^{k} \frac{2^{\,g_i} - 1}{\log_2(i+1)},
+\mathrm{CG@}k \;=\; \sum_{i=1}^{k} g_i.
 $$
 
-where $g_i$ is the gain of the chunk at rank $i$. The **exponential** numerator $2^{g}-1$
-(Järvelin & Kekäläinen) makes a grade-2 chunk worth more than two grade-1 chunks; the
-$\log_2(i+1)$ denominator is the position discount (rank 1 → divide by 1, rank 2 → by $\log_2 3$, …).
-Normalizing by the ideal ordering puts it in $[0,1]$:
+In plain English: "how much total relevance did the top-$k$ contain." It honors intuitions (1) and
+(2) but **ignores order** — shuffling the top-$k$ leaves CG unchanged, so a system that buries the
+answer at rank 8 scores the same as one that puts it at rank 1. That is the flaw the discount fixes.
+
+**DCG — Discounted Cumulative Gain.** Divide each gain by a **position discount** $\log_2(i+1)$ that
+grows with rank, so later positions contribute less:
 
 $$
-\mathrm{nDCG@}k \;=\; \frac{\mathrm{DCG@}k}{\mathrm{IDCG@}k}, \qquad \mathrm{IDCG@}k = \mathrm{DCG@}k\ \text{of the gains sorted descending}.
+\mathrm{DCG@}k \;=\; \sum_{i=1}^{k} \frac{2^{\,g_i} - 1}{\log_2(i+1)}.
 $$
+
+Two deliberate choices, in words:
+- **Gain transform $2^{g_i}-1$** (the "exponential" convention; Järvelin & Kekäläinen). For binary
+  grades it changes nothing ($2^1-1=1$, $2^0-1=0$). For graded relevance it makes one grade-2 chunk
+  ($2^2-1 = 3$) outweigh two grade-1 chunks ($1+1 = 2$) — i.e. a chunk that answers more of the
+  question beats two that each cover a sliver. (The "linear" convention uses $g_i$ directly; we use
+  exponential.)
+- **Discount $\log_2(i+1)$**: rank 1 → divide by $\log_2 2 = 1$ (no penalty), rank 2 → by
+  $\log_2 3 \approx 1.585$, rank 3 → by $\log_2 4 = 2$, … The *log* (rather than $1/i$) is a gentle
+  decay: rank 3-vs-4 still matters, it is not all-or-nothing at the top.
+
+DCG now honors all three intuitions, but it is **unbounded and query-dependent** — a question with
+five relevant chunks can score far higher than one with a single relevant chunk, so raw DCG cannot be
+compared or averaged across queries. Normalization fixes that.
+
+**IDCG — Ideal DCG (the normalizer).** The DCG of the **best possible ranking**: take all the
+relevant gains, sort them **descending** (highest gain first — the optimal order), and compute DCG of
+that ideal list:
+
+$$
+\mathrm{IDCG@}k \;=\; \sum_{i=1}^{k}\frac{2^{\,g_{(i)}} - 1}{\log_2(i+1)}, \qquad g_{(1)} \ge g_{(2)} \ge \cdots
+$$
+
+In words: "the score a perfect retriever would get on this query" — the maximum achievable DCG@k.
+
+**nDCG — Normalized DCG (what we report).** The ratio of the two, which lands in $[0, 1]$:
+
+$$
+\mathrm{nDCG@}k \;=\; \frac{\mathrm{DCG@}k}{\mathrm{IDCG@}k}.
+$$
+
+$1.0$ means you ranked as well as the ideal ordering; $0.0$ means no relevant chunk was retrieved (or
+none exists). Because every query is now scored *relative to its own achievable best*, nDCG is
+**comparable across queries**, so the mean over a benchmark is meaningful — which is exactly what lets
+us say "hybrid beat dense by $X$."
+
+| metric | what it adds | formula | range | plain English |
+|---|---|---|---|---|
+| CG@k | graded relevance | $\sum_{i\le k} g_i$ | unbounded | total relevance in the top-$k$ |
+| DCG@k | + rank discount | $\sum_{i\le k}\frac{2^{g_i}-1}{\log_2(i+1)}$ | unbounded | relevance, weighted toward the top |
+| IDCG@k | the ideal DCG | DCG of corpus gains sorted ↓ | $=\max \mathrm{DCG}$ | a perfect ranker's score |
+| nDCG@k | normalize → comparable | $\mathrm{DCG}/\mathrm{IDCG}$ | $[0,1]$ | how close to perfect this ranking is |
 
 **The capping subtlety (why IDCG uses the corpus pool).** The ideal gains must be drawn from **all**
 relevant chunks in the (ticker-scoped) corpus, not just the retrieved ones. If a relevant chunk
 exists but was never retrieved, it still belongs in the ideal ranking, so it inflates IDCG and
-correctly **caps** nDCG below 1. Computing IDCG from the retrieved gains alone would score a
-retriever that found one of three relevant chunks — all ranked perfectly — as nDCG = 1, hiding the
-missed recall. In code, `evaluate_query` passes `ideal_gains =` the corpus-relevant grades.
+correctly **caps** nDCG below 1 — folding recall into the score. Computing IDCG from the retrieved
+gains alone would score a retriever that found one of three relevant chunks — all ranked perfectly —
+as nDCG = 1, hiding the missed recall. In code, `evaluate_query` passes `ideal_gains =` the
+corpus-relevant grades.
 
-**Worked micro-examples.**
-- Retrieved gains $[1,0,1]$, $k=3$:
-$\mathrm{DCG} = \tfrac{1}{\log_2 2} + \tfrac{0}{\log_2 3} + \tfrac{1}{\log_2 4} = 1 + 0 + 0.5 = 1.5$;
-ideal $[1,1,0]$: $\mathrm{IDCG} = 1 + \tfrac{1}{\log_2 3} = 1.6309$; $\mathrm{nDCG} = 0.9197$.
-- Retrieved $[1]$ but corpus-relevant $[1,1,1]$, $k=3$: $\mathrm{DCG}=1$,
-$\mathrm{IDCG} = 1 + \tfrac{1}{\log_2 3} + \tfrac{1}{\log_2 4} = 2.1309$, $\mathrm{nDCG}=0.4693$ —
-the two unretrieved relevant chunks cap the score even though every retrieved item was relevant.
+**Worked micro-examples** (the exact values asserted in the tests):
+- *Self-ideal* — retrieved gains $[1,0,1]$, $k=3$:
+$\mathrm{DCG} = \underbrace{\tfrac{2^1-1}{\log_2 2}}_{1} + \underbrace{\tfrac{2^0-1}{\log_2 3}}_{0} + \underbrace{\tfrac{2^1-1}{\log_2 4}}_{0.5} = 1.5$;
+ideal order $[1,1,0]$ gives $\mathrm{IDCG} = 1 + \tfrac{1}{\log_2 3} = 1.6309$, so
+$\mathrm{nDCG} = 1.5 / 1.6309 = 0.9197$. The score is below 1 *only* because the second relevant
+chunk sits at rank 3 instead of rank 2.
+- *IDCG capping* — retrieved $[1]$ but the corpus holds three relevant chunks $[1,1,1]$, $k=3$:
+$\mathrm{DCG}=1$, $\mathrm{IDCG} = 1 + \tfrac{1}{\log_2 3} + \tfrac{1}{\log_2 4} = 2.1309$,
+$\mathrm{nDCG}=0.4693$. Even though *every retrieved chunk was relevant* (precision $1.0$), nDCG is
+~0.47 because the two relevant chunks you **missed** belong in the ideal — self-normalizing would
+have reported a misleading $1.0$.
 
 ### 11.3 Citation accuracy — citation precision (the deterministic generation metric)
 

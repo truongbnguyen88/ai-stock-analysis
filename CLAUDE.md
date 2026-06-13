@@ -47,6 +47,8 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 - `pathlib`, explicit typing, `structlog` (no `print`), config-driven — per global rules.
 
 ## Docs: math & Mermaid (rendered on GitHub)
+**Explanation style (chat *and* docs).** Whenever explaining a mathematical concept, be specific and explain every quantity in **plain English** — for each symbol/term say what it *means* and, where useful, its units/range — not just the formula. Build up compound metrics from their parts (e.g. CG → DCG → IDCG → nDCG), and **include a small worked numeric example** when it aids understanding (reuse the exact values the tests assert, so the doc and the code agree). Prefer a quantity-by-quantity breakdown or a short table over a bare equation.
+
 Markdown docs render on the GitHub website via **MathJax** (`$…$` inline, `$$…$$` block). GitHub **unescapes backslash-escapes of markdown-significant punctuation — `#`, `_`, `*`, `` ` ``, `[`, `]` — even inside math**, so the bare char reaches MathJax and errors. Rules for any doc with equations:
 - **Never write `\#`, `\_`, `\*` (or `` \` ``, `\[`, `\]`) inside `$…$`/`$$…$$`.** They throw *"macro parameter character #"* / *"'_' allowed only in math mode"* on GitHub even though they're valid LaTeX locally.
   - Count/cardinality → use an indicator sum `\frac{1}{N}\sum_t \mathbb{1}[\,\cdot\,]` or `\lvert\{\cdots\}\rvert`, **not** `\#`.
