@@ -38,11 +38,22 @@ def _dedup_by_text(hits: Iterable[RetrievedChunk]) -> list[RetrievedChunk]:
 
 
 class Retriever:
-    """Embed → (filtered) cosine top-k → dedup → ``EvidenceSet``. No LLM; only the store."""
+    """Embed → (filtered) cosine top-k → dedup → ``EvidenceSet``. No LLM; only the store.
 
-    def __init__(self, embedder: Embedder, store: VectorStore) -> None:
+    Satisfies the ``RetrievalSystem`` Protocol (a ``name`` + ``retrieve``), so the eval harness and
+    any future composite retriever (rerank/hybrid/graph) can treat it interchangeably.
+    """
+
+    def __init__(self, embedder: Embedder, store: VectorStore, *, name: str | None = None) -> None:
         self._embedder = embedder
         self._store = store
+        # Label for eval reports; defaults to the embedder it wraps (e.g. "dense:voyage-4").
+        self._name = name or f"dense:{embedder.name}"
+
+    @property
+    def name(self) -> str:
+        """Identifier used in eval reports to distinguish this retrieval system from others."""
+        return self._name
 
     def retrieve(
         self,

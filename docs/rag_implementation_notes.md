@@ -790,3 +790,83 @@ download but ingests **only changed tickers** with `incremental=True`, and skips
 nothing is new. No live SEC/voyage calls.
 
 **RAG layer complete (P0–P9).**
+
+---
+
+# Advanced RAG track (A1–A6)
+
+Roadmap: [ADVANCED_RAG_TODO.md](ADVANCED_RAG_TODO.md). Theory: [rag_concepts.md](rag_concepts.md).
+Every A-phase ships **default-OFF / behind the existing retrieval contract**, gated by a measured
+A1 win, and adds a concepts section (the math) plus this build journal (the mechanism).
+
+## A1 — Retrieval evaluation (generalize `rag/eval.py`)
+
+**Role.** Turn the P9b *embedder* A/B into the **measuring stick for the whole advanced track**: a
+generic harness that scores any retrieval system (dense today; reranked/hybrid/graph later) on the
+labeled set, so A2–A6 land as *measured* wins rather than vibes. This is the gate in front of every
+later phase.
+
+**The one contract everything plugs into — `RetrievalSystem`.** A `@runtime_checkable` Protocol in
+`rag/eval.py`: a read-only `name` + `retrieve(query, *, top_k, where) -> EvidenceSet`. The existing
+`Retriever` satisfies it (we added a `name` property, default `f"dense:{embedder.name}"`); the A2
+reranker, A3 hybrid retriever, and A5 graph retriever will too. Because the metric code depends only
+on this Protocol — never a concrete class — adding a retrieval mode never touches `eval`,
+`research/synthesis`, `research/memo`, or the agent tools. (mypy detail: the Protocol's `name` is a
+**read-only property**, not a bare `name: str`, so a concrete `@property` is accepted.)
+
+**Graded, chunking-invariant relevance.** P9b relevance was binary (does the chunk contain any answer
+span?). A1 keeps the chunking-invariant *phrase* labels but makes relevance **graded**:
+- `LabeledQuery.relevance_grade(chunk) -> int` = the count of **distinct** `relevant_spans` the chunk
+  contains. A chunk answering more of the question gets a higher grade — this integer is the nDCG
+  *gain* `rel_i`. `is_relevant` is now just `grade > 0` (backward compatible).
+- New **optional** metadata gates `expected_document_types` / `expected_sections`: a chunk scores 0
+  unless its `document_type` / `section` is in the given set (e.g. require the answer to come from
+  "Item 1A. Risk Factors"). Both default `None` (no constraint), so the 25-Q P9b set is unchanged.
+  Still chunking-invariant (no `chunk_id`s — those rot on every re-chunk, which A2/A3 do constantly).
+
+**New metrics (pure functions).**
+1. `ndcg_at_k(gains, k, *, ideal_gains=None)` — normalized discounted cumulative gain in [0, 1].
+   `_dcg(g) = Σ_i (2^{g_i} − 1)/log2(i+1)` (exponential gain, log rank-discount). The **ideal** DCG
+   (denominator) is `_dcg` of `ideal_gains` sorted descending; `evaluate_query` passes the **full set
+   of corpus-relevant grades**, so a relevant chunk that was *not retrieved* still inflates the ideal
+   and correctly **caps** the score (passing only the retrieved gains would make nDCG optimistic).
+   Returns 0 when IDCG = 0.
+2. `citation_accuracy(answer, evidence, labeled) -> float | None` — **precision of an answer's
+   citations**: the fraction of `[n]` markers whose resolved `chunk_id` is a *relevant* retrieved
+   chunk. A citation to a never-retrieved chunk counts wrong (the P7 guard should already preclude
+   it). Returns `None` when the answer has no citations (honest refusal / no claim) so the aggregate
+   **excludes** it rather than scoring a non-answer 0. This is the *deterministic* generation-quality
+   metric; the paid LLM **faithfulness** judge is a separate, deferred opt-in layer.
+
+**Aggregation + back-compat.**
+- `evaluate_query(system, q, *, top_k, corpus_chunks) -> QueryReport` (now widened to any
+  `RetrievalSystem`; `QueryReport` gains an `ndcg` field). It computes retrieved gains + the
+  ticker-scoped corpus gains in one place.
+- `evaluate_system(system, queries, *, top_k, corpus_chunks) -> SystemReport` — the new generic
+  spine; the `ndcg`/`recall` means **exclude** queries with no corpus-relevant chunk (mislabeled /
+  out-of-corpus), while `hit`/`mrr`/`precision` average over all.
+- `run_ab(...)` is now a **thin wrapper**: build a fresh store per embedder, wrap in
+  `Retriever(embedder, store, name=key)`, call `evaluate_system`, re-wrap the result as
+  `EmbedderReport` (a `SystemReport` subclass whose `embedder` property mirrors `system`). Existing
+  P9b callers/tests are unchanged.
+- `format_reports_markdown` is generic over `SystemReport` and now prints an `nDCG@k` column; the
+  header reads `system` (was `embedder`) since it renders any system comparison.
+
+**Surfaces.** `rag eval` CLI gains `--report PATH` (dumps the reports as JSON for a local baseline);
+the labeled-file schema documents the two new optional fields. `make rag-eval` runs the **real local
+benchmark** (`--compare local --report outputs/rag_eval/local.json`) — deliberately **not** in
+`make check`: `FakeEmbedder` is hash-based (non-semantic), so CI tests the harness *mechanics*
+deterministically while the real numbers come from a local run against the embedded corpus (exactly
+like model backtests are local, not CI).
+
+**Tested (offline, no model/LLM/network):** nDCG goldens (self-ideal `[1,0,1]→0.9197`; ideal-pool
+cap `[1]` vs `[1,1,1]→0.4693`; perfect order → 1.0); `citation_accuracy` (mixed citations → 0.5;
+no-citations → None); `relevance_grade` distinct-span count + the section/type gate dropping a
+span-match in the wrong section; `RetrievalSystem` conformance for `Retriever` + a `_FixedSystem`
+fake; `evaluate_system` name + nDCG; all P9b tests still green.
+
+**How A2/A3/A5 use it.** Each implements `RetrievalSystem`, is scored by `evaluate_system` on the
+same labeled set, and must beat the dense baseline's nDCG/recall before promotion. `--systems
+dense,hybrid,reranked` (the multi-system CLI surface) lands with A2/A3, when more than one system
+type exists. **Deferred (opt-in, by design):** LLM-judge faithfulness; a `baseline.json` regression
+gate; growing the benchmark to 60–100 Q.

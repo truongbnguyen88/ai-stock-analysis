@@ -20,7 +20,8 @@
 8. [Applications](#8-applications)
 9. [Limitations and failure modes](#9-limitations-and-failure-modes)
 10. [How this repository instantiates RAG](#10-how-this-repository-instantiates-rag)
-11. [References](#11-references)
+11. [Evaluation in practice — the A-track metrics](#11-evaluation-in-practice--the-a-track-metrics)
+12. [References](#12-references)
 
 ---
 
@@ -734,7 +735,158 @@ behavior.
 
 ---
 
-## 11. References
+## 11. Evaluation in practice — the A-track metrics
+
+§6 defined retrieval/generation metrics abstractly. This section is the **operational** theory
+behind phase A1 (`rag/eval.py`): the exact relevance model, the nDCG and citation-accuracy
+formulas as implemented, and *why* the harness — not the model — is the prerequisite for every
+later retrieval change (rerank, hybrid, graph, RL). Measurement is the gate: a "better" retriever
+is only better if it moves a number on a fixed labeled set.
+
+### 11.1 Graded, chunking-invariant relevance
+
+Labels are answer-bearing **phrases**, never `chunk_id`s — so the *same* labels survive re-chunking
+(A2/A3 re-chunk constantly; chunk-id labels would rot). For query $q$ with labeled span set $S_q$,
+the graded relevance (the **gain**) of chunk $c$ is the count of distinct spans it contains, gated by
+optional metadata constraints:
+
+$$
+g_q(c) \;=\; \Big\lvert \{\, s \in S_q : \hat{s} \subseteq \hat{c} \,\} \Big\rvert \;\cdot\; \mathbb{1}\big[\,\mathrm{meta}_q(c)\,\big],
+$$
+
+where $\hat{x}$ is the normalized text (lowercased, whitespace-collapsed), $\hat s \subseteq \hat c$
+means "the span occurs in the chunk," and $\mathbb{1}[\mathrm{meta}_q(c)]$ is 1 iff $c$'s
+`document_type` and `section` satisfy the query's optional `expected_document_types` /
+`expected_sections` filters (else 0). Binary relevance is the special case $\mathrm{rel}_q(c) = \mathbb{1}[\,g_q(c) > 0\,]$.
+A higher grade means a chunk answers *more* of the question — and graded gains are exactly what
+nDCG consumes.
+
+### 11.2 nDCG@k — graded, rank-discounted quality
+
+These four quantities build on each other. The goal is **one number for ranking quality** that
+satisfies three intuitions: (1) retrieving a relevant chunk is good; (2) a chunk that answers *more*
+of the question is worth more than one that answers a little (graded, not binary); (3) a relevant
+chunk at rank 1 is worth more than the same chunk at rank 10. Each metric below adds exactly one of
+these.
+
+**CG — Cumulative Gain (the starting point, not reported).** Give each retrieved chunk a *gain*
+$g_i$ = its relevance grade (here, the distinct-span count from §11.1). Cumulative gain is just their
+sum down to depth $k$:
+
+$$
+\mathrm{CG@}k \;=\; \sum_{i=1}^{k} g_i.
+$$
+
+In plain English: "how much total relevance did the top-$k$ contain." It honors intuitions (1) and
+(2) but **ignores order** — shuffling the top-$k$ leaves CG unchanged, so a system that buries the
+answer at rank 8 scores the same as one that puts it at rank 1. That is the flaw the discount fixes.
+
+**DCG — Discounted Cumulative Gain.** Divide each gain by a **position discount** $\log_2(i+1)$ that
+grows with rank, so later positions contribute less:
+
+$$
+\mathrm{DCG@}k \;=\; \sum_{i=1}^{k} \frac{2^{\,g_i} - 1}{\log_2(i+1)}.
+$$
+
+Two deliberate choices, in words:
+- **Gain transform $2^{g_i}-1$** (the "exponential" convention; Järvelin & Kekäläinen). For binary
+  grades it changes nothing ($2^1-1=1$, $2^0-1=0$). For graded relevance it makes one grade-2 chunk
+  ($2^2-1 = 3$) outweigh two grade-1 chunks ($1+1 = 2$) — i.e. a chunk that answers more of the
+  question beats two that each cover a sliver. (The "linear" convention uses $g_i$ directly; we use
+  exponential.)
+- **Discount $\log_2(i+1)$**: rank 1 → divide by $\log_2 2 = 1$ (no penalty), rank 2 → by
+  $\log_2 3 \approx 1.585$, rank 3 → by $\log_2 4 = 2$, … The *log* (rather than $1/i$) is a gentle
+  decay: rank 3-vs-4 still matters, it is not all-or-nothing at the top.
+
+DCG now honors all three intuitions, but it is **unbounded and query-dependent** — a question with
+five relevant chunks can score far higher than one with a single relevant chunk, so raw DCG cannot be
+compared or averaged across queries. Normalization fixes that.
+
+**IDCG — Ideal DCG (the normalizer).** The DCG of the **best possible ranking**: take all the
+relevant gains, sort them **descending** (highest gain first — the optimal order), and compute DCG of
+that ideal list:
+
+$$
+\mathrm{IDCG@}k \;=\; \sum_{i=1}^{k}\frac{2^{\,g_{(i)}} - 1}{\log_2(i+1)}, \qquad g_{(1)} \ge g_{(2)} \ge \cdots
+$$
+
+In words: "the score a perfect retriever would get on this query" — the maximum achievable DCG@k.
+
+**nDCG — Normalized DCG (what we report).** The ratio of the two, which lands in $[0, 1]$:
+
+$$
+\mathrm{nDCG@}k \;=\; \frac{\mathrm{DCG@}k}{\mathrm{IDCG@}k}.
+$$
+
+$1.0$ means you ranked as well as the ideal ordering; $0.0$ means no relevant chunk was retrieved (or
+none exists). Because every query is now scored *relative to its own achievable best*, nDCG is
+**comparable across queries**, so the mean over a benchmark is meaningful — which is exactly what lets
+us say "hybrid beat dense by $X$."
+
+| metric | what it adds | formula | range | plain English |
+|---|---|---|---|---|
+| CG@k | graded relevance | $\sum_{i\le k} g_i$ | unbounded | total relevance in the top-$k$ |
+| DCG@k | + rank discount | $\sum_{i\le k}\frac{2^{g_i}-1}{\log_2(i+1)}$ | unbounded | relevance, weighted toward the top |
+| IDCG@k | the ideal DCG | DCG of corpus gains sorted ↓ | $=\max \mathrm{DCG}$ | a perfect ranker's score |
+| nDCG@k | normalize → comparable | $\mathrm{DCG}/\mathrm{IDCG}$ | $[0,1]$ | how close to perfect this ranking is |
+
+**The capping subtlety (why IDCG uses the corpus pool).** The ideal gains must be drawn from **all**
+relevant chunks in the (ticker-scoped) corpus, not just the retrieved ones. If a relevant chunk
+exists but was never retrieved, it still belongs in the ideal ranking, so it inflates IDCG and
+correctly **caps** nDCG below 1 — folding recall into the score. Computing IDCG from the retrieved
+gains alone would score a retriever that found one of three relevant chunks — all ranked perfectly —
+as nDCG = 1, hiding the missed recall. In code, `evaluate_query` passes `ideal_gains =` the
+corpus-relevant grades.
+
+**Worked micro-examples** (the exact values asserted in the tests):
+- *Self-ideal* — retrieved gains $[1,0,1]$, $k=3$:
+$\mathrm{DCG} = \underbrace{\tfrac{2^1-1}{\log_2 2}}_{1} + \underbrace{\tfrac{2^0-1}{\log_2 3}}_{0} + \underbrace{\tfrac{2^1-1}{\log_2 4}}_{0.5} = 1.5$;
+ideal order $[1,1,0]$ gives $\mathrm{IDCG} = 1 + \tfrac{1}{\log_2 3} = 1.6309$, so
+$\mathrm{nDCG} = 1.5 / 1.6309 = 0.9197$. The score is below 1 *only* because the second relevant
+chunk sits at rank 3 instead of rank 2.
+- *IDCG capping* — retrieved $[1]$ but the corpus holds three relevant chunks $[1,1,1]$, $k=3$:
+$\mathrm{DCG}=1$, $\mathrm{IDCG} = 1 + \tfrac{1}{\log_2 3} + \tfrac{1}{\log_2 4} = 2.1309$,
+$\mathrm{nDCG}=0.4693$. Even though *every retrieved chunk was relevant* (precision $1.0$), nDCG is
+~0.47 because the two relevant chunks you **missed** belong in the ideal — self-normalizing would
+have reported a misleading $1.0$.
+
+### 11.3 Citation accuracy — citation precision (the deterministic generation metric)
+
+Retrieval metrics ask "did we fetch the right chunks?"; the first *generation* question is "did the
+answer cite honestly?" For an answer's citation set $C = \{(m_t, j_t)\}$ (inline marker $m$ →
+`chunk_id` $j$), with retrieved set $R$ and the relevance predicate $\mathrm{rel}_q$:
+
+$$
+\mathrm{CitAcc}_q \;=\; \frac{1}{\lvert C \rvert} \sum_{(m,j)\,\in\,C} \mathbb{1}\big[\, j \in R \ \wedge\ \mathrm{rel}_q(j) \,\big], \qquad (\text{undefined when } \lvert C \rvert = 0).
+$$
+
+It is the **precision** of citations: of everything the answer claimed a source for, how much pointed
+to a chunk that was both retrieved and actually relevant. A citation to a non-retrieved chunk counts
+as wrong (the P7 citation guard should already preclude it — this metric *measures* what the guard
+*enforces*). When the answer makes no citations (an honest "insufficient evidence" refusal), the
+metric is undefined and **excluded** from the mean — a refusal is not a wrong answer.
+
+This sits *below* **faithfulness** (is every claim entailed by its cited chunk?), which needs a paid
+LLM judge and is subjective; that layer is deliberately deferred and opt-in. Citation accuracy is the
+cheap, deterministic floor we can gate on in code.
+
+### 11.4 Aggregation and the CI-vs-real-corpus split
+
+Per-query metrics average into a `SystemReport`, with one convention: **queries with no
+corpus-relevant chunk are excluded** from the nDCG and recall means (a mislabeled or out-of-corpus
+query has an undefined ideal, so averaging its 0 would distort the system score); hit, MRR, and
+precision average over all queries.
+
+Finally, a reproducibility point that recurs across this repo: the unit tests use a **hash-based
+`FakeEmbedder`** (deterministic, non-semantic), so CI verifies the harness *mechanics* — metric
+arithmetic, Protocol conformance, citation bookkeeping — without ever downloading a model. The
+**real** benchmark numbers (which embedder/retriever actually retrieves better) come from a **local**
+`make rag-eval` run against the embedded corpus, exactly as model backtests run locally rather than
+in CI. A metric you cannot recompute deterministically is not a regression gate.
+
+---
+
+## 12. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -742,6 +894,8 @@ behavior.
   and in-batch contrastive training.
 - Oord et al. (2018), *Representation Learning with Contrastive Predictive Coding* — InfoNCE.
 - Robertson & Zaragoza (2009), *The Probabilistic Relevance Framework: BM25 and Beyond*.
+- Järvelin & Kekäläinen (2002), *Cumulated Gain-Based Evaluation of IR Techniques* — DCG / nDCG
+  and the exponential-gain formulation used in §11.2.
 - Malkov & Yashunin (2018), *Efficient and robust approximate nearest neighbor search using
   HNSW graphs*.
 - Carbonell & Goldstein (1998), *The Use of MMR for Reordering Documents*.

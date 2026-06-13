@@ -6,6 +6,7 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 - Architecture, layers, module responsibilities, agent design → [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Scope tiers + ordered build plan → [docs/ROADMAP.md](docs/ROADMAP.md)
 - RAG layer (SEC-grounded research assistant): plan → [docs/RAG_IMPLEMENTATION_PLAN.md](docs/RAG_IMPLEMENTATION_PLAN.md); ordered build steps + locked decisions → [docs/RAG_TODO.md](docs/RAG_TODO.md); concepts/theory → [docs/rag_concepts.md](docs/rag_concepts.md); per-phase build journal → [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md)
+- Advanced RAG track (hybrid/rerank/eval/agentic/graph/RL) — **plan of record** → [docs/ADVANCED_RAG_TODO.md](docs/ADVANCED_RAG_TODO.md) (phases A1–A6); design rationale only (superseded on specifics) → [docs/RAG_IMPLEMENTATION_PLAN_ADV.md](docs/RAG_IMPLEMENTATION_PLAN_ADV.md)
 - Always know which **roadmap step** you are on; if unclear, ask before coding.
 
 ## Non-negotiable invariants
@@ -32,6 +33,11 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 5. Do not start the next step until the current one is green.
 - Respect phase gates: never wrap a pipeline in an `agent/` tool before that pipeline exists (agent phases 4.5 / 6.5 come after their dependencies).
 - **RAG phases:** when a RAG_TODO phase (P-N) lands green, in the same change (a) mark it `[x]` in [docs/RAG_TODO.md](docs/RAG_TODO.md), and (b) **append a section to [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md)** explaining that phase's mechanism (role, key files, how it works step-by-step, how the next phase uses it, key decisions). The notes doc is the learning archive — keep it complete and current.
+- **Advanced RAG phases (A-N, [docs/ADVANCED_RAG_TODO.md](docs/ADVANCED_RAG_TODO.md)):** these are *learning-oriented* — the user is studying the advanced-RAG concepts (hybrid search, reranking, retrieval eval, agentic RAG, GraphRAG, retrieval+RL), so every phase carries a teaching obligation in addition to the P-N rules above. When an A-N phase lands green, in the same change:
+  - (a) mark it `[x]` in [docs/ADVANCED_RAG_TODO.md](docs/ADVANCED_RAG_TODO.md), and (b) append the build-mechanism section to [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md) (same rule as P-N).
+  - (c) **In the chat response, clearly explain what was implemented and the foundational/mathematical concepts behind the feature** — definitions, the formula(s) with notation, why it works, assumptions/failure modes, and how it composes with the existing retrieval stack. High signal-to-noise; no filler.
+  - (d) **Append a new concepts/theory section to [docs/rag_concepts.md](docs/rag_concepts.md)** capturing that same math/theory durably (not the build log — that's the notes doc). State each formula with its convention, define every symbol, give a worked micro-example where it clarifies, and cite the canonical source where relevant (e.g. RRF, nDCG, BM25, IPS/doubly-robust). Obey the repo's GitHub-MathJax escaping rules (see "Docs: math & Mermaid").
+  - Division of labor: `rag_concepts.md` = the *why/math* (durable theory); `rag_implementation_notes.md` = the *how/where* (per-phase build journal). Keep both current.
 
 ## Code style (project-specific)
 - **Comment for the next maintainer, not the parser.** Explain *why* and any non-obvious math/finance assumption (e.g. annualization factor, RSI smoothing choice, embargo length, bootstrap block size). Skip comments that merely restate the code.
@@ -41,6 +47,8 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 - `pathlib`, explicit typing, `structlog` (no `print`), config-driven — per global rules.
 
 ## Docs: math & Mermaid (rendered on GitHub)
+**Explanation style (chat *and* docs).** Whenever explaining a mathematical concept, be specific and explain every quantity in **plain English** — for each symbol/term say what it *means* and, where useful, its units/range — not just the formula. Build up compound metrics from their parts (e.g. CG → DCG → IDCG → nDCG), and **include a small worked numeric example** when it aids understanding (reuse the exact values the tests assert, so the doc and the code agree). Prefer a quantity-by-quantity breakdown or a short table over a bare equation.
+
 Markdown docs render on the GitHub website via **MathJax** (`$…$` inline, `$$…$$` block). GitHub **unescapes backslash-escapes of markdown-significant punctuation — `#`, `_`, `*`, `` ` ``, `[`, `]` — even inside math**, so the bare char reaches MathJax and errors. Rules for any doc with equations:
 - **Never write `\#`, `\_`, `\*` (or `` \` ``, `\[`, `\]`) inside `$…$`/`$$…$$`.** They throw *"macro parameter character #"* / *"'_' allowed only in math mode"* on GitHub even though they're valid LaTeX locally.
   - Count/cardinality → use an indicator sum `\frac{1}{N}\sum_t \mathbb{1}[\,\cdot\,]` or `\lvert\{\cdots\}\rvert`, **not** `\#`.

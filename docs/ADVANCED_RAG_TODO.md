@@ -71,7 +71,7 @@ implementations of the same "query (+filter) → ranked chunks" contract, so `re
 
 | # | Enhancement | Order rationale | Type | Complexity |
 |---|---|---|---|---|
-| **A1** | Retrieval Evaluation | The measuring stick; extends `rag/eval.py`; lowest risk | Foundation | **Low–Med** (~1.5d) |
+| **A1 ✅** | Retrieval Evaluation | The measuring stick; extends `rag/eval.py`; lowest risk | Foundation | **Low–Med** (~1.5d) |
 | **A2** | Reranking | Biggest quality win per effort; local-first, self-contained | Ship value | **Low–Med** (~1.5d) |
 | **A3** | Hybrid Search | Fixes a *different* failure mode (exact ticker/section/number terms) | Ship value | **Med** (~2d) |
 | **A4** | Agentic RAG | Needs strong retrieval primitives first; bounded LLM cost | Ship value | **Med–High** (~2.5d) |
@@ -86,6 +86,15 @@ forecasting track's LSTM/news-feature negatives).
 ---
 
 ## A1 — Retrieval Evaluation (extend `rag/eval.py`) ✅ gate for everything else
+
+> **Status: DONE (2026-06-13).** Shipped: `RetrievalSystem` Protocol; graded relevance
+> (`relevance_grade` + `expected_document_types`/`expected_sections`); `ndcg_at_k`,
+> `citation_accuracy`; `SystemReport` + generic `evaluate_system` (with `run_ab`/`EmbedderReport`
+> as back-compat wrappers); `Retriever.name`; `rag eval --report` + `make rag-eval`. Mechanism →
+> [rag_implementation_notes.md](rag_implementation_notes.md) §A1; math → [rag_concepts.md](rag_concepts.md) §11.
+> **Deferred (opt-in, by design):** LLM-judge **faithfulness** metric; **baseline.json regression
+> gate**; growing the benchmark to 60–100 Q. `--systems dense,hybrid,reranked` lands with A2/A3
+> (only the dense system exists today).
 
 **Learning objective.** Rigorous IR evaluation: Precision@k, Recall@k, MRR, **nDCG@k**, plus the
 RAG-specific **citation-accuracy** and **answer-faithfulness**; regression-gating retrieval changes.
