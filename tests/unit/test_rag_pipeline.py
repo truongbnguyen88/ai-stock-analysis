@@ -20,6 +20,7 @@ from stock_agent.rag.pipeline import (
     iter_filing_dirs,
 )
 from stock_agent.rag.retriever import Retriever
+from stock_agent.rag.sparse_store import InMemoryBM25Store
 from stock_agent.rag.vector_store import InMemoryVectorStore
 from stock_agent.schemas.retrieval import ChunkFilter
 
@@ -74,6 +75,50 @@ def test_ingest_ticker_loads_chunks_into_store(tmp_path: Path) -> None:
     assert isinstance(result, IngestResult)
     assert result.filings == 1 and result.chunks >= 2
     assert store.count() == result.chunks
+
+
+def test_ingest_maintains_sparse_index_in_lockstep(tmp_path: Path) -> None:
+    _make_filing(tmp_path)
+    store = InMemoryVectorStore()
+    sparse = InMemoryBM25Store()
+    result = ingest_ticker(
+        "NVDA", documents_dir=tmp_path, embedder=_EMB, store=store, sparse_store=sparse
+    )
+    # Both indexes hold the same chunks; the BM25 side finds a term from the filing text.
+    assert sparse.count() == result.chunks == store.count()
+    hits = sparse.search("export", top_k=5, where=ChunkFilter(ticker="NVDA"))
+    assert hits  # the sparse index is queryable right after ingest
+
+
+def test_incremental_ingest_backfills_sparse_without_re_embedding(tmp_path: Path) -> None:
+    _make_filing(tmp_path)
+    store = InMemoryVectorStore()
+    # First: dense-only ingest (sparse index does not yet exist — simulates a pre-A3 corpus).
+    ingest_ticker("NVDA", documents_dir=tmp_path, embedder=_EMB, store=store)
+    sparse = InMemoryBM25Store()
+
+    class _CountingEmbedder:
+        name = "counting"
+        dim = 32
+        calls = 0
+
+        def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
+            type(self).calls += 1
+            return _EMB.embed_documents(texts)
+
+        def embed_query(self, text: str) -> list[float]:
+            return _EMB.embed_query(text)
+
+    emb = _CountingEmbedder()
+    # Incremental re-ingest: dense chunks already present → 0 embed calls, but the empty sparse
+    # index backfills from its OWN existing_ids (all chunks new to it).
+    result = ingest_ticker(
+        "NVDA", documents_dir=tmp_path, embedder=emb, store=store, sparse_store=sparse,
+        incremental=True,
+    )
+    assert result.chunks == 0  # nothing new to embed
+    assert emb.calls == 0  # so the embedder was never called
+    assert sparse.count() == store.count() > 0  # yet the sparse index was fully backfilled
 
 
 def test_ingest_is_idempotent(tmp_path: Path) -> None:

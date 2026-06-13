@@ -34,7 +34,7 @@ from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.rag.embeddings import embedding_namespace
-from stock_agent.rag.rerank import build_retrieval_system
+from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.rag.vector_store import build_vector_store, collection_name_for
 from stock_agent.research.synthesis import ResearchGuardError, answer_question

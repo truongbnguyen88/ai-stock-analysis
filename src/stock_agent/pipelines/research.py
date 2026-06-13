@@ -20,7 +20,7 @@ from stock_agent.llm.news_summarizer import SummaryGuardError, summarize_news
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
-from stock_agent.rag.rerank import build_retrieval_system
+from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.research.memo import MemoGuardError, build_memo
 from stock_agent.schemas.research import ResearchMemo

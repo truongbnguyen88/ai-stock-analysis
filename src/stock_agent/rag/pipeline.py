@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from stock_agent.documents.parsers import load_filing
 from stock_agent.rag.chunking import chunk_filing, estimate_tokens
 from stock_agent.rag.embeddings import Embedder
+from stock_agent.rag.sparse_store import SparseStore
 from stock_agent.rag.vector_store import VectorStore
 from stock_agent.schemas.documents import DocumentChunk
 
@@ -99,6 +100,7 @@ def ingest_ticker(
     chunk_overlap: float = _DEFAULT_CHUNK_OVERLAP,
     max_embed_tokens: int | None = None,
     incremental: bool = False,
+    sparse_store: SparseStore | None = None,
 ) -> IngestResult:
     """Parse → chunk → embed → upsert every downloaded filing for ``ticker``.
 
@@ -113,16 +115,22 @@ def ingest_ticker(
     ``max_embed_tokens`` (RAG_TODO 9a) is a client-side spend ceiling: when the estimated
     embedding tokens (of the chunks actually being embedded) exceed it, the run is **refused
     before any embedding call** (raising ``EmbedBudgetExceeded``). ``None`` disables the guard.
+
+    ``sparse_store`` (advanced-RAG A3) keeps the BM25 index in lockstep with the vector store —
+    indexing is $0 (no embedding). It uses the *sparse* store's own ``existing_ids`` for the
+    incremental skip, so enabling hybrid on an existing corpus backfills the BM25 index on the next
+    ingest/refresh without re-embedding anything.
     """
     dirs = iter_filing_dirs(documents_dir, ticker)
-    chunks = build_chunks(
+    all_chunks = build_chunks(
         ticker, documents_dir=documents_dir, chunk_tokens=chunk_tokens, chunk_overlap=chunk_overlap
     )
+    chunks = all_chunks
     skipped = 0
-    if incremental and chunks:
-        present = store.existing_ids([c.chunk_id for c in chunks])
+    if incremental and all_chunks:
+        present = store.existing_ids([c.chunk_id for c in all_chunks])
         skipped = len(present)
-        chunks = [c for c in chunks if c.chunk_id not in present]  # embed only the new ones
+        chunks = [c for c in all_chunks if c.chunk_id not in present]  # embed only the new ones
     embed_tokens = estimate_tokens([c.text for c in chunks]) if chunks else 0
     # Refuse BEFORE embedding so an over-budget run incurs no provider spend.
     if max_embed_tokens is not None and embed_tokens > max_embed_tokens:
@@ -130,14 +138,35 @@ def ingest_ticker(
     if chunks:
         vectors = embedder.embed_documents([c.text for c in chunks])
         store.add(chunks, vectors)
+    sparse_added = _index_sparse(sparse_store, all_chunks, incremental=incremental)
     log.info(
         "rag.ingest", ticker=ticker, filings=len(dirs), chunks=len(chunks),
-        embed_tokens=embed_tokens, skipped_existing=skipped,
+        embed_tokens=embed_tokens, skipped_existing=skipped, sparse_added=sparse_added,
     )
     return IngestResult(
         ticker=ticker, filings=len(dirs), chunks=len(chunks),
         embed_tokens=embed_tokens, skipped_existing=skipped,
     )
+
+
+def _index_sparse(
+    sparse_store: SparseStore | None, chunks: Sequence[DocumentChunk], *, incremental: bool
+) -> int:
+    """Add ``chunks`` to the sparse (BM25) index, skipping already-indexed ids when incremental.
+
+    Uses the sparse store's OWN ``existing_ids`` (not the vector store's), so the BM25 index can
+    backfill independently. Returns how many chunks were newly indexed. No-op when ``sparse_store``
+    is None (hybrid off).
+    """
+    if sparse_store is None or not chunks:
+        return 0
+    to_add = list(chunks)
+    if incremental:
+        present = sparse_store.existing_ids([c.chunk_id for c in chunks])
+        to_add = [c for c in chunks if c.chunk_id not in present]
+    if to_add:
+        sparse_store.add(to_add)
+    return len(to_add)
 
 
 class BulkIngestResult(BaseModel):
@@ -161,6 +190,7 @@ def bulk_ingest(
     chunk_overlap: float = _DEFAULT_CHUNK_OVERLAP,
     max_embed_tokens: int | None = None,
     incremental: bool = False,
+    sparse_store: SparseStore | None = None,
     retries: int = 2,
     sleep: Callable[[float], None] = time.sleep,
 ) -> BulkIngestResult:
@@ -192,6 +222,7 @@ def bulk_ingest(
                         chunk_overlap=chunk_overlap,
                         max_embed_tokens=max_embed_tokens,
                         incremental=incremental,
+                        sparse_store=sparse_store,
                     )
                 )
                 last_exc = None

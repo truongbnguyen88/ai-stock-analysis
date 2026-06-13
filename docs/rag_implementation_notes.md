@@ -927,3 +927,62 @@ The real onnx cross-encoder is exercised only behind `RUN_RERANK_TESTS=1` (downl
 becomes hybrid→rerank simply by having `build_retrieval_system` wrap the hybrid base instead of the
 dense one — no change to `RerankingRetriever`, synthesis, memo, or the agent. **Deferred:** turning
 rerank on by default (gated on a measured A1 `make rag-eval` win over the dense baseline).
+
+## A3 — Hybrid search (`rag/sparse_store.py`, `rag/hybrid.py`, `rag/read_path.py`)
+
+**Role.** Add the **lexical** half of retrieval. Dense embeddings match *meaning* but blur exact
+terms (a ticker, "Item 7A", "Hopper", a dollar figure); BM25 matches exact *terms* but misses
+paraphrase. Run both and fuse their rankings → recover each other's misses. Default-OFF
+(`retrieval_mode="dense"`).
+
+**Key files / mechanism (step-by-step).**
+1. **`rag/sparse_store.py` — the BM25 index.**
+   - `SparseStore` Protocol: `add(chunks)`, `search(query,*,top_k,where)->[(chunk_id,score)]`,
+     `fetch(ids)->{id:chunk}` (materialize for fusion), `existing_ids(ids)`, `count()`. Higher
+     score = better (we negate sqlite's `bm25()`, which is more-negative = more-relevant).
+   - `Fts5SparseStore` (default, persistent) — a SQLite **FTS5** virtual table (Python stdlib
+     `sqlite3`, **no new dep**): `text` indexed, metadata columns `UNINDEXED` (stored + filtered via
+     SQL `WHERE`). `add` is delete-then-insert by `chunk_id` (idempotent upsert). `search` reduces
+     the NL query to alphanumeric tokens OR-ed together (recall-friendly + robust to FTS5's MATCH
+     operator syntax), ranks by `bm25()`, applies the `ChunkFilter` as a `WHERE` fragment. Tokenizer
+     `unicode61 tokenchars '.-'` keeps "U.S."/"10-K" partly intact. `db_path` namespaced per embedder
+     (parallel to the Chroma collection).
+   - `InMemoryBM25Store` — a ~40-line pure-Python Okapi BM25 (`k1=1.5`, `b=0.75`, non-negative IDF)
+     for tests, backend parity, and the no-FTS5 fallback. Not persistent → prod uses FTS5.
+   - `build_sparse_store(settings)` — FTS5 if `fts5_available()`, else in-memory; feature-detected so
+     a sqlite without FTS5 degrades instead of crashing.
+2. **`rag/hybrid.py` — fusion.**
+   - `reciprocal_rank_fusion(ranked_lists, *, k=60)` — pure: `score(d) = Σ_L 1/(k + rank_L(d))` over
+     the lists containing `d` (1-based rank), sorted desc, ties broken by id for determinism. **Rank**
+     based, so we never reconcile cosine vs BM25 score scales.
+   - `HybridRetriever(dense, sparse, *, k_rrf, dense_k, sparse_k)` — over-fetch each side (≥ top_k,
+     same `ChunkFilter` on both), RRF-fuse the two id-rankings, take top_k. Dense hits already carry
+     chunk objects; **sparse-only** ids are materialized via `sparse.fetch`. Empty sparse → the dense
+     ranking is returned unchanged (graceful degrade). Satisfies `RetrievalSystem`
+     (`name="hybrid(<dense>+<sparse>)"`). Only reorders/selects chunks → citations/numbers untouched.
+3. **`rag/read_path.py` — composition root (moved here from `rag/rerank.py`).** `build_retrieval_system`
+   now assembles the full lattice: `dense Retriever → (HybridRetriever if retrieval_mode="hybrid") →
+   (RerankingRetriever if rerank_provider≠"none")`, i.e. **`rerank(hybrid(dense, sparse))`** with both
+   on. It is the only module that knows the stack's shape; the 3 call sites (`pipelines/research`,
+   `agent/tools`, `rag query` CLI) just call it. `store`/`sparse_store` are injectable for tests.
+4. **Ingest writes both indexes.** `ingest_ticker`/`bulk_ingest` gain `sparse_store=`; the helper
+   `_index_sparse` adds chunks to BM25 using the **sparse store's own** `existing_ids` for the
+   incremental skip — so enabling hybrid on a pre-A3 corpus **backfills the BM25 index on the next
+   refresh with zero embedding** (dense chunks already present → 0 embed calls, but the empty sparse
+   index ingests them all, $0). `documents ingest`/`refresh` always pass a sparse store (stdlib, free)
+   so hybrid is ready without a manual backfill step.
+5. **Config:** `retrieval_mode="dense"|"hybrid"`, `hybrid_rrf_k=60`, `hybrid_dense_k`/`hybrid_sparse_k=30`,
+   `sparse_store_dir=data/sparse`.
+
+**Tested (offline; temp sqlite / in-memory):** both backends parametrized through one suite
+(search ranking, metadata/section/date filters, `existing_ids`, `fetch`, idempotent upsert, empty
+query); RRF golden order + score + tie determinism; `HybridRetriever` recovers a sparse-only
+exact-term hit (materialized via `fetch`) and ranks it above the dense rank-2 chunk; empty-sparse →
+dense fallback; filter applied to both sides; factory gating (`hybrid`, `hybrid+rerank`); A1↔A3
+`evaluate_system` scores a `HybridRetriever`; ingest dual-index + incremental sparse backfill with a
+counting embedder proving **0 embed calls**.
+
+**How A4+ uses it.** The production retrieval base is now `rerank(hybrid(dense, sparse))` purely by
+config — A4 agentic retrieval calls `build_retrieval_system` per sub-query and inherits whatever stack
+is enabled. **Deferred (now unblocked):** the `--systems dense,hybrid,reranked` eval CLI and the
+full-lattice `make rag-eval` run that decides which stages to promote ON by default.
