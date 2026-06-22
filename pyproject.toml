@@ -103,7 +103,9 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12 matches the actual dev/CI/retrain environment (see .github/workflows/ci.yml). Targeting an
+# older version made mypy reject PEP 695 `type` statements in newer numpy (2.4+) stubs.
+python_version = "3.12"
 strict = true
 files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
