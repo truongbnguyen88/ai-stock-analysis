@@ -206,8 +206,11 @@ Voyage rerank cost (small, opt-in).
 > [rag_implementation_notes.md](rag_implementation_notes.md) §A3; math → [rag_concepts.md](rag_concepts.md) §13.
 > `make check` green (660 passed). **Eval-lattice CLI: DONE** — `rag eval --systems
 > dense,reranked,hybrid,hybrid+rerank [--diagnostic]` + `build_named_system` (the A6 action-space
-> seed) landed as an A1/A3 follow-up (669 passed). **Deferred:** the actual local `make rag-eval`
-> lattice run + the promotion decision (which stage to default ON).
+> seed) landed as an A1/A3 follow-up (669 passed). **PROMOTED (2026-06-22):** ran the lattice —
+> **hybrid wins** (nDCG 0.787→0.823, P 0.760→0.805); `retrieval_mode` default → `hybrid`. Rerank was
+> marginal (ms-marco reranker, domain-mismatched) → left OFF but kept available (A6 action). Added
+> `documents backfill-sparse` (populate BM25 from existing filings, no embedding). See
+> [rag_implementation_notes.md](rag_implementation_notes.md) "Promotion".
 
 **Learning objective.** Sparse/BM25 retrieval and **rank fusion**; why dense and sparse are
 complementary (semantics vs exact terms: tickers, section names, defined terms, dollar figures).

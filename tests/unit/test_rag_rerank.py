@@ -142,13 +142,17 @@ def test_build_reranker_defaults_to_noop_when_disabled() -> None:
     )
 
 
-def test_build_retrieval_system_is_default_off() -> None:
+def test_build_retrieval_system_rerank_gating() -> None:
     store = InMemoryVectorStore()
-    # Default (rerank_provider="none") → the plain dense Retriever, byte-identical to A1.
-    plain = build_retrieval_system(Settings(_env_file=None), store=store)
+    # All stages off (dense + no rerank) → the plain dense Retriever, byte-identical to A1.
+    plain = build_retrieval_system(
+        Settings(_env_file=None, retrieval_mode="dense", rerank_provider="none"), store=store
+    )
     assert isinstance(plain, Retriever)
-    # rerank_provider="local" → wrapped (no model load — fastembed is lazy).
-    wrapped = build_retrieval_system(Settings(_env_file=None, rerank_provider="local"), store=store)
+    # rerank_provider="local" on a dense base → wrapped (no model load — fastembed is lazy).
+    wrapped = build_retrieval_system(
+        Settings(_env_file=None, retrieval_mode="dense", rerank_provider="local"), store=store
+    )
     assert isinstance(wrapped, RerankingRetriever)
     assert isinstance(wrapped, RetrievalSystem)
 

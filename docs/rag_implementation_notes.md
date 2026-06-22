@@ -1014,5 +1014,28 @@ the four configs you could actually ship.
 
 **Caveat for the run.** The A1 benchmark uses answer-span labels (semantic-leaning), which may
 *understate* hybrid's exact-term edge — if hybrid looks flat, add exact-term queries
-(tickers/section-names/figures) before concluding, don't dismiss it. **Deferred:** the actual local
-`make rag-eval --systems …` run + the promotion decision (which stage to default ON).
+(tickers/section-names/figures) before concluding, don't dismiss it.
+
+## Promotion — hybrid is now the default (2026-06-22)
+
+Ran the lattice (`make rag-eval`, voyage-4 dense base, 25 Q / 5 tickers). Result (vs the dense
+baseline): **hybrid wins across the board** — nDCG@8 0.787→0.823, P@8 0.760→0.805, MRR 0.890→0.907,
+hit@8 0.920→0.960 — and the sparse-only diagnostic has *higher* recall@8 than dense (0.153 vs 0.142),
+confirming BM25 contributes complementary exact-term signal. Reranking was **marginal/ambiguous**:
+on dense it slightly *hurt* nDCG (−0.010) while lifting hit@8; on hybrid it gave perfect hit@8 (1.000)
+and better MRR but flat nDCG. The reranker is the web-trained `ms-marco-MiniLM` (domain-mismatched to
+SEC text), so its weak showing may be the model, not the concept.
+
+**Decision:**
+- **`retrieval_mode` default `dense → hybrid`** (`settings.py`). Clear measured win, $0, no downside.
+- **`rerank_provider` stays `none`** by default — but reranking is **kept fully available** (a config
+  flag + the `reranked`/`hybrid+rerank` lattice configs + the A6 action set via `build_named_system`).
+  Its lift didn't justify the added latency/model-dependency *yet*; revisit with a finance-tuned or
+  Voyage reranker. Nothing was removed — every config remains reachable (important for A6).
+- **`documents backfill-sparse`** (new CLI + `pipeline.backfill_sparse`) populates the BM25 index from
+  already-downloaded filings with **no embedding** ($0, embedder-independent: parse + chunk + index
+  only). Needed once for a pre-A3 corpus (whose sparse index is empty), else live hybrid silently
+  falls back to dense. Idempotent/incremental via the sparse store's `existing_ids`.
+
+**Deferred:** turning rerank on by default (needs a better reranker model + a clearer win); growing the
+benchmark with exact-term queries to firm up the hybrid/rerank verdicts.

@@ -92,6 +92,7 @@ python -m stock_agent chat
 # RAG (see RAG_TODO.md — built incrementally P1→P8):
 python -m stock_agent documents download-sec --ticker NVDA --forms 10-K 10-Q
 python -m stock_agent documents ingest --ticker NVDA        # parse→chunk→embed→store (local, $0)
+python -m stock_agent documents backfill-sparse --all       # populate BM25 index for hybrid (no embed, $0)
 python -m stock_agent rag query --ticker NVDA --question "What AI growth drivers did management cite?"
 python -m stock_agent research --ticker NVDA                # technicals + forecast + news + RAG → memo
 ```

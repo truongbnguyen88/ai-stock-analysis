@@ -169,6 +169,33 @@ def _index_sparse(
     return len(to_add)
 
 
+def backfill_sparse(
+    tickers: Sequence[str],
+    *,
+    documents_dir: Path,
+    sparse_store: SparseStore,
+    chunk_tokens: int = _DEFAULT_CHUNK_TOKENS,
+    chunk_overlap: float = _DEFAULT_CHUNK_OVERLAP,
+) -> int:
+    """Index already-downloaded filings into the BM25 sparse store — **no embedding** ($0).
+
+    For a corpus dense-ingested before A3 the sparse index is empty, so hybrid silently falls back
+    to dense; this populates it from the same raw filings (parse + chunk + BM25-index only — never
+    touches the embedder, so it's free and embedder-independent). Idempotent/incremental via the
+    sparse store's own ``existing_ids``: re-running adds only chunks not yet indexed. Returns the
+    total number of chunks newly indexed across ``tickers``.
+    """
+    total = 0
+    for sym in tickers:
+        chunks = build_chunks(
+            sym, documents_dir=documents_dir, chunk_tokens=chunk_tokens, chunk_overlap=chunk_overlap
+        )
+        added = _index_sparse(sparse_store, chunks, incremental=True)
+        log.info("rag.backfill_sparse", ticker=sym, chunks=len(chunks), indexed=added)
+        total += added
+    return total
+
+
 class BulkIngestResult(BaseModel):
     """Aggregate summary of a multi-ticker ingest run (RAG_TODO 9c-run hardening)."""
 

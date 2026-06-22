@@ -275,9 +275,11 @@ def test_get_retriever_builds_logs_and_memoizes(monkeypatch: pytest.MonkeyPatch)
     # construction to build_retrieval_system, which builds the embedder via rag.read_path.
     monkeypatch.setattr(tools_mod, "build_vector_store", lambda s: store)
     monkeypatch.setattr("stock_agent.rag.read_path.build_embedder", lambda s: _EMB)
-    ex = ToolExecutor(Settings(_env_file=None), llm=None)
+    # Pin to dense so this memoization/logging test stays hermetic (no real FTS5 sparse DB on disk);
+    # the hybrid default is covered by the read-path unit tests.
+    ex = ToolExecutor(Settings(_env_file=None, retrieval_mode="dense"), llm=None)
 
     retriever = ex._get_retriever()
-    # rerank_provider defaults to "none" → build_retrieval_system returns the plain dense Retriever.
+    # dense + rerank off → build_retrieval_system returns the plain dense Retriever.
     assert isinstance(retriever, Retriever)
     assert ex._get_retriever() is retriever  # memoized — not rebuilt

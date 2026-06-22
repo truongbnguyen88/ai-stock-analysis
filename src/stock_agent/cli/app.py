@@ -43,7 +43,12 @@ from stock_agent.rag.eval import (
     run_ab,
 )
 from stock_agent.rag.hybrid import SparseRetriever
-from stock_agent.rag.pipeline import EmbedBudgetExceeded, build_chunks, bulk_ingest
+from stock_agent.rag.pipeline import (
+    EmbedBudgetExceeded,
+    backfill_sparse,
+    build_chunks,
+    bulk_ingest,
+)
 from stock_agent.rag.read_path import (
     LATTICE_SYSTEMS,
     build_named_system,
@@ -767,6 +772,42 @@ def ingest(
         typer.echo(
             f"Re-run to backfill the {len(result.failed_tickers)} failed ticker(s) (idempotent)."
         )
+
+
+@documents_app.command("backfill-sparse")
+def backfill_sparse_cmd(
+    ticker: Annotated[
+        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
+    ] = None,
+    backfill_all: Annotated[
+        bool, typer.Option("--all", help="Backfill every ticker in the universe file")
+    ] = False,
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file used with --all")
+    ] = Path("configs/universe.txt"),
+) -> None:
+    """Populate the BM25 sparse index from already-downloaded filings — NO embedding ($0).
+
+    A corpus dense-ingested before A3 (hybrid) has an empty sparse index, so hybrid silently falls
+    back to dense. This indexes the same raw filings into BM25 (parse + chunk + index only; the
+    embedder is never touched), making hybrid live. Idempotent/incremental — re-running adds only
+    chunks not yet indexed.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    sparse_store = build_sparse_store(settings)
+    tickers = _ingest_tickers(backfill_all, ticker, universe)
+    indexed = backfill_sparse(
+        tickers,
+        documents_dir=settings.documents_dir,
+        sparse_store=sparse_store,
+        chunk_tokens=settings.rag_chunk_tokens,
+        chunk_overlap=settings.rag_chunk_overlap,
+    )
+    typer.echo(
+        f"Backfilled BM25 sparse index: {indexed:,} new chunk(s) across {len(tickers)} ticker(s) "
+        f"(total indexed now {sparse_store.count():,}). No embedding — $0."
+    )
 
 
 @documents_app.command("refresh")
