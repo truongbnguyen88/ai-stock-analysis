@@ -23,7 +23,8 @@
 11. [Evaluation in practice — the A-track metrics](#11-evaluation-in-practice--the-a-track-metrics)
 12. [Reranking — bi-encoders, cross-encoders, two-stage retrieval](#12-reranking--bi-encoders-cross-encoders-two-stage-retrieval)
 13. [Hybrid search — BM25 and Reciprocal Rank Fusion](#13-hybrid-search--bm25-and-reciprocal-rank-fusion)
-14. [References](#14-references)
+14. [The four retrieval configurations (dense / reranked / hybrid / hybrid+rerank)](#14-the-four-retrieval-configurations-dense--reranked--hybrid--hybridrerank)
+15. [References](#15-references)
 
 ---
 
@@ -1064,7 +1065,189 @@ and A1's harness scores it directly — we enable hybrid only on a measured `mak
 
 ---
 
-## 14. References
+## 14. The four retrieval configurations (dense / reranked / hybrid / hybrid+rerank)
+
+§§4, 12, 13 built the components; this section assembles them into the **four end-to-end retrieval
+pipelines** the system can run — the `rag eval --systems` lattice, the production read path, and the
+A6 retrieval-RL action space. All four share the same ingest foundation (parse → chunk → index, §2)
+and the same contract — a `RetrievalSystem`: given a query (and optional metadata filter) return the
+top-`k` chunks. They differ **only in the retrieval/ranking stages in between**. Below: the exact
+data flow, the scoring math, the per-query cost, and the measured result for each.
+
+### 14.0 Shared notation
+
+- **Corpus** $D = \{d_1, \dots, d_N\}$ — the chunks (each carries text + flat metadata).
+- **Query** $q$ — the natural-language question.
+- **Filter** $\varphi$ — an optional metadata predicate (`ChunkFilter`: ticker / form / section / date).
+  Retrieval is always over the filtered set $D_\varphi = \{\, d \in D : \varphi(d)\,\}$; if $\varphi$
+  is empty, $D_\varphi = D$.
+- **Embedder** $E : \text{text} \to \mathbb{R}^{m}$ — maps text to an $m$-dim **unit** vector
+  (our stores L2-normalize, so $\lVert E(\cdot)\rVert = 1$). Built once at ingest for every chunk;
+  at query time only $E(q)$ is computed.
+- $\operatorname{Top}_n[\, g(\cdot)\, ;\, S\,]$ — the $n$ items of set $S$ with the largest score
+  $g$, in descending order. (Approximated for dense search by ANN / HNSW, §4.4.)
+- **Knobs:** $k$ = final chunks returned (`top_k`); $k_f$ = wide candidate count for reranking
+  (`fetch_k`); $k_d, k_s$ = dense / sparse over-fetch (`hybrid_dense_k` / `hybrid_sparse_k`);
+  $k_{\mathrm{rrf}}$ = RRF damping (`hybrid_rrf_k`, =60).
+
+The numbers quoted per config are from the promotion run (`make rag-eval`, voyage-4 base, 25 Q / 5
+tickers; see `rag_implementation_notes.md` "Promotion").
+
+### 14.1 Dense — semantic only (the A1 baseline)
+
+```
+q ─▶ E(q) ─▶ cosine top-k over D_φ ─▶ k chunks
+```
+
+A single **bi-encoder** stage. Score each chunk by cosine similarity between the query and chunk
+embeddings:
+
+$$
+s_{\mathrm{dense}}(q, d) \;=\; \cos\!\big(E(q), E(d)\big) \;=\; \frac{\langle E(q),\, E(d)\rangle}{\lVert E(q)\rVert\,\lVert E(d)\rVert} \;\overset{\text{unit}}{=}\; \langle E(q),\, E(d)\rangle \;=\; \sum_{j=1}^{m} E(q)_j\, E(d)_j,
+$$
+
+then return $\operatorname{Top}_k[\, s_{\mathrm{dense}}(q,\cdot)\, ;\, D_\varphi\,]$. The crucial property is
+that the score **factorizes** into a dot product of two independently-computed vectors — so every
+$E(d)$ is precomputed at ingest and the query needs just one embed plus an ANN lookup.
+
+- **Captures:** meaning / paraphrase (§12.1). **Misses:** rare exact tokens (tickers, "Item 7A").
+- **Per query:** 1 embedding (a paid call only when the embedder is Voyage) + ANN search $O(\log N)$. No model beyond the embedder.
+- **Measured:** nDCG@8 **0.787**, P@8 0.760, MRR 0.890 (the baseline every other config is judged against).
+
+### 14.2 Reranked — dense, then a cross-encoder
+
+```
+q ─▶ dense retrieve k_f (≈30) ─▶ cross-encoder rescore ─▶ top-k
+```
+
+Two stages (the **retrieve-wide-then-narrow** pattern, §12.2). Stage 1 uses the cheap bi-encoder for
+recall; stage 2 uses an expensive **cross-encoder** for precision on the small candidate set:
+
+$$
+C \;=\; \operatorname{Top}_{k_f}\!\big[\, s_{\mathrm{dense}}(q,\cdot)\, ;\, D_\varphi\,\big], \qquad
+\text{return } \operatorname{Top}_{k}\!\big[\, s_{\mathrm{ce}}(q,\cdot)\, ;\, C\,\big],
+$$
+
+where the cross-encoder scores the **jointly-encoded pair**
+
+$$
+s_{\mathrm{ce}}(q, d) \;=\; f_\theta\big(\,[\,q\,;\,d\,]\,\big) \in \mathbb{R}.
+$$
+
+Unlike $s_{\mathrm{dense}}$, $s_{\mathrm{ce}}$ does **not** factorize — $f_\theta$ attends over the
+query and chunk tokens together, so it can model term-binding/negation, but it **cannot be
+precomputed** and must run once per candidate. Hence $\lvert C\rvert = k_f$ transformer forward
+passes at query time.
+
+- **Captures:** fine-grained query–chunk relevance the cosine blurs. **Risk:** a domain-mismatched
+  reranker can *reorder badly* (our `ms-marco-MiniLM` is web-trained, not finance).
+- **Per query:** 1 embedding + ANN + $k_f$ cross-encoder passes (tens–hundreds of ms; the local onnx reranker is free).
+- **Measured:** nDCG@8 **0.777** (≈ dense — marginal/negative here; helped hit@8 but not the ordering).
+
+### 14.3 Hybrid — dense ⊕ sparse, fused by RRF (the promoted default)
+
+```
+        ┌─ dense retrieve k_d  (cosine)   ─┐
+q ─▶ φ ─┤                                  ├─ RRF fuse ─▶ top-k
+        └─ sparse retrieve k_s (BM25)     ─┘
+```
+
+Run the two **complementary** retrievers independently over $D_\varphi$, then fuse their *rankings*.
+Dense gives a list $L_d$ ordered by $s_{\mathrm{dense}}$; sparse gives a list $L_s$ ordered by BM25
+(§13.2),
+
+$$
+s_{\mathrm{bm25}}(q, d) \;=\; \sum_{t \in q} \mathrm{IDF}(t)\,\frac{f(t,d)\,(k_1+1)}{f(t,d) + k_1\big(1 - b + b\,\lvert d\rvert/\mathrm{avgdl}\big)},
+$$
+
+(term frequency $f$ with saturation $k_1$, length penalty $b$, rarity weight $\mathrm{IDF}$ — §13.2).
+The two score scales are not comparable (cosine $\in[-1,1]$, BM25 $\in[0,\infty)$), so we fuse by
+**rank**, not score — **Reciprocal Rank Fusion** (§13.3):
+
+$$
+\mathrm{RRF}(q, d) \;=\; \sum_{L \,\in\, \{L_d,\, L_s\}} \frac{1}{k_{\mathrm{rrf}} + \mathrm{rank}_L(d)},
+\qquad
+\text{return } \operatorname{Top}_k\!\big[\, \mathrm{RRF}(q,\cdot)\, ;\, L_d \cup L_s\,\big],
+$$
+
+where $\mathrm{rank}_L(d)$ is $d$'s 1-based position in list $L$ (a list **not** containing $d$
+contributes 0), and $k_{\mathrm{rrf}}=60$ damps the top so neither list dominates. A chunk both
+retrievers rank decently beats one ranked highly by only one. Sparse-only hits (in $L_s$ but not
+$L_d$) are **materialized** from the sparse store (it holds the chunk text); an empty sparse result
+makes $\mathrm{RRF}$ collapse to the dense order — hybrid never under-recalls dense.
+
+- **Captures:** the **union** of semantic (dense) and exact-term (sparse) signal — recovers each
+  retriever's blind spot (§13.1, the bidirectional example).
+- **Per query:** 1 embedding + ANN + a BM25 inverted-index lookup (**no model**) + $O(k_d + k_s)$
+  fusion. Essentially dense's cost; the sparse half is stdlib FTS5, **free**.
+- **Measured:** nDCG@8 **0.823**, P@8 0.805, MRR 0.907 — **wins on every metric**. (The sparse-only
+  diagnostic even out-recalls dense, 0.153 vs 0.142 — direct evidence BM25 adds chunks dense misses.)
+  This is why hybrid was promoted to the default.
+
+### 14.4 Hybrid + rerank — the full lattice
+
+```
+q ─▶ HYBRID (RRF) ─▶ k_f candidates ─▶ cross-encoder rescore ─▶ top-k
+```
+
+Compose A3 then A2: hybrid produces the **wide** candidate set, the cross-encoder rescensores it.
+Formally $\text{rerank}\big(\text{hybrid}(\text{dense}, \text{sparse})\big)$:
+
+$$
+C \;=\; \operatorname{Top}_{k_f}\!\big[\, \mathrm{RRF}(q,\cdot)\, ;\, L_d \cup L_s\,\big], \qquad
+\text{return } \operatorname{Top}_{k}\!\big[\, s_{\mathrm{ce}}(q,\cdot)\, ;\, C\,\big].
+$$
+
+The over-fetch **cascades**: the reranker asks hybrid for $k_f$ candidates; hybrid asks dense for
+$k_d$ and sparse for $k_s$ (each $\ge k_f$). So recall is set by the dense+sparse legs, fusion picks
+the best $k_f$, and the cross-encoder does the final precision pass.
+
+- **Captures:** hybrid's recall + the cross-encoder's ordering — the most expressive config.
+- **Per query:** the union of all costs — 1 embedding + ANN + BM25 + fusion + $k_f$ cross-encoder
+  passes. The slowest.
+- **Measured:** nDCG@8 **0.819** (≈ hybrid), but **perfect hit@8 = 1.000** and the best MRR (0.923).
+  So rerank-on-hybrid surfaces *a* relevant chunk to the very top, without improving the graded
+  ordering — marginal for our synthesis use case (the LLM reads all top-`k`), hence left OFF.
+
+### 14.5 Side-by-side
+
+| config | stages | extra model | extra cost | latency | captures | nDCG@8 |
+|---|---|---|---|---|---|---|
+| **dense** | cosine top-k | — | — | low | meaning | 0.787 |
+| **reranked** | dense $k_f$ → cross-encoder | cross-encoder | free (local) | +med | meaning, then joint re-score | 0.777 |
+| **hybrid** ⭐ | dense ⊕ sparse → RRF | — | free (FTS5) | low | meaning **+ exact terms** | **0.823** |
+| **hybrid+rerank** | hybrid $k_f$ → cross-encoder | cross-encoder | free (local) | +med | recall + joint re-score | 0.819 |
+
+⭐ promoted default. "extra" = on top of the one query embedding every config pays (which is a paid
+call only when the embedder is Voyage; the local fastembed fallback is free).
+
+### 14.6 How they compose in code
+
+All four implement the one `RetrievalSystem` contract (`name` + `retrieve(query, *, top_k, where)`),
+so they are interchangeable building blocks:
+
+- `Retriever` (dense) is the base; `RerankingRetriever(base, reranker, …)` wraps any base;
+  `HybridRetriever(dense, sparse, …)` fuses two; rerank can wrap a hybrid base → the lattice.
+- `build_named_system(name, …)` constructs each by toggling `retrieval_mode` (dense|hybrid) and
+  `rerank_provider` (none|local|voyage) over `build_retrieval_system` — the composition root.
+- Because everything downstream (`research/synthesis`, the memo, the agent tools, the eval harness)
+  depends only on `RetrievalSystem`, swapping configs is a **config change, not a code change**.
+  Mechanism detail → `rag_implementation_notes.md` (§A1–A3 + the eval-lattice note).
+
+### 14.7 Why all four are kept — the A6 connection
+
+Promotion (hybrid) only sets the **default**; every config above stays reachable. That is deliberate:
+these four are the **discrete action space of the A6 retrieval-RL selector**. A contextual bandit will
+pick one *per query* from features of the question (length, has-ticker, question-type), with reward =
+the §11 metrics (later, user feedback). The intuition: different question types want different
+retrieval — a risk question naming "Item 7A export controls" wants hybrid's exact-term recall; a broad
+"overview" wants dense + high-`k`. A fixed default can't be best for all, so a learned selector *might*
+beat it (with a possible rigorous negative — a tuned hybrid is a strong baseline). `build_named_system`
+is already that action executor; A6 adds the policy on top.
+
+---
+
+## 15. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).

@@ -1037,5 +1037,11 @@ SEC text), so its weak showing may be the model, not the concept.
   only). Needed once for a pre-A3 corpus (whose sparse index is empty), else live hybrid silently
   falls back to dense. Idempotent/incremental via the sparse store's `existing_ids`.
 
+**Backfill executed (2026-06-22).** Ran `documents backfill-sparse --all` against the production
+corpus: **93,109 chunks** indexed into `data/sparse/voyage-voyage-4.db` (FTS5), matching the dense
+Chroma collection exactly (93,109 = 93,109) — so live hybrid now fuses a full BM25 half rather than
+falling back to dense. No embedding (parse + chunk + index only, $0). The stale
+`local-baai-bge-small-en-v1-5.db` (0 chunks, pre-voyage namespace) is now irrelevant.
+
 **Deferred:** turning rerank on by default (needs a better reranker model + a clearer win); growing the
 benchmark with exact-term queries to firm up the hybrid/rerank verdicts.
