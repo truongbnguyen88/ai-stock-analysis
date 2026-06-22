@@ -117,8 +117,16 @@ def test_hybrid_is_a_retrieval_system() -> None:
 def test_build_retrieval_system_hybrid_and_hybrid_plus_rerank() -> None:
     store = InMemoryVectorStore()
     sparse = InMemoryBM25Store()
-    # dense (default) → plain Retriever
-    assert isinstance(build_retrieval_system(Settings(_env_file=None), store=store), Retriever)
+    # hybrid is now the PROMOTED default → build_retrieval_system returns a HybridRetriever.
+    assert isinstance(
+        build_retrieval_system(Settings(_env_file=None), store=store, sparse_store=sparse),
+        HybridRetriever,
+    )
+    # explicit dense → plain Retriever
+    assert isinstance(
+        build_retrieval_system(Settings(_env_file=None, retrieval_mode="dense"), store=store),
+        Retriever,
+    )
     # hybrid → HybridRetriever
     hy = build_retrieval_system(
         Settings(_env_file=None, retrieval_mode="hybrid"), store=store, sparse_store=sparse

@@ -155,11 +155,13 @@ class Settings(BaseSettings):
     rerank_provider: Literal["none", "local", "voyage"] = "none"
     rerank_fetch_k: int = 30  # candidates over-fetched before reranking (must be ≥ rag_top_k)
     rerank_model: str = ""  # override the per-provider default cross-encoder; "" = default
-    # Hybrid search (advanced-RAG A3). "dense" (default) = vector-only, byte-identical to A1/A2;
-    # "hybrid" = fuse dense (semantic) + sparse BM25 (exact terms) by Reciprocal Rank Fusion. Each
-    # side over-fetches its own k; RRF then ranks by sum_i 1/(rrf_k + rank_i). The sparse index is
-    # SQLite FTS5 (stdlib, $0), maintained alongside the vector store at ingest.
-    retrieval_mode: Literal["dense", "hybrid"] = "dense"
+    # Hybrid search (advanced-RAG A3). "hybrid" (default, PROMOTED on a measured eval win — see
+    # rag_implementation_notes "Promotion") = fuse dense (semantic) + sparse BM25 (exact terms) by
+    # Reciprocal Rank Fusion; "dense" = vector-only (A1/A2 baseline). Each side over-fetches its own
+    # k; RRF then ranks by sum_i 1/(rrf_k + rank_i). The sparse index is SQLite FTS5 (stdlib, $0),
+    # maintained alongside the vector store at ingest. NB: hybrid needs the sparse index populated —
+    # run `documents backfill-sparse` once for a pre-A3 corpus (else it falls back to dense).
+    retrieval_mode: Literal["dense", "hybrid"] = "hybrid"
     hybrid_rrf_k: int = 60  # RRF damping constant (larger → flatter rank weighting; 60 is standard)
     hybrid_dense_k: int = 30  # dense candidates over-fetched per query before fusion
     hybrid_sparse_k: int = 30  # sparse (BM25) candidates over-fetched per query before fusion

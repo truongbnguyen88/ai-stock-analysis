@@ -15,6 +15,7 @@ from stock_agent.rag.pipeline import (
     BulkIngestResult,
     EmbedBudgetExceeded,
     IngestResult,
+    backfill_sparse,
     bulk_ingest,
     ingest_ticker,
     iter_filing_dirs,
@@ -119,6 +120,22 @@ def test_incremental_ingest_backfills_sparse_without_re_embedding(tmp_path: Path
     assert result.chunks == 0  # nothing new to embed
     assert emb.calls == 0  # so the embedder was never called
     assert sparse.count() == store.count() > 0  # yet the sparse index was fully backfilled
+
+
+def test_backfill_sparse_indexes_without_embedding(tmp_path: Path) -> None:
+    _make_filing(tmp_path)
+    # Dense corpus exists but the sparse index is empty (simulates a pre-A3 corpus).
+    store = InMemoryVectorStore()
+    ingest_ticker("NVDA", documents_dir=tmp_path, embedder=_EMB, store=store)
+    sparse = InMemoryBM25Store()
+    assert sparse.count() == 0
+
+    indexed = backfill_sparse(["NVDA"], documents_dir=tmp_path, sparse_store=sparse)
+
+    assert indexed == store.count() > 0  # every dense chunk now in BM25 too — no embedder involved
+    assert sparse.search("export", top_k=5)  # queryable immediately
+    # Idempotent: a second backfill adds nothing.
+    assert backfill_sparse(["NVDA"], documents_dir=tmp_path, sparse_store=sparse) == 0
 
 
 def test_ingest_is_idempotent(tmp_path: Path) -> None:
