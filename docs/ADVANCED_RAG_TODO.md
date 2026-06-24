@@ -247,41 +247,98 @@ benchmark. Sparse/vector sync on refresh → covered by `existing_ids` on both.
 
 ---
 
-## A4 — Agentic RAG (bounded multi-step retrieval)
+## A4 — Agentic RAG (self-contained, bounded ReAct loop for multi-hop SEC QA)
 
-**Learning objective.** Query **decomposition**, multi-retrieval **planning**, evidence comparison —
-while keeping LLM calls and grounding under control.
+> **Design decision (2026-06-22) — ReAct, not plan-and-execute.** A4 is a **self-contained, bounded
+> ReAct loop** (reason → retrieve → observe, with a *reflective* stop), **not** query-decomposition /
+> plan-and-execute. ReAct handles **multi-hop** — each retrieval can depend on the *previous*
+> observation — which a one-shot up-front decomposition cannot. Framed precisely: A4 is **"P7, but
+> iterative"** — multi-step SEC evidence-gathering that ends in the **existing** guarded answer
+> (`research/synthesis.answer_question`). It is **NOT** "P8, but agentic": it does **not** rebuild the
+> executive-summary memo (`run_research`, which fuses news + forecast + RAG) — that synthesis already
+> exists and stays untouched. The only synthesis A4 performs is the unavoidable cited-answer
+> composition, and that is **reused** from P7, not rebuilt.
 
-**User value.** Answers questions a single retrieval can't: *"Compare NVDA and AMD AI risks,"*
-*"What changed in TSLA risk disclosures over 3 years,"* *"Why does the model forecast upside while
-filings show risk?"* (this last one bridges RAG ⊕ the forecast pipeline).
+**Learning objective.** The **ReAct** pattern (interleave reasoning + tool actions) with a reflective
+stop-condition; bounded agentic control; multi-hop retrieval under a fixed LLM-call + grounding budget.
+*(NB: ReAct ≠ Reflexion. Reflexion = self-critique-and-retry across attempts; here the "reflective"
+part is the per-step self-assessment "do I have enough evidence yet?".)*
 
-**Design.**
-- **Planner** (`research/planner.py`): one structured-output LLM call decomposes the question into a
-  bounded plan — `RetrievalPlan { sub_queries: list[SubQuery], op: Literal["compare","trend",
-  "synthesize"] }`, `SubQuery { ticker, question, filter: ChunkFilter | None }`. The planner emits
-  **no numbers/citations** (only sub-queries) → nothing to ground there.
-- **Executor**: run each `SubQuery` through the configured retrieval system (dense/hybrid/reranked +
-  `ChunkFilter` for ticker/date/section scoping), collect `EvidenceSet`s, then **one** final
-  synthesis call over the **union** with a compare/trend prompt → `MultiStepAnswer` (cited).
-- **Bounds (cost-controlled, like `run_backtest`):** `agentic_max_subqueries: int = 4`,
-  `agentic_max_llm_calls` (planner + synthesis = 2 typical); no auto-ingestion (constraint); a
-  ticker not ingested → the existing "insufficient evidence" path. Falls back to single-shot
-  `search_filings` for simple questions (a cheap is-this-complex heuristic / the planner returning 1
-  sub-query).
-- **Guards:** citation guard + `NumberGrounding` run on the final synthesis with the **union**
-  evidence as the allow-set; non-advisory + router-not-calculator unchanged.
-- **Surface:** a new agent tool `research_compare(tickers, question)` and/or `rag ask --multi`; the
-  agent prompt routes multi-entity / temporal-comparison questions to it.
+**User value.** Questions a single retrieval can't answer: *"Compare NVDA and AMD AI risks,"* *"What
+changed in TSLA risk disclosures over 3 years,"* *"Which of NVDA's named suppliers flag the same
+risk?"* — genuine **multi-hop**, where observation N shapes query N+1.
 
-**Tests** (canned `TextLLM`): planner decomposes a comparison question → expected `SubQuery` list;
-executor runs N fake retrievals; final synthesis citation guard over the union (a cite outside the
-union → retry→raise); bound enforcement (>max → truncate/refuse); a "compare X and Y" agent turn
-routes to `research_compare`. No live calls.
+**Architecture.** New `research/agentic.py` (the ReAct controller) + `schemas/agentic.py` (typed loop
+state/IO) + a `REACT_SYSTEM` prompt in `research/prompts.py`. **Reuses unchanged:**
+`build_retrieval_system` (hybrid retrieval, $0/local), `answer_question` (P7 guarded synthesis — its
+citation + number guards **and** its empty-evidence short-circuit), the `TextLLM.complete_json`
+client. Dependency direction: `research/agentic.py` → `rag/` + `llm/` + `schemas/`; the agent tool
+wraps it. **No new synthesis or guard code.**
 
-**Risks.** LLM-cost blowup → hard sub-query cap + the simple-question fast path. Decomposition quality
-→ versioned planner prompt + eval on a small multi-step benchmark. Latency → bounded. Guard coverage
-across steps → union allow-set + tests.
+**The loop.** Each iteration is ONE cheap structured-output call that reasons over the question + a
+compact summary of evidence-so-far and emits a `ReActStep` — either **search** (retrieve more, the
+*Act*) or **stop** (evidence sufficient, the *reflective stop*):
+
+```
+evidence = []                                  # deduped union of RetrievedChunk (per-step provenance)
+trace = []
+for step in range(agentic_max_steps):          # cap (default 4)
+    s = react_step(llm, question, trace, evidence)        # 1 cheap LLM call → ReActStep
+    if s.action == "stop": break
+    if not s.query or s.query in issued_queries: break     # anti-loop: no empty/duplicate queries
+    ev = retriever.retrieve(s.query, top_k=agentic_per_step_k, where=s.filter)   # $0, hybrid
+    evidence = dedup_union(evidence, ev.chunks)[:agentic_max_evidence]
+    trace.append(StepTrace(thought=s.thought, query=s.query, ticker=s.ticker, n_retrieved=len(ev)))
+# terminal: the EXISTING guarded answer over the accumulated union (reused P7)
+ans = answer_question(question, EvidenceSet(query=question, chunks=evidence), llm=llm)
+return MultiStepAnswer(answer=ans, trace=trace, n_steps=len(trace), n_evidence=len(evidence))
+```
+
+- The decision call is **cheap** (sees a compact evidence summary, emits a small structured decision —
+  no answer prose). The single heavy call is the terminal `answer_question`.
+- **Budget:** ≤ `agentic_max_steps` decision calls + 1 terminal answer ⇒ **≤5 LLM calls** typical;
+  all retrieval between steps is $0/local. (Bounded like `run_backtest`.)
+
+**Grounding (invariants unchanged).** Loop decisions emit only queries/filters — **no numbers, no
+citations** → nothing to hallucinate-ground in the loop. The terminal `answer_question` runs the
+**citation guard** (every `[n]` ∈ the retrieved union) + **NumberGrounding** over the union allow-set,
+and its empty-union path already returns *"Insufficient evidence found."* with **no LLM call**.
+Non-advisory + numbers-from-models unchanged. **No auto-ingestion** (a ticker with no corpus simply
+yields no evidence). Re-uses, does not re-implement, the guards.
+
+**Schemas (`schemas/agentic.py`).**
+- `ReActStep { thought: str, action: Literal["search","stop"], query: str | None, ticker: str | None,
+  filter: ChunkFilter | None }` — the per-iteration structured LLM output (parsed like P7's
+  `_RawAnswer`).
+- `StepTrace { thought, query, ticker, n_retrieved }` — transparent loop trace (debug + tool output + tests).
+- `MultiStepAnswer { answer: GroundedAnswer, trace: list[StepTrace], n_steps: int, n_evidence: int }`.
+
+**Controller (`research/agentic.py`).** `answer_multistep(question, *, settings, llm, retriever=None,
+max_steps=…, per_step_k=…, max_evidence=…) -> MultiStepAnswer`; builds the retriever via
+`build_retrieval_system` (injected in tests); `_react_step(...)` makes the structured decision call.
+
+**Config (settings).** `agentic_max_steps: int = 4` (decision iterations; +1 terminal ⇒ ≤5 calls);
+`agentic_per_step_k: int = 6` (chunks per search step); `agentic_max_evidence: int = 20` (cap the
+union handed to the terminal synthesis — bounds context + cost).
+
+**Surface.** New agent tool `research_multistep(question)` (general multi-hop; the agent router sends
+multi-entity / temporal / comparative filing questions here, casual ones stay on single-shot
+`search_filings` — the **simple-question fast path**); bounded wall-clock like `run_backtest`. Optional
+CLI `rag ask --multi -q "…"` for direct runs/eval. The agent **relays** the cited answer (does not
+re-synthesize).
+
+**Tests (offline; canned `TextLLM` + `FakeEmbedder`/InMemory; no live calls, no model).**
+- scripted decisions (search→search→stop): retrieves per step, dedups the union, stops on `stop`;
+  never-stops → caps at `max_steps`; empty/duplicate query → terminates (anti-loop);
+- terminal reuses `answer_question` → citation guard over the union (a cite outside the union →
+  `ResearchGuardError`); **empty union → "Insufficient evidence found." with no LLM call**;
+- budget: LLM-call count == decisions + 1; never exceeds `max_steps`;
+- agent tool: a "compare X and Y" turn routes to `research_multistep` (canned LLM).
+
+**Risks.** Cost/looping → hard `max_steps` cap + anti-duplicate-query guard + the simple-question fast
+path. Decision quality → versioned `REACT_SYSTEM` prompt + a small multi-step eval set (reuse the A1
+harness). Latency → bounded calls + `max_evidence` cap. Grounding across steps → union allow-set + the
+reused P7 guards.
 
 ---
 
