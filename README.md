@@ -44,14 +44,17 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   distribution-free correction so a stated 90% interval actually covers ~90% OOS).
 - **`chat`** — a conversational agent (Role C) that orchestrates the tools, grounds
   every number, and can export an executive summary to PDF/DOCX/Markdown. It can also
-  answer **SEC-filing questions** (`search_filings`) and produce an **integrated brief**
-  (`research_summary`) over the RAG layer below — both cited.
+  answer **SEC-filing questions** (`search_filings`), run **multi-hop filing research**
+  (`research_multistep` — a bounded ReAct loop for comparative / change-over-time /
+  bridging questions one retrieval can't answer), and produce an **integrated brief**
+  (`research_summary`) over the RAG layer below — all cited.
 - **`research`** — a **SEC-grounded equity research memo** (RAG): fuses filings
   (10-K/10-Q/8-K) + news + the forecast into one cited, non-advisory brief. Retrieval is
   100% local; every filing claim carries a citation, and a citation + number guard rejects
   anything not in the retrieved evidence (same numbers-vs-narrative invariant).
 - **`documents` / `rag`** — manage the SEC corpus: `documents download-sec` (official EDGAR
-  API) → `documents ingest` (parse → chunk → embed → store) → `rag query` (grounded filing QA).
+  API) → `documents ingest` (parse → chunk → embed → store) → `rag query` (grounded filing QA)
+  or `rag ask` (multi-hop ReAct research; `--single` for one-shot).
 
 ## Quickstart
 

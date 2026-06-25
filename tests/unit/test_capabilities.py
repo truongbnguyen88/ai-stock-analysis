@@ -53,3 +53,13 @@ def test_rag_capabilities_present() -> None:
     # The filing example must steer the agent to the filings (not general knowledge).
     sec = next(c for c in CAPABILITIES if "sec filings" in c.title.lower())
     assert "sec filing" in sec.example.lower()
+
+
+def test_multistep_capability_present() -> None:
+    # A4: the showcase advertises the multi-hop filing research (research_multistep). Its
+    # example must be genuinely multi-hop (a comparison) and steer to the filings, so it
+    # routes to research_multistep rather than the single-shot search_filings.
+    multi = next(c for c in CAPABILITIES if "multi-hop" in c.title.lower())
+    ex = multi.example.lower()
+    assert "filing" in ex
+    assert "compare" in ex  # a multi-entity comparison — the canonical multi-hop shape
