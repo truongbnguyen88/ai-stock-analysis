@@ -37,7 +37,9 @@ from stock_agent.rag.embeddings import embedding_namespace
 from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.rag.vector_store import build_vector_store, collection_name_for
+from stock_agent.research.agentic import answer_multistep
 from stock_agent.research.synthesis import ResearchGuardError, answer_question
+from stock_agent.schemas.agentic import MultiStepAnswer
 from stock_agent.schemas.backtest import BacktestResult
 from stock_agent.schemas.comparison import (
     ForecastComparison,
@@ -556,6 +558,41 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 },
             },
             "required": ["ticker"],
+        },
+    },
+    {
+        "name": "research_multistep",
+        "description": (
+            "MULTI-HOP SEC filing research: answers a filing question whose evidence a SINGLE "
+            "retrieval cannot gather, by running a bounded reason-retrieve-observe loop (up to 4 "
+            "LLM calls) that collects evidence across a few retrieval steps before answering. Use "
+            "when answering requires pulling and CONNECTING evidence from DIFFERENT filings, "
+            "sections, periods, or entities, e.g.: (1) COMPARE/CONTRAST two+ companies or segments "
+            "('compare NVDA vs AMD risk factors', 'how do their data-center segments differ'); "
+            "(2) CHANGE OVER TIME ('what changed in TSLA's risk disclosures from 2023 to 2025'); "
+            "(3) BRIDGING / follow-up where a later query depends on an earlier finding ('which of "
+            "NVDA's named suppliers flag the same risk', 'who are its customers and are any "
+            "concentrated'); (4) COMPOUND / multi-part questions ('what is X's AI strategy AND "
+            "which stated risks threaten it'); (5) AGGREGATE across many sections/filings ('pull "
+            "together every segment's stated headwinds'); (6) CAUSAL/CONSISTENCY links ('does "
+            "management's MD&A optimism square with the risk factors'). For a SINGLE-topic, "
+            "single-entity question use search_filings (cheaper). Returns ONE cited answer (each "
+            "claim [n], grounded ONLY in retrieved filings) plus the step trace. Reports "
+            "insufficient evidence if the relevant filings aren't ingested. Qualitative only — no "
+            "probabilities. NON-ADVISORY."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": (
+                        "The multi-hop filing question. Name the entities / periods / sub-parts "
+                        "explicitly so the loop can scope each retrieval step."
+                    ),
+                },
+            },
+            "required": ["question"],
         },
     },
 ]
@@ -1189,6 +1226,54 @@ class ToolExecutor:
             "n_sources": len(evidence.chunks),
             "citations": self._citations_payload(answer.citations),
         }
+
+    def _tool_research_multistep(self, args: dict[str, Any]) -> dict[str, Any]:
+        # A4: bounded ReAct multi-hop filing QA. Reuses the session retriever (retrieval between
+        # steps is $0/local) and ends in the P7 guarded answer_question over the accumulated union,
+        # so the citation + number guards stay intact; the agent just relays the cited result.
+        # Wall-clock bounded like research_summary (agentic_max_steps decisions + 1 terminal call).
+        if self._llm is None:
+            return {"error": "multi-step filing research unavailable (no LLM configured)"}
+        question = str(args.get("question", "")).strip()
+        if not question:
+            return {"error": "research_multistep needs a non-empty 'question'."}
+
+        def _run() -> MultiStepAnswer:
+            return answer_multistep(
+                question,
+                settings=self._settings,
+                llm=self._llm,  # type: ignore[arg-type]  # guarded non-None above
+                retriever=self._get_retriever(),  # reuse the session embedder + store
+            )
+
+        try:
+            result = _run_with_timeout(_run, _RESEARCH_TIMEOUT_S)
+        except (ResearchGuardError, LLMError) as exc:
+            return {"error": f"{type(exc).__name__}: {exc}"}
+        except TimeoutError:
+            secs = int(_RESEARCH_TIMEOUT_S)
+            return {"error": f"multi-step research exceeded {secs}s; try again later."}
+        ans = result.answer
+        out: dict[str, Any] = {
+            "question": question,
+            "answer": ans.answer,
+            "insufficient_evidence": ans.insufficient_evidence,
+            "n_steps": result.n_steps,
+            "n_evidence": result.n_evidence,
+            "citations": self._citations_payload(ans.citations),
+            # Compact transparency trace: the queries the loop issued + how much each returned.
+            "trace": [
+                {"query": st.query, "ticker": st.ticker, "n_retrieved": st.n_retrieved}
+                for st in result.trace
+            ],
+        }
+        if ans.insufficient_evidence and result.n_evidence == 0:
+            # Nothing retrieved across all steps -> likely the relevant filings aren't ingested.
+            out["hint"] = (
+                "No SEC filing evidence was retrieved for this question. Ensure the relevant "
+                "tickers' filings are ingested (`documents download-sec` then `documents ingest`)."
+            )
+        return out
 
     @staticmethod
     def _forecast_headline(forecasts: list[ScenarioForecast]) -> list[dict[str, Any]]:

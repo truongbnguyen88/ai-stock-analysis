@@ -24,7 +24,8 @@
 12. [Reranking — bi-encoders, cross-encoders, two-stage retrieval](#12-reranking--bi-encoders-cross-encoders-two-stage-retrieval)
 13. [Hybrid search — BM25 and Reciprocal Rank Fusion](#13-hybrid-search--bm25-and-reciprocal-rank-fusion)
 14. [The four retrieval configurations (dense / reranked / hybrid / hybrid+rerank)](#14-the-four-retrieval-configurations-dense--reranked--hybrid--hybridrerank)
-15. [References](#15-references)
+15. [Agentic RAG — the ReAct loop for multi-hop retrieval](#15-agentic-rag--the-react-loop-for-multi-hop-retrieval)
+16. [References](#16-references)
 
 ---
 
@@ -1247,7 +1248,173 @@ is already that action executor; A6 adds the policy on top.
 
 ---
 
-## 15. References
+## 15. Agentic RAG — the ReAct loop for multi-hop retrieval
+
+§§11–14 made *one* retrieval better (graded eval, reranking, hybrid fusion, the four configs). This
+section is about a different axis: when **one** retrieval — however good — *cannot* answer the
+question, because the right second query is only knowable *after* you see the first result. That is a
+**multi-hop** question, and the answer is to let the system **retrieve more than once, adaptively**.
+This is the A4 phase. (Status: the controller below is implemented and tested; the agent-tool / CLI
+surfaces are pending — see `rag_implementation_notes.md` §A4.)
+
+### 15.1 The problem: single-shot retrieval is a fixed-point query
+
+Every config in §14 computes **one** evidence set $E = \text{retrieve}(q, k)$ from the *literal*
+question $q$, then synthesizes. That is optimal only when the question is **answerable from a single
+neighborhood** of the corpus. Two structural failures break that assumption, and they define which
+questions need multi-hop retrieval:
+
+- **(D) Disjoint-evidence** — the answer must combine material from corpus regions a *single* top-$k$
+  cannot jointly cover (different companies, periods, sections, or filings). One query returns a
+  blurred mix or only one side.
+- **(C) Conditional / dependent** — the *right* second query is only knowable *after* seeing the
+  first result; the query sequence is data-dependent.
+
+The concrete SEC shapes — the routing taxonomy the agent tool advertises — are instances of one or
+both:
+
+- **Comparative / multi-entity (D)** — *"Compare NVDA's and AMD's AI supply-chain risks."* Evidence
+  for each lives in different filings; one scoped query returns one side, an unscoped query blurs them.
+- **Temporal / change (D)** — *"What changed in TSLA's risk disclosures from 2022 to 2024?"* needs the
+  two periods retrieved **separately**, then contrasted.
+- **Bridging / dependent (C)** — *"Which of NVDA's named suppliers flag the same export-control
+  risk?"* First retrieve to learn *who the suppliers are*, **then** query about *those names* — query
+  2 is a function of observation 1; no up-front query can express it.
+- **Compound / multi-part (D)** — *"What is NVDA's AI strategy, **and** which stated risks threaten
+  it?"* Two sub-questions whose evidence sits in different sections (Business vs. Risk Factors).
+- **Aggregation / set-spanning (D)** — *"Pull together every segment's stated headwinds."* The answer
+  spans many disjoint passages that a single top-$k$ truncates.
+- **Causal / consistency (D, often C)** — *"Does management's MD&A optimism square with the risk
+  factors?"* Retrieve both sides, then judge agreement.
+
+Formally: single-shot retrieval assumes the optimal query is $q$ itself. Multi-hop questions need a
+**sequence** $q_1, q_2, \ldots$ where $q_{i+1} = f(q,\, E_1, \ldots, E_i)$ — each query may depend on
+the evidence gathered so far ((C)), or simply target a different region than its predecessors ((D)).
+That dependency/coverage gap is the entire difficulty, and it is what an agent adds. (The *simple*
+case — one topic, one entity, one section — stays on single-shot `search_filings`: the fast path.)
+A worked catalog of which questions route which way — the ten multi-hop shapes plus the single-shot
+contrast — is in [example_rag_questions.md](example_rag_questions.md).
+
+### 15.2 Two ways to be "agentic": plan-and-execute vs. ReAct
+
+There are two standard ways to produce that query sequence:
+
+- **Query decomposition (plan-and-execute).** One up-front LLM call splits $q$ into a *fixed* set of
+  sub-queries $\{q_1,\ldots,q_m\}$, each retrieved independently, then the union is synthesized. Simple
+  and parallelizable — but the plan is frozen *before any evidence is seen*. It **cannot** express the
+  bridging case (§15.1), because $q_2$ there is unknowable until $E_1$ exists.
+- **ReAct (reason + act), the choice here.** Interleave reasoning and retrieval in a loop: the model
+  *reasons* about what is still missing, *acts* (issues one query), *observes* the result, and
+  repeats — deciding each step *with the previous observations in hand*. This is strictly more
+  expressive: it handles dependent hops, and it **degenerates to decomposition** when the hops happen
+  to be independent. The cost is sequentiality (hops can't be fully parallelized) and one cheap LLM
+  call per step.
+
+ReAct is the original "reason-and-act" agent pattern (Yao et al. 2023). Note the precise scope of our
+design — two distinctions that are easy to blur:
+
+- **ReAct ≠ Reflexion.** *Reflexion* = self-critique-and-**retry across whole attempts** (run, grade
+  yourself, try again). Here the only "reflective" element is the per-step self-assessment *"do I have
+  enough evidence to stop?"* — a stop decision, not a retry of a failed answer.
+- **A4 is "P7, but iterative," not "P8, but agentic."** The loop's *only* synthesis is the unavoidable
+  cited-answer composition, and it **reuses** the P7 guarded answerer (§10) verbatim. It does **not**
+  rebuild the executive memo (P8). The agent adds *iteration over retrieval*, nothing else.
+
+### 15.3 The loop, precisely
+
+State carried across steps: an accumulating **evidence union** $E$ (deduped `RetrievedChunk`s) and a
+**trace** of executed steps. One iteration:
+
+1. **Decide (reason).** One *cheap* structured-output LLM call sees the question, the steps so far,
+   and a **compact summary** of $E$ (a short snippet per chunk, not full text — that keeps the
+   decision call small), and emits a `ReActStep`:
+
+   $$\text{step} = (\text{thought},\ \text{action} \in \{\textsf{search},\textsf{stop}\},\ \text{query},\ \text{scope}).$$
+
+   Crucially the decision emits **only a query and a scope — never numbers, never citations.** There
+   is nothing in a decision that *could* be hallucinated-grounded, so the grounding guards have
+   nothing to check mid-loop (see §15.5).
+2. **Stop?** If $\text{action} = \textsf{stop}$ (the *reflective stop*: the model judges $E$
+   sufficient), leave the loop.
+3. **Act (retrieve).** Else run $E_i = \text{retrieve}(\text{query}, k_{\text{step}}, \text{scope})$
+   through the **existing** §14 stack ($0/local) and fold it in:
+
+   $$E \leftarrow \big(\text{dedup}(E \cup E_i)\big)[\,:M\,],$$
+
+   deduped by `chunk_id`, order-preserving (earlier, higher-scored provenance kept), capped at
+   $M$ (`max_evidence`) to bound context and cost.
+4. Append a trace row; repeat, up to a hard cap of $T$ (`max_steps`) iterations.
+
+**Terminal.** Synthesize once over the accumulated union with the reused P7 answerer —
+`answer_question(q, EvidenceSet(E))`. If $E = \varnothing$ (e.g. the ticker was never ingested), that
+call short-circuits to *"Insufficient evidence found."* with **no LLM call** — the honest-refusal
+invariant, for free.
+
+### 15.4 Boundedness — why this can't run away (or run up a bill)
+
+Agentic loops have two classic failure modes — **infinite looping** and **cost blowup** — and an
+SEC-research tool must be safe on both. Three bounds, all hard:
+
+- **Step cap.** The loop is `for _ in range(T)`; at most $T$ decision calls regardless of model
+  behavior. Default $T = 3$ — kept tight: up to three hops cover the common shapes (a 2–3-entity
+  compare, a before/after, a discover-then-follow-up, a compound two-parter), and the cap is what
+  holds total cost to four LLM calls. Raise it per call (CLI `--max-steps`) for deeper questions.
+- **Anti-loop guard.** A step is *executed* only if its **effective request** — the pair
+  $(\text{query}, \text{scope})$ — has not been issued before this run; an empty query also stops.
+  The key is the *pair*, not the query string alone: a comparative question legitimately reuses one
+  query ("AI supply-chain risk") under two different tickers, and keying on the string alone would
+  mis-flag the second entity as a duplicate and stop before retrieving it. (This was a real bug caught
+  in review; the regression test is `test_same_query_different_ticker_not_deduped`.)
+- **Budget.** Exactly one decision call per iteration + one terminal synthesis ⇒
+
+  $$N_{\text{calls}} \;\le\; \underbrace{T}_{\text{decisions}} + \underbrace{1}_{\text{terminal}} \;=\; 4 \ \text{by default } (T=3)$$
+
+  (a guard-triggered synthesis retry can add one). All *retrieval* between steps is local and free.
+  The single heavy call is the terminal answer; the per-step decisions are cheap by construction
+  (small structured output over a compact summary, capped at 400 tokens). Bounded exactly like
+  `run_backtest`.
+
+A further robustness bound: a decision reply that fails to parse or validate degrades to
+$\textsf{stop}$ (it does **not** crash the run or discard evidence already gathered) — one bad LLM
+turn ends the loop gracefully over whatever $E$ exists.
+
+### 15.5 Grounding across steps — the invariant is unchanged
+
+The project invariant (no fabricated citations, no invented figures) is enforced **once, at the
+terminal**, and it is the *same* P7 guard pair (§10), now over the multi-step **union**:
+
+- **Citation guard.** Every inline $[n]$ in the answer must index a source in $E$ ($1 \le n \le |E|$);
+  a marker outside the union is a fabricated citation → one corrective retry, then raise.
+- **Number grounding.** Every figure in the answer must appear verbatim in some chunk text of $E$.
+
+This composition is *clean* precisely because of the design in §15.3: the loop's intermediate
+decisions carry no numbers and no citations, so there is nothing to ground step-by-step — the only
+surface that can hallucinate is the final answer, and the existing guard already covers it over the
+union allow-set. The agent therefore **inherits** the grounding guarantees of single-shot RAG without
+new guard code; multi-hop adds *coverage of more evidence*, not *new ways to be wrong*.
+
+### 15.6 Where it sits in the stack
+
+```mermaid
+flowchart LR
+  Q["multi-hop question"] --> D{"react_step (cheap LLM)"}
+  D -->|"search (query, scope)"| R["retrieve via §14 stack (local, $0)"]
+  R --> U["dedup union E (cap M)"]
+  U --> D
+  D -->|"stop / cap T / anti-loop"| S["answer_question over E (reused P7 + guards)"]
+  S --> A["cited answer + trace"]
+```
+
+A4 reuses `build_retrieval_system` (whatever §14 config is live — currently hybrid) for the *act*
+step and `answer_question` for the *terminal*, adding only the controller between them. It composes
+*above* §§12–14 (it calls them) and *reuses* §§10–11 (synthesis + guards). The natural next axes:
+**A5 GraphRAG** replaces "vector retrieve" in the act step with graph traversal for structural hops;
+**A6 retrieval-RL** could *learn* the stop/continue and per-step config decisions the LLM currently
+makes heuristically. Mechanism + file map → `rag_implementation_notes.md` §A4.
+
+---
+
+## 16. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -1266,3 +1433,9 @@ is already that action executor; A6 adds the policy on top.
 - Carbonell & Goldstein (1998), *The Use of MMR for Reordering Documents*.
 - Liu et al. (2023), *Lost in the Middle: How Language Models Use Long Contexts*.
 - Gao et al. (2023), *Retrieval-Augmented Generation for Large Language Models: A Survey*.
+- Yao et al. (2023), *ReAct: Synergizing Reasoning and Acting in Language Models* — the
+  reason-act-observe loop of §15.
+- Shinn et al. (2023), *Reflexion: Language Agents with Verbal Reinforcement Learning* — the
+  self-critique-and-retry pattern §15.2 contrasts ReAct against.
+- Trivedi et al. (2023), *Interleaving Retrieval with Chain-of-Thought Reasoning (IRCoT)* —
+  multi-step retrieval for multi-hop QA.

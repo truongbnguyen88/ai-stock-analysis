@@ -74,7 +74,7 @@ implementations of the same "query (+filter) → ranked chunks" contract, so `re
 | **A1 ✅** | Retrieval Evaluation | The measuring stick; extends `rag/eval.py`; lowest risk | Foundation | **Low–Med** (~1.5d) |
 | **A2 ✅** | Reranking | Biggest quality win per effort; local-first, self-contained | Ship value | **Low–Med** (~1.5d) |
 | **A3 ✅** | Hybrid Search | Fixes a *different* failure mode (exact ticker/section/number terms) | Ship value | **Med** (~2d) |
-| **A4** | Agentic RAG | Needs strong retrieval primitives first; bounded LLM cost | Ship value | **Med–High** (~2.5d) |
+| **A4 ✅** | Agentic RAG | Needs strong retrieval primitives first; bounded LLM cost | Ship value | **Med–High** (~2.5d) |
 | **A5** | GraphRAG | Heaviest infra; lower near-term ROI for SEC QA | Learning-first | **High** (~3–4d) |
 | **A6** | Retrieval + RL | Capstone; needs A1 metrics + usage logs to define a reward | Learning-first | **High** (~3–4d) |
 
@@ -247,7 +247,7 @@ benchmark. Sparse/vector sync on refresh → covered by `existing_ids` on both.
 
 ---
 
-## A4 — Agentic RAG (self-contained, bounded ReAct loop for multi-hop SEC QA)
+## A4 — Agentic RAG (self-contained, bounded ReAct loop for multi-hop SEC QA) ✅
 
 > **Design decision (2026-06-22) — ReAct, not plan-and-execute.** A4 is a **self-contained, bounded
 > ReAct loop** (reason → retrieve → observe, with a *reflective* stop), **not** query-decomposition /
@@ -296,8 +296,8 @@ return MultiStepAnswer(answer=ans, trace=trace, n_steps=len(trace), n_evidence=l
 
 - The decision call is **cheap** (sees a compact evidence summary, emits a small structured decision —
   no answer prose). The single heavy call is the terminal `answer_question`.
-- **Budget:** ≤ `agentic_max_steps` decision calls + 1 terminal answer ⇒ **≤5 LLM calls** typical;
-  all retrieval between steps is $0/local. (Bounded like `run_backtest`.)
+- **Budget:** ≤ `agentic_max_steps` decision calls + 1 terminal answer ⇒ **≤4 LLM calls** by default
+  (`agentic_max_steps=3`); all retrieval between steps is $0/local. (Bounded like `run_backtest`.)
 
 **Grounding (invariants unchanged).** Loop decisions emit only queries/filters — **no numbers, no
 citations** → nothing to hallucinate-ground in the loop. The terminal `answer_question` runs the
@@ -317,9 +317,10 @@ yields no evidence). Re-uses, does not re-implement, the guards.
 max_steps=…, per_step_k=…, max_evidence=…) -> MultiStepAnswer`; builds the retriever via
 `build_retrieval_system` (injected in tests); `_react_step(...)` makes the structured decision call.
 
-**Config (settings).** `agentic_max_steps: int = 4` (decision iterations; +1 terminal ⇒ ≤5 calls);
-`agentic_per_step_k: int = 6` (chunks per search step); `agentic_max_evidence: int = 20` (cap the
-union handed to the terminal synthesis — bounds context + cost).
+**Config (settings).** `agentic_max_steps: int = 3` (decision iterations; +1 terminal ⇒ ≤4 calls;
+CLI `--max-steps` raises it per call); `agentic_per_step_k: int = 6`
+(chunks per search step); `agentic_max_evidence: int = 20` (cap the union handed to the terminal
+synthesis — bounds context + cost).
 
 **Surface.** New agent tool `research_multistep(question)` (general multi-hop; the agent router sends
 multi-entity / temporal / comparative filing questions here, casual ones stay on single-shot

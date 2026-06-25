@@ -59,6 +59,16 @@ def _answer_json(answer: str, citations: list[int]) -> str:
     return json.dumps({"answer": answer, "citations": citations, "insufficient_evidence": False})
 
 
+def _decision_json(action: str, query: str | None = None, ticker: str | None = None) -> str:
+    """A canned A4 ReAct decision (the loop's per-step structured output)."""
+    d: dict[str, object] = {"thought": "t", "action": action}
+    if query is not None:
+        d["query"] = query
+    if ticker is not None:
+        d["ticker"] = ticker
+    return json.dumps(d)
+
+
 def _chunk(
     idx: int, text: str, *, ticker: str = "NVDA", dtype: DocumentType = "10-K"
 ) -> DocumentChunk:
@@ -98,13 +108,16 @@ def _final(text: str) -> ToolResponse:
 # ---- schema conformance -------------------------------------------------------
 def test_both_tool_schemas_present() -> None:
     by_name = {t["name"]: t for t in TOOL_SCHEMAS}
-    assert {"search_filings", "research_summary"} <= set(by_name)
+    assert {"search_filings", "research_summary", "research_multistep"} <= set(by_name)
     sf = by_name["search_filings"]["input_schema"]
     assert sf["required"] == ["ticker", "question"]
     assert {"ticker", "question", "top_k"} <= set(sf["properties"])
     rs = by_name["research_summary"]["input_schema"]
     assert rs["required"] == ["ticker"]
     assert {"ticker", "days"} <= set(rs["properties"])
+    rm = by_name["research_multistep"]["input_schema"]
+    assert rm["required"] == ["question"]
+    assert "question" in rm["properties"]
 
 
 # ---- search_filings -----------------------------------------------------------
@@ -143,6 +156,63 @@ def test_search_filings_empty_store_is_insufficient_with_hint() -> None:
 def test_search_filings_without_llm_errors() -> None:
     ex = _executor(llm=None, retriever=_retriever([_chunk(0, "anything")]))
     out = ex.execute("search_filings", {"ticker": "NVDA", "question": "q"})
+    assert "error" in out and "LLM" in out["error"]
+
+
+# ---- research_multistep (A4) --------------------------------------------------
+def _multihop_llm() -> _FakeLLM:
+    # The canned LLM serves the loop's decisions in order, then the terminal synthesis: the call
+    # sequence is search(NVDA) → search(AMD) → stop → terminal answer (one answer_question call).
+    # The explicit "stop" makes this robust to agentic_max_steps (>=2): the loop halts after the
+    # two hops, and the terminal synthesis gets the answer JSON (not a misparsed decision).
+    return _FakeLLM(
+        _decision_json("search", "export control risk", "NVDA"),
+        _decision_json("search", "export control risk", "AMD"),
+        _decision_json("stop"),
+        _answer_json("Both NVDA [1] and AMD [2] flag export-control risk.", [1, 2]),
+    )
+
+
+def test_research_multistep_returns_cited_multihop_answer() -> None:
+    nvda = _chunk(0, "NVDA faces export-control risk on advanced GPUs.", ticker="NVDA")
+    amd = _chunk(1, "AMD faces export-control risk on AI accelerators.", ticker="AMD")
+    ex = _executor(llm=_multihop_llm(), retriever=_retriever([nvda, amd]))
+
+    out = ex.execute(
+        "research_multistep", {"question": "Compare NVDA and AMD export-control risk."}
+    )
+
+    assert "error" not in out
+    assert out["insufficient_evidence"] is False
+    assert out["n_steps"] == 2  # two search hops (NVDA, AMD) before stop
+    assert out["n_evidence"] == 2  # the per-ticker filters yield one chunk each, union of 2
+    assert {c["marker"] for c in out["citations"]} == {1, 2}
+    # Per-step trace is surfaced, scoped to the right ticker each hop.
+    assert [t["ticker"] for t in out["trace"]] == ["NVDA", "AMD"]
+
+
+def test_research_multistep_empty_corpus_is_insufficient_with_hint() -> None:
+    # Nothing ingested → every step retrieves nothing → empty union → P7 refusal with NO LLM
+    # synthesis call (only the loop's decision calls happen).
+    llm = _FakeLLM(_decision_json("search", "risk", "TSLA"), _decision_json("stop"))
+    ex = _executor(llm=llm, retriever=_retriever([]))
+
+    out = ex.execute("research_multistep", {"question": "Compare TSLA 2023 vs 2025 risks."})
+
+    assert out["insufficient_evidence"] is True
+    assert out["n_evidence"] == 0
+    assert "ingest" in out["hint"].lower()
+
+
+def test_research_multistep_blank_question_errors() -> None:
+    ex = _executor(llm=_FakeLLM(), retriever=_retriever([]))
+    out = ex.execute("research_multistep", {"question": "   "})
+    assert "error" in out and "non-empty" in out["error"]
+
+
+def test_research_multistep_without_llm_errors() -> None:
+    ex = _executor(llm=None, retriever=_retriever([]))
+    out = ex.execute("research_multistep", {"question": "compare X and Y"})
     assert "error" in out and "LLM" in out["error"]
 
 
@@ -263,6 +333,34 @@ def test_agent_routes_overview_to_research_summary(monkeypatch: pytest.MonkeyPat
     result = run_agent("Give me the full picture on NVDA.", llm=_Scripted(script), executor=ex)
     assert "research_summary" in result.tool_calls
     assert "76%" in result.text
+
+
+def test_agent_routes_comparative_to_research_multistep() -> None:
+    nvda = _chunk(0, "NVDA faces export-control risk on advanced GPUs.", ticker="NVDA")
+    amd = _chunk(1, "AMD faces export-control risk on AI accelerators.", ticker="AMD")
+    ex = _executor(llm=_multihop_llm(), retriever=_retriever([nvda, amd]))
+
+    script = [
+        ToolResponse(
+            text="",
+            tool_uses=[
+                ToolUse(
+                    id="1",
+                    name="research_multistep",
+                    input={"question": "Compare NVDA and AMD export-control risk."},
+                )
+            ],
+            stop_reason="tool_use",
+            assistant_content=[],
+        ),
+        _final("Per the filings, both NVDA and AMD flag export-control risk."),
+    ]
+    result = run_agent(
+        "Compare NVDA's and AMD's export-control risk factors.",
+        llm=_Scripted(script),
+        executor=ex,
+    )
+    assert "research_multistep" in result.tool_calls
 
 
 def test_get_retriever_builds_logs_and_memoizes(monkeypatch: pytest.MonkeyPatch) -> None:
