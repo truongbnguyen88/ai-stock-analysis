@@ -58,6 +58,7 @@ from stock_agent.rag.sparse_store import InMemoryBM25Store, build_sparse_store
 from stock_agent.rag.status import corpus_status
 from stock_agent.rag.vector_store import InMemoryVectorStore, build_vector_store
 from stock_agent.reports.render_md import render_markdown
+from stock_agent.research.agentic import answer_multistep
 from stock_agent.research.memo import render_memo_markdown
 from stock_agent.research.synthesis import answer_question
 from stock_agent.schemas.documents import DocumentChunk, DocumentType
@@ -959,6 +960,52 @@ def rag_query(
     for i, rc in enumerate(evidence.chunks, start=1):
         typer.echo(f"\n[{i}] {rc.citation_label()}  (score {rc.score:.3f})")
         typer.echo(textwrap.shorten(rc.chunk.text, width=280))
+
+
+@rag_app.command("ask")
+def rag_ask(
+    question: Annotated[str, typer.Option("--question", "-q", help="Multi-hop question")],
+    multi: Annotated[
+        bool,
+        typer.Option(
+            "--multi/--single",
+            help="Multi-hop ReAct loop (default) vs. a single-shot retrieval+answer.",
+        ),
+    ] = True,
+    max_steps: Annotated[
+        int | None, typer.Option("--max-steps", help="Cap decision steps (default settings)")
+    ] = None,
+) -> None:
+    """Answer a question with the A4 multi-hop ReAct loop (`--single` for one-shot).
+
+    Bounded agentic retrieval: each step reasons over evidence-so-far and either retrieves more or
+    stops, then the reused P7 guarded synthesis answers over the union. ``--single`` falls back to
+    one retrieval + one ``answer_question`` (the plain `rag query --answer` path) for comparison.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    llm = AnthropicClient(settings)
+
+    if not multi:
+        retriever = build_retrieval_system(settings)
+        evidence = retriever.retrieve(question, top_k=settings.rag_top_k)
+        grounded = answer_question(question, evidence, llm=llm)
+        typer.echo(grounded.answer)
+        for cite in grounded.citations:
+            typer.echo(f"  [{cite.marker}] {cite.label}")
+        return
+
+    result = answer_multistep(question, settings=settings, llm=llm, max_steps=max_steps)
+    # Trace first (what the loop did), then the cited answer — transparency for an agentic run.
+    for i, st in enumerate(result.trace, start=1):
+        scope = f" [{st.ticker}]" if st.ticker else ""
+        typer.echo(f"  step {i}: {st.query!r}{scope} → {st.n_retrieved} chunks")
+    typer.echo(
+        f"  ({result.n_steps} steps, {result.n_evidence} evidence chunks)\n"
+    )
+    typer.echo(result.answer.answer)
+    for cite in result.answer.citations:
+        typer.echo(f"  [{cite.marker}] {cite.label}")
 
 
 def _named_embedder(name: str, settings: Settings) -> Embedder:

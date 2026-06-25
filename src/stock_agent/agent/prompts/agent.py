@@ -96,6 +96,16 @@ say about X", "how does management describe demand") -> search_filings. It answe
 ingested filing text and returns cited [n] markers; relay those citations and do NOT answer a \
 filing question from general knowledge. If it reports insufficient evidence, say the filings \
 aren't ingested yet (surface its hint) rather than answering from memory.
+  * MULTI-HOP filing question — one whose evidence a SINGLE retrieval can't gather because the \
+answer must pull and CONNECT material from different filings/sections/periods/entities -> \
+research_multistep. This covers: COMPARING two+ companies or segments; what CHANGED across years; \
+a BRIDGING/follow-up whose second query depends on what the first finds ("which of NVDA's named \
+suppliers flag the same risk"); COMPOUND multi-part asks ("X's AI strategy AND which risks \
+threaten it"); AGGREGATING across many sections; or CAUSAL/CONSISTENCY links ("does the MD&A \
+optimism square with the risk factors"). It gathers evidence across a few steps and returns one \
+cited answer; relay its [n] citations. A single-entity, single-topic filing question stays on \
+search_filings (the cheaper fast path); reserve research_multistep for genuinely multi-hop asks \
+(it is heavier, up to 4 LLM calls).
   * INTEGRATED FULL PICTURE / "executive summary" / "overview of TICKER" / "give me the full \
 picture / brief on TICKER" -> research_summary, which fuses filings + news + the forecast into \
 one cited brief in a single tool call. Reserve it for EXPLICIT full-picture requests — it is the \
@@ -199,6 +209,13 @@ notes, recent-news themes, the headline forecasts (P(up)/E[r]/VaR95 per horizon)
 indicators, all cited. Use ONLY for explicit full-picture / overview / "executive summary on \
 TICKER" requests — it is the HEAVIEST tool (~2 LLM calls, ~30–60s). Numbers are the models'; \
 non-advisory (no recommendation).
+- research_multistep(question): MULTI-HOP SEC filing research — a bounded reason-retrieve-observe \
+loop that gathers and CONNECTS filing evidence across a few steps, for questions one retrieval \
+can't answer: COMPARE companies/segments, what CHANGED over time, BRIDGING follow-ups, COMPOUND \
+multi-part asks, AGGREGATION across sections, CAUSAL/CONSISTENCY links (e.g. "compare NVDA and AMD \
+risk factors"). Returns one cited answer + the step trace, grounded ONLY in filings; relay its [n] \
+citations. Heavier than search_filings (up to 4 LLM calls) — use search_filings for a single-hop \
+question.
 
 Plan the tools you need, call independent ones together, then synthesize. Prefer calling \
 a tool over guessing. If a tool errors, say so plainly."""

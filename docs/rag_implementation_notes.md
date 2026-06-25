@@ -1045,3 +1045,98 @@ falling back to dense. No embedding (parse + chunk + index only, $0). The stale
 
 **Deferred:** turning rerank on by default (needs a better reranker model + a clearer win); growing the
 benchmark with exact-term queries to firm up the hybrid/rerank verdicts.
+
+## A4 — Agentic RAG (`research/agentic.py`, `schemas/agentic.py`, agent tool + CLI) ✅
+
+> **Status (2026-06-25).** A4 **complete + green.** Controller (the ReAct loop) + both surfaces landed:
+> the agent tool `research_multistep(question)` (router-nudged) and the CLI `rag ask -q … [--single]
+> [--max-steps]`, with integration tests. Budget kept tight at **≤4 LLM calls** (`agentic_max_steps=3`;
+> first set to 2, then raised to 3 — 2 hops was too few). (Optional multi-step eval set still deferred.)
+> Theory → `rag_concepts.md` §15.
+
+**Role.** Answer **multi-hop** SEC questions a *single* retrieval cannot — where the answer must gather
+and **connect** evidence from different filings/sections/periods/entities. Two structural triggers:
+**(D) disjoint-evidence** (a single top-k can't jointly cover both sides) and **(C) conditional**
+(the right second query is only knowable after the first result). The advertised shapes: compare
+entities/segments, change-over-time, bridging/follow-up, compound multi-part, aggregation across
+sections, causal/consistency checks. Single-topic single-entity questions stay on `search_filings`.
+Design: a **self-contained, bounded ReAct loop** (reason → retrieve → observe, reflective stop),
+**not** plan-and-execute — ReAct expresses dependent hops. Precisely **"P7, but iterative"**: it ends
+in the *existing* guarded answerer; it does **not** rebuild the P8 memo.
+
+**Key files / mechanism (step-by-step).**
+1. **`schemas/agentic.py` — the loop's typed IO.**
+   - `ReActStep { thought, action: Literal["search","stop"], query: str|None, ticker: str|None,
+     filter: ChunkFilter|None }` — one per-iteration **structured decision**; `action` **defaults to
+     `"stop"`** so a thin/partial parse safely ends gathering rather than looping. Decisions carry
+     **only a query + scope — never numbers, never citations** (nothing to hallucinate mid-loop).
+   - `StepTrace { thought, query, ticker, n_retrieved }` — transparent per-step provenance (debug +
+     tool output + tests).
+   - `MultiStepAnswer { answer: GroundedAnswer, trace, n_steps, n_evidence }` — the terminal P7 answer
+     plus the loop trace.
+2. **`research/prompts.py` — the decision prompt (`react.v1`).** `REACT_SYSTEM` instructs the model to
+   emit *one* JSON decision (search-more vs. stop), make each query target the *gap* the prior
+   evidence revealed, never repeat a query, and retrieve per-entity for comparative questions — **no
+   prose answer, no numbers, no citations**. `build_react_user(question, trace, evidence)` renders the
+   question + steps-so-far + a **compact** evidence summary (a ≤240-char snippet per chunk, not full
+   text) — this is what keeps the decision call cheap; full chunk text is only ever sent to the
+   terminal synthesis.
+3. **`research/agentic.py` — the controller.**
+   - `answer_multistep(question, *, settings, llm, retriever=None, max_steps, per_step_k, max_evidence)
+     -> MultiStepAnswer`. Builds the retriever via `build_retrieval_system` (injected in tests; inherits
+     whatever §A1–A3 stack is live — currently hybrid). Defaults come from the `agentic_*` settings;
+     note the `x if x is not None else default` guard so an explicit `0` override is honored (not
+     swallowed by `or`).
+   - **The loop** (`for _ in range(max_steps)`): `_react_step` → if `stop`, break; else take the
+     (stripped) query; **anti-loop** keyed on the *effective request* `(query, where.model_dump_json())`
+     — **not the query string alone**, so a comparative question reusing one query under two tickers is
+     NOT mis-flagged as a duplicate (the bug-1 fix below); retrieve `per_step_k` via the live stack;
+     fold into the union `dedup_union(E, new)[:max_evidence]` (dedup by `chunk_id`, order-preserving,
+     earlier provenance kept); append a trace row.
+   - **`_react_step`** makes the one cheap structured call (capped 400 tokens) and parses leniently;
+     a reply that **fails to parse or validate** (`loads_lenient`/pydantic both raise `ValueError`)
+     degrades to a default-`stop` step — one bad LLM turn must not crash the run or drop evidence
+     already gathered (the bug-2 fix below).
+   - **Terminal:** `answer_question(question, EvidenceSet(query=question, chunks=E), llm=llm)` — the
+     **reused** P7 guarded synthesis (citation guard + number grounding over the union; empty union →
+     "Insufficient evidence found." with **no LLM call**). No new synthesis, no new guards.
+4. **Config (`settings.py`):** `agentic_max_steps=3` (decision iterations; +1 terminal ⇒ **≤4 LLM
+   calls** — kept tight: up to 3 hops cover the common shapes, deeper questions raise it via CLI
+   `--max-steps`), `agentic_per_step_k=6` (chunks per search step), `agentic_max_evidence=20`
+   (union cap → bounds context + cost). Bounded like `run_backtest`.
+5. **Agent tool (`agent/tools.py`) + router (`agent/prompts/agent.py`).** `research_multistep(question)`
+   wraps `answer_multistep` with the **session-shared** retriever (`_get_retriever()`), wall-clock
+   bounded by `_run_with_timeout(_RESEARCH_TIMEOUT_S)` like `research_summary`, and catches
+   `ResearchGuardError`/`LLMError`/`TimeoutError` itself (dispatch only catches `ValueError`/`KeyError`/
+   `ProviderError`). Returns the cited answer + `n_steps`/`n_evidence` + a compact per-step `trace`; an
+   empty union (insufficient + 0 evidence) adds an ingest `hint`. The router teaches the model the
+   D/C taxonomy (compare / change-over-time / bridging / compound / aggregate / causal-consistency →
+   `research_multistep`; single-entity single-topic → `search_filings` fast path). The agent **relays**
+   the cited answer — it does not re-synthesize.
+6. **CLI (`cli/app.py`):** `rag ask -q "…" [--single] [--max-steps N]`. Default `--multi` runs
+   `answer_multistep` and prints the step trace then the cited answer; `--single` falls back to one
+   retrieval + `answer_question` (same as `rag query --answer`) for side-by-side comparison.
+
+**Two bugs caught in self-review (both fixed + regression-tested).**
+- **Bug 1 (correctness):** the anti-loop key was the query *string* alone → "compare NVDA and AMD"
+  (same query text, different ticker) stopped after the NVDA hop, never retrieving AMD — defeating the
+  exact comparative case A4 exists for. Fix: key on `(query, scope)`. Test:
+  `test_same_query_different_ticker_not_deduped`.
+- **Bug 2 (robustness):** an unparseable/invalid decision raised out of `answer_multistep`, crashing the
+  run and discarding gathered evidence. Fix: `_react_step` catches `ValueError` → default-stop. Test:
+  `test_malformed_decision_stops_gracefully`.
+
+**Tested (offline; canned `_FakeLLM` routed by `REACT_SYSTEM`, `_FakeRetriever`; no live calls, no
+model):** *controller* (`test_agentic.py`, 10) — scripted search→search→stop retrieves per step +
+dedups the union; never-stops → caps at `max_steps`; empty/duplicate query → terminates (anti-loop);
+same-query/different-ticker → both hops run; malformed decision → graceful stop; terminal reuses
+`answer_question` (cite outside the union → `ResearchGuardError`); **empty union → refusal with no LLM
+call**; budget == decisions + 1; ticker folds into a `ChunkFilter`. *Surfaces*
+(`test_agent_rag_tools.py`) — tool returns cited multi-hop answer with per-step trace; empty corpus →
+insufficient + ingest hint; blank/no-LLM → error; agent loop routes a "compare NVDA and AMD" turn to
+`research_multistep`; schema present.
+
+**Surfaces landed.** Agent tool `research_multistep` + CLI `rag ask` both wrap `answer_multistep` and
+**relay** the cited answer (no re-synthesis); the optional A1-harness multi-step eval set remains
+deferred. A worked catalog of routing examples (10 multi-hop shapes + the single-shot contrast, a seed
+for that eval set) lives in `docs/example_rag_questions.md`.

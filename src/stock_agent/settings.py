@@ -165,6 +165,15 @@ class Settings(BaseSettings):
     hybrid_rrf_k: int = 60  # RRF damping constant (larger → flatter rank weighting; 60 is standard)
     hybrid_dense_k: int = 30  # dense candidates over-fetched per query before fusion
     hybrid_sparse_k: int = 30  # sparse (BM25) candidates over-fetched per query before fusion
+    # Agentic RAG (advanced-RAG A4) — bounded ReAct loop for multi-hop SEC QA. Each iteration is
+    # ONE cheap structured decision call (search-more vs. stop); retrieval between steps is local;
+    # the single heavy call is the terminal P7 synthesis. Budget = ≤ agentic_max_steps decision
+    # calls + 1 terminal answer. Default 3 ⇒ ≤4 LLM calls — kept tight (up to 3 hops covers the
+    # common multi-hop shapes: 2-3-entity compare, before/after, discover-then-follow-up, compound).
+    # Bounds cost + context like run_backtest; raise per call (CLI --max-steps) for deeper Qs.
+    agentic_max_steps: int = 3  # max decision iterations (+1 terminal synthesis ⇒ ≤4 LLM calls)
+    agentic_per_step_k: int = 6  # chunks retrieved per search step (before the union dedup)
+    agentic_max_evidence: int = 20  # cap on the deduped union handed to the terminal synthesis
     # Client-side hard ceiling on embedding tokens per ingest run (RAG_TODO 9a). Independent
     # of the provider dashboard — protects the one-time paid voyage ingest (9c) from surprise
     # over-spend. None = unlimited (the default; local fastembed is free, so no ceiling needed).

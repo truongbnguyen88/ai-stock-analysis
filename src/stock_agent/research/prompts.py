@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from stock_agent.schemas.agentic import StepTrace
 from stock_agent.schemas.retrieval import RetrievedChunk
 
 VERSION = "research.v1"
@@ -106,3 +107,64 @@ def build_memo_user(
     for i, rc in enumerate(chunks, start=1):
         parts += [f"[{i}] {rc.citation_label()}", rc.chunk.text, ""]
     return "\n".join(parts).rstrip()
+
+
+# ---------------------------------------------------------------------------
+# Agentic ReAct decision (A4)
+# ---------------------------------------------------------------------------
+REACT_VERSION = "react.v1"
+
+# How many chars of each gathered chunk to show the decision call. The decision is CHEAP: it
+# reasons over a compact summary of evidence-so-far, not the full text (that is the terminal call).
+_EVIDENCE_SNIPPET_CHARS = 240
+
+REACT_SYSTEM = """You are a retrieval controller answering a multi-hop question from a \
+company's SEC filings. You do NOT write the final answer — you only decide the NEXT retrieval \
+step in a ReAct loop. Each turn you see the QUESTION, the STEPS taken so far, and a compact \
+summary of the EVIDENCE gathered. Reason about what is still missing, then either retrieve more \
+or stop.
+
+STRICT RULES:
+- Emit exactly ONE decision as JSON. NO prose, NO markdown, NO answer text, NO citations, NO \
+numbers of your own. You output only a thought and the next action.
+- action "search": gather more evidence. Provide a focused "query" (natural-language search \
+over the filings) and, when the question targets a specific company, its "ticker". Make each \
+query depend on what the evidence so far still lacks — a later hop should target the gap a \
+prior hop revealed, not repeat it. Never repeat a query you already issued.
+- action "stop": the gathered evidence is sufficient to answer the question. Stop as soon as \
+that is true — do not pad with extra steps.
+- For a multi-entity or comparative question (e.g. "compare A and B"), retrieve for each entity \
+across separate steps before stopping.
+
+OUTPUT: Return ONLY a single JSON object (no prose, no markdown):
+{
+  "thought": "<what is still missing and why this action>",
+  "action": "search" | "stop",
+  "query": "<the next search query, when action is search; else null>",
+  "ticker": "<ticker to scope the search, e.g. NVDA, or null>"
+}"""
+
+
+def build_react_user(
+    question: str, trace: Sequence[StepTrace], evidence: Sequence[RetrievedChunk]
+) -> str:
+    """Render the decision user message: question + steps-so-far + a compact evidence summary.
+
+    The evidence summary is intentionally compact (a short snippet per chunk) — the decision call
+    must stay cheap; the full chunk text is only ever sent to the terminal synthesis call.
+    """
+    lines = [f"QUESTION: {question}", ""]
+    if trace:
+        lines.append("STEPS SO FAR:")
+        for i, st in enumerate(trace, start=1):
+            scope = st.ticker or "-"
+            lines.append(f"{i}. query={st.query!r} ticker={scope} -> {st.n_retrieved} chunks")
+        lines.append("")
+    lines.append(f"EVIDENCE GATHERED ({len(evidence)} chunks):")
+    if not evidence:
+        lines.append("(none yet)")
+    for i, rc in enumerate(evidence, start=1):
+        snippet = " ".join(rc.chunk.text.split())[:_EVIDENCE_SNIPPET_CHARS]
+        lines.append(f"[{i}] {rc.citation_label()}: {snippet}")
+    lines += ["", "Decide the next action (search or stop) as JSON."]
+    return "\n".join(lines).rstrip()
