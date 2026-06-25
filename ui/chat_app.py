@@ -85,11 +85,13 @@ def _render_export(text: str, charts: list[ChartSpec], idx: int) -> None:
             )
 
 def _sources_from_tool_results(tool_results: list) -> list[dict]:  # type: ignore[type-arg]
-    """Collect SEC citations from the RAG tools (search_filings / research_summary).
+    """Collect SEC citations from the RAG tools (search_filings / research_multistep /
+    research_summary).
 
-    Citations come from the tool OUTPUT (P7/P8 resolved them against the retrieved set),
-    not the LLM — so surfacing them here can't introduce a fabricated source. Deduped by
-    (marker, label), preserving first-seen order.
+    Tool-name agnostic: pulls any ``citations`` field from any tool result, so new RAG tools
+    surface automatically. Citations come from the tool OUTPUT (P7/P8 resolved them against the
+    retrieved set), not the LLM — so surfacing them here can't introduce a fabricated source.
+    Deduped by (marker, label), preserving first-seen order.
     """
     seen: set[tuple[int, str]] = set()
     sources: list[dict] = []  # type: ignore[type-arg]
@@ -346,7 +348,10 @@ with st.sidebar:
 
 # ---- render history ----
 st.title("Stock Research Agent")
-st.caption("Ask about any ticker — the agent calls tools for prices, indicators, news, and forecasts.")
+st.caption(
+    "Ask about any ticker — the agent calls tools for prices, indicators, news, forecasts, "
+    "and SEC filings (single-shot or multi-hop)."
+)
 
 # Empty-state hero: discoverable capability showcase, shown only on a fresh chat.
 # Auto-hides once a turn exists (the render loop below takes over).

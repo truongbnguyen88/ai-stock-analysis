@@ -51,6 +51,15 @@ CAPABILITIES: tuple[Capability, ...] = (
         ),
     ),
     Capability(
+        icon="🔗",
+        title="Multi-hop filing research",
+        blurb="Compare filings, track changes, follow the trail across documents — cited",
+        example=(
+            "Compare {ticker}'s and AMD's risk factors across their SEC filings — where "
+            "do they overlap and differ? Cite the filings."
+        ),
+    ),
+    Capability(
         icon="🔮",
         title="Probabilistic forecasts",
         blurb="Calibrated up/down odds, expected move, VaR & CI — 5–60 days",
