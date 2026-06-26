@@ -1,0 +1,37 @@
+[
+  {
+    "question": "Compare NVDA's and AMD's risk factors related to export controls and China.",
+    "aspects": [
+      {"name": "NVDA export-control risk", "spans": ["NVIDIA", "export"]},
+      {"name": "AMD export-control risk", "spans": ["AMD", "export"]}
+    ]
+  },
+  {
+    "question": "Which of NVDA's named suppliers or foundry partners also flag manufacturing-capacity risk in their own filings?",
+    "aspects": [
+      {"name": "NVDA names its foundry dependence", "spans": ["foundry", "Taiwan Semiconductor"]},
+      {"name": "the supplier flags capacity risk", "spans": ["capacity", "wafer"]}
+    ]
+  },
+  {
+    "question": "How did TSLA's autonomy / full-self-driving risk disclosure change across its recent 10-K filings?",
+    "aspects": [
+      {"name": "earlier autonomy risk language", "spans": ["autonomous", "full self-driving"]},
+      {"name": "later autonomy risk language", "spans": ["regulatory", "driver"]}
+    ]
+  },
+  {
+    "question": "Compare how NVDA and AMD each describe competition in data-center / AI accelerators.",
+    "aspects": [
+      {"name": "NVDA data-center competition", "spans": ["NVIDIA", "data center"]},
+      {"name": "AMD data-center competition", "spans": ["AMD", "data center"]}
+    ]
+  },
+  {
+    "question": "What is NVDA's AI growth strategy, and which stated risk factors most directly threaten it?",
+    "aspects": [
+      {"name": "AI growth strategy (Business / MD&A)", "spans": ["data center", "demand"]},
+      {"name": "threatening risk factors (Item 1A)", "spans": ["competition", "supply"]}
+    ]
+  }
+]

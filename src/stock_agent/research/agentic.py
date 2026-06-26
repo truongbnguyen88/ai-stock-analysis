@@ -100,7 +100,7 @@ def answer_multistep(
         question, EvidenceSet(query=question, chunks=evidence), llm=llm
     )
     return MultiStepAnswer(
-        answer=ans, trace=trace, n_steps=len(trace), n_evidence=len(evidence)
+        answer=ans, trace=trace, n_steps=len(trace), n_evidence=len(evidence), evidence=evidence
     )
 
 

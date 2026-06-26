@@ -1137,6 +1137,21 @@ insufficient + ingest hint; blank/no-LLM → error; agent loop routes a "compare
 `research_multistep`; schema present.
 
 **Surfaces landed.** Agent tool `research_multistep` + CLI `rag ask` both wrap `answer_multistep` and
-**relay** the cited answer (no re-synthesis); the optional A1-harness multi-step eval set remains
-deferred. A worked catalog of routing examples (10 multi-hop shapes + the single-shot contrast, a seed
-for that eval set) lives in `docs/example_rag_questions.md`.
+**relay** the cited answer (no re-synthesis). A worked catalog of routing examples (10 multi-hop
+shapes + the single-shot contrast) lives in `docs/example_rag_questions.md`.
+
+**Multi-step eval set (the last A4 item — now landed).** `research/multistep_eval.py` measures the
+property A4 exists for, instead of asserting it: does the loop's accumulated **union** cover a
+multi-hop question, and by how much over a single retrieval? A `MultiHopQuery` labels a question with
+K **aspects** (one per hop), each a set of answer-bearing **spans** (A1's chunking-invariant span
+philosophy, grouped by hop). Metrics per question: **multistep_coverage** (fraction of aspects some
+union chunk covers), **single_shot_coverage** (same, over one `retrieve` of the question),
+**coverage_gain** = the difference (the headline — the empirical value of the extra hops),
+**citation_accuracy** (terminal-answer citation precision over the union), and `n_steps`/`n_evidence`.
+To expose the union, `MultiStepAnswer` gained an `evidence: list[RetrievedChunk]` field (the
+controller already had it; the agent tool/CLI read other fields, so no payload change). Surfaces:
+`rag eval-multistep --queries <json>` (PAID — real LLM + corpus) + `make rag-eval-multistep`;
+`configs/rag_eval_multistep.example.json` is the labeled seed. Tests are offline (a canned
+**stateless** `TextLLM` that decides from the prompt's evidence count + a fake retriever): the
+headline asserts the union covers BOTH aspects (1.0) while single-shot covers one (0.5) → **gain
++0.5**, plus the pure coverage / citation metrics, empty-corpus refusal, and the aggregate.

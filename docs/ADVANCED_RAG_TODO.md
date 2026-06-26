@@ -337,9 +337,11 @@ re-synthesize).
 - agent tool: a "compare X and Y" turn routes to `research_multistep` (canned LLM).
 
 **Risks.** Cost/looping → hard `max_steps` cap + anti-duplicate-query guard + the simple-question fast
-path. Decision quality → versioned `REACT_SYSTEM` prompt + a small multi-step eval set (reuse the A1
-harness). Latency → bounded calls + `max_evidence` cap. Grounding across steps → union allow-set + the
-reused P7 guards.
+path. Decision quality → versioned `REACT_SYSTEM` prompt + a small multi-step eval set ✅ (`research/
+multistep_eval.py` + `rag eval-multistep` — union **aspect coverage** vs. a single-shot baseline, the
+*gain* being the measured value of the extra hops; seed `configs/rag_eval_multistep.example.json`).
+Latency → bounded calls + `max_evidence` cap. Grounding across steps → union allow-set + the reused
+P7 guards.
 
 ---
 

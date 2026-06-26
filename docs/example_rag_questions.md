@@ -2,7 +2,7 @@
 
 Reference + worked catalog for the RAG layer: which SEC-filing questions need the **agentic** A4
 loop (`research_multistep` / `rag ask`) and which stay on **single-shot** retrieval
-(`search_filings` / `rag query`). Also a useful seed for the (deferred) multi-step eval set.
+(`search_filings` / `rag query`). Also the seed for the A4 multi-step eval set (`rag eval-multistep`).
 
 - Theory + mechanism → [rag_concepts.md §15](rag_concepts.md), [rag_implementation_notes.md §A4](rag_implementation_notes.md).
 - All examples assume the relevant tickers' filings are **already ingested** (the tools never fetch
@@ -155,10 +155,13 @@ or a query that depends on a first finding?** If yes → agentic; if no → sing
 
 ---
 
-## Using these for evaluation (note)
+## Using these for evaluation
 
-This catalog doubles as the seed for the deferred A4 **multi-step eval set** (reuse the A1 harness):
-label each multi-hop question with the chunk_ids that *must* appear in the union for a correct answer,
-then score whether the loop's accumulated evidence covers them (retrieval recall) and whether the
-final cited answer is faithful (citation accuracy). The single-shot list is the negative control —
-those should route to `search_filings`, and pushing them through the loop should not improve the answer.
+This catalog is the seed for the A4 **multi-step eval set** (`rag eval-multistep` /
+`research/multistep_eval.py`; `configs/rag_eval_multistep.example.json`). Each multi-hop question is
+labeled with **aspects** — one per hop, each a set of answer-bearing **spans** (the A1
+chunking-invariant span philosophy, grouped by hop). The harness then scores, per question: **aspect
+coverage** of the loop's accumulated union, the same for a single-shot baseline retrieval, the
+**coverage gain** between them (the headline — the empirical value of the extra hops), and the
+terminal answer's **citation accuracy**. The single-shot list above is the negative control — those
+should route to `search_filings`, and pushing them through the loop should not improve the answer.

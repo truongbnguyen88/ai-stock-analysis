@@ -1412,6 +1412,42 @@ step and `answer_question` for the *terminal*, adding only the controller betwee
 **A6 retrieval-RL** could *learn* the stop/continue and per-step config decisions the LLM currently
 makes heuristically. Mechanism + file map → `rag_implementation_notes.md` §A4.
 
+### 15.7 Measuring multi-hop — union aspect coverage (and the gain)
+
+§11 measures *one* ranked list (nDCG, recall@k). A4 produces a **union** of chunks across hops, so the
+right question is: *did the union gather evidence for every part of a multi-hop question, and does that
+beat a single retrieval?* We answer it with **aspect coverage**.
+
+Label a multi-hop question with $K$ **aspects** — one per hop/entity. Each aspect $a$ carries a set of
+answer-bearing spans $S_a$ (phrases the right passage must contain — the same chunking-invariant idea
+as §11.1, grouped by hop). Given a retrieved set $E$ (a set of chunks), aspect $a$ is *covered* iff
+some chunk contains some span of $a$, and coverage is the fraction of aspects covered:
+
+$$\text{cov}(E) \;=\; \frac{1}{K}\sum_{a=1}^{K}\mathbb{1}\big[\,\exists\, c \in E,\ \exists\, s \in S_a:\ s \subseteq \text{norm}(c)\,\big]$$
+
+where $\subseteq$ is normalized-substring containment ($\text{norm}$ = lowercase + collapse
+whitespace) and $\mathbb{1}[\cdot]$ is 1 when the bracketed condition holds, else 0. Each quantity in
+plain English: $K$ = how many distinct things the question asks about; an aspect is "covered" if **any
+one** of its acceptable phrases shows up in **any** retrieved chunk; coverage is "what fraction of the
+asks did we gather evidence for." Spans should be chosen jointly entity-and-topic specific, so covering
+an aspect really means the *right* hop's evidence was gathered (a generic span shared across aspects
+would over-credit).
+
+The decisive number is the **gain** over the single-shot baseline — the *same* retriever, one
+`retrieve` of the literal question, $E_{\text{single}}$:
+
+$$\Delta_{\text{cov}} \;=\; \text{cov}(E_{\text{multi}}) \;-\; \text{cov}(E_{\text{single}})$$
+
+Holding the retrieval backend fixed, the only difference is *the number of hops*, so $\Delta_{\text{cov}} > 0$
+is the empirical value the loop adds. **Worked micro-example** (the exact values the test asserts): a
+compare-NVDA-and-AMD question has $K = 2$ aspects. One retrieval returns only an NVDA chunk →
+$\text{cov}(E_{\text{single}}) = 1/2 = 0.5$. The loop's two hops gather an NVDA chunk **and** an AMD
+chunk → $\text{cov}(E_{\text{multi}}) = 2/2 = 1.0$, so $\Delta_{\text{cov}} = +0.5$. Reported alongside:
+**citation accuracy** of the terminal answer (the §11.3 metric, over the union allow-set) and the loop's
+`n_steps`/`n_evidence`. Why *aspects/spans* and not labeled `chunk_id`s: spans survive a re-chunk or an
+embedder swap (the same reason §11.1 uses them), so one labeled set scores any retrieval config.
+Mechanism + CLI → `rag_implementation_notes.md` §A4; the labeled seed → `example_rag_questions.md`.
+
 ---
 
 ## 16. References

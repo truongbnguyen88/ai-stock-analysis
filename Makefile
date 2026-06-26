@@ -45,6 +45,11 @@ rag-eval:  ## advanced-RAG: local retrieval lattice (dense/reranked/hybrid/hybri
 	  --systems dense,reranked,hybrid,hybrid+rerank --diagnostic \
 	  --report outputs/rag_eval/lattice.json
 
+rag-eval-multistep:  ## advanced-RAG A4: multi-hop union coverage vs single-shot — PAID (real LLM) — NOT in `make check`
+	PYTHONPATH=src python -m stock_agent rag eval-multistep \
+	  --queries configs/rag_eval_multistep.json \
+	  --report outputs/rag_eval/multistep.json
+
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
