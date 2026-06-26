@@ -128,3 +128,21 @@ def test_grounded_number_passes() -> None:
     llm = _FakeLLM(_resp("Revenue +41% [1]; margin 75.0% [2].", [1, 2]))
     ga = answer_question("q", _EV, llm=llm)
     assert llm.calls == 1 and not ga.insufficient_evidence
+
+
+# ---- empty / non-JSON reply: retry, then refuse (never crash) -----------------
+def test_empty_reply_retries_then_recovers() -> None:
+    # A real model can return an empty text block; the parse retry must recover, not crash.
+    good = _resp("Revenue rose 41% [1].", [1])
+    llm = _FakeLLM("", good)
+    ga = answer_question("q", _EV, llm=llm)
+    assert {c.marker for c in ga.citations} == {1} and llm.calls == 2
+
+
+def test_persistent_unparseable_reply_refuses_without_crashing() -> None:
+    # Empty/garbage on both the call and its retry -> honest refusal, no exception.
+    llm = _FakeLLM("not json at all", "")
+    ga = answer_question("q", _EV, llm=llm)
+    assert ga.insufficient_evidence is True
+    assert ga.answer == "Insufficient evidence found."
+    assert llm.calls == 2  # one corrective retry, then refuse

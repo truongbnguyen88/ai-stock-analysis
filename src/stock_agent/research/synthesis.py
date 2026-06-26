@@ -77,7 +77,23 @@ def _guarded(
     *,
     retry: bool,
 ) -> GroundedAnswer:
-    parsed = _RawAnswer.model_validate(loads_lenient(raw))
+    try:
+        parsed = _RawAnswer.model_validate(loads_lenient(raw))
+    except ValueError:
+        # The model returned an empty / non-JSON reply (a real model occasionally returns no text
+        # block, e.g. a flaky empty 200). Treat it like a guard miss: one corrective retry, then
+        # refuse honestly — never crash. (loads_lenient and pydantic both raise ValueError.)
+        if retry:
+            log.warning("research.parse_retry")
+            corrected = llm.complete_json(
+                system=SYSTEM,
+                user=user + "\n\nIMPORTANT: Reply with ONLY the single JSON object specified.",
+                max_tokens=max_tokens,
+            )
+            return _guarded(
+                question, evidence, grounding, corrected, user, llm, max_tokens, retry=False
+            )
+        return GroundedAnswer(question=question, answer=_INSUFFICIENT, insufficient_evidence=True)
     if parsed.insufficient_evidence:
         return GroundedAnswer(question=question, answer=_INSUFFICIENT, insufficient_evidence=True)
 
