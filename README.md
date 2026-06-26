@@ -53,7 +53,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   Domains: `predictions`, `news`, `filings`, `technicals`, `brief`, each with `--variant`
   (e.g. `chat --domain predictions --variant big-move --ticker NVDA`;
   `chat --domain filings --variant multi "compare NVDA and AMD risks"`). `--tool <route>`
-  is the advanced exact-route escape hatch.
+  is the advanced exact-route escape hatch. The Streamlit app (`streamlit run ui/chat_app.py`)
+  exposes the same choice as a sidebar **Routing** selector — Auto, or a domain + variant.
 - **`research`** — a **SEC-grounded equity research memo** (RAG): fuses filings
   (10-K/10-Q/8-K) + news + the forecast into one cited, non-advisory brief. Retrieval is
   100% local; every filing claim carries a citation, and a citation + number guard rejects
