@@ -47,7 +47,10 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   answer **SEC-filing questions** (`search_filings`), run **multi-hop filing research**
   (`research_multistep` — a bounded ReAct loop for comparative / change-over-time /
   bridging questions one retrieval can't answer), and produce an **integrated brief**
-  (`research_summary`) over the RAG layer below — all cited.
+  (`research_summary`) over the RAG layer below — all cited. **Hybrid routing:** by
+  default the LLM picks the tool(s); pass `--tool <route>` (e.g. `chat --tool forecast
+  --ticker NVDA --horizon 20`) to dispatch one capability **deterministically**, skipping
+  the routing LLM call when you already know what you want.
 - **`research`** — a **SEC-grounded equity research memo** (RAG): fuses filings
   (10-K/10-Q/8-K) + news + the forecast into one cited, non-advisory brief. Retrieval is
   100% local; every filing claim carries a citation, and a citation + number guard rejects
