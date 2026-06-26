@@ -7,10 +7,10 @@
     ]
   },
   {
-    "question": "Among the memory suppliers NVIDIA depends on, which one warns that its revenue is heavily concentrated in customers from a single country?",
+    "question": "Among the memory suppliers NVIDIA depends on, which one warns about cyclical oversupply and declining average selling prices for its own products?",
     "aspects": [
       {"name": "NVDA names the memory supplier", "spans": ["Micron", "SK Hynix"]},
-      {"name": "that supplier's own geographic-concentration risk", "spans": ["may not purchase Micron products", "operators in China", "headquartered in mainland China"]}
+      {"name": "that supplier's own memory-pricing risk", "spans": ["DRAM", "NAND"]}
     ]
   },
   {

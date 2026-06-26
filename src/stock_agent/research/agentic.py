@@ -21,11 +21,14 @@ Budget: ≤ ``agentic_max_steps`` decision calls + 1 terminal answer ⇒ ≤4 LL
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
 from stock_agent.llm.client import TextLLM
 from stock_agent.logging_config import get_logger
 from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.research._shared import loads_lenient
+from stock_agent.research.bridge import bridge_candidates, is_bridging, load_alias_map
 from stock_agent.research.prompts import REACT_SYSTEM, build_react_user
 from stock_agent.research.synthesis import answer_question
 from stock_agent.schemas.agentic import MultiStepAnswer, ReActStep, StepTrace
@@ -47,16 +50,18 @@ def answer_multistep(
     max_steps: int | None = None,
     per_step_k: int | None = None,
     max_evidence: int | None = None,
+    alias_map: Mapping[str, Sequence[str]] | None = None,
 ) -> MultiStepAnswer:
     """Answer a multi-hop SEC question via a bounded ReAct loop ending in the guarded P7 synthesis.
 
     The loop runs up to ``max_steps`` cheap decision calls; each ``search`` retrieves more evidence
     (local, $0) and folds it into a deduped union capped at ``max_evidence``; a ``stop`` decision —
-    or an empty/duplicate query (anti-loop) — ends gathering. The terminal ``answer_question`` runs
-    the citation + number guards over the union and short-circuits to an honest refusal (no LLM
-    call) when the union is empty. ``retriever`` is injectable for tests; defaults to the configured
-    hybrid read path. ``max_steps``/``per_step_k``/``max_evidence`` default to the ``agentic_*``
-    settings.
+    or an empty/duplicate query (anti-loop) — ends gathering. For a *bridging* question a
+    deterministic entity-bridge pass then adds the discovered related entity's filings (the pivot
+    the LLM won't make; $0, gated by ``agentic_bridge_max_entities``; ``alias_map`` injectable for
+    tests). The terminal ``answer_question`` runs the citation + number guards over the union and
+    short-circuits to an honest refusal (no LLM call) when the union is empty. ``retriever`` is
+    injectable for tests; defaults to the configured hybrid read path.
     """
     retriever = retriever or build_retrieval_system(settings)
     max_steps = max_steps if max_steps is not None else settings.agentic_max_steps
@@ -94,13 +99,34 @@ def answer_multistep(
             )
         )
 
+    n_loop_steps = len(trace)  # search hops the LLM chose (excludes the entity-bridge below)
+
+    # Entity-bridge (the bridging fix): the loop won't pivot to a discovered related entity, so for
+    # a bridging question fold in that entity's OWN filings deterministically ($0; no LLM). Gated by
+    # config + the question shape, so single-entity runs are untouched.
+    if settings.agentic_bridge_max_entities > 0 and is_bridging(question):
+        amap = alias_map if alias_map is not None else load_alias_map()
+        searched = {st.ticker for st in trace if st.ticker} | {rc.chunk.ticker for rc in evidence}
+        for ticker, chunks in bridge_candidates(
+            question, evidence,
+            retriever=retriever, alias_map=amap, searched=searched,
+            per_step_k=per_step_k, max_entities=settings.agentic_bridge_max_entities,
+        ):
+            evidence = _dedup_union(evidence, chunks)[:max_evidence]
+            trace.append(
+                StepTrace(
+                    thought=f"entity-bridge: pivot to {ticker}'s own filings",
+                    query=question, ticker=ticker, n_retrieved=len(chunks),
+                )
+            )
+
     # Terminal: the EXISTING guarded answer over the accumulated union (reused P7). Empty union ->
     # "Insufficient evidence found." with NO LLM call (handled inside answer_question).
     ans = answer_question(
         question, EvidenceSet(query=question, chunks=evidence), llm=llm
     )
     return MultiStepAnswer(
-        answer=ans, trace=trace, n_steps=len(trace), n_evidence=len(evidence), evidence=evidence
+        answer=ans, trace=trace, n_steps=n_loop_steps, n_evidence=len(evidence), evidence=evidence
     )
 
 
