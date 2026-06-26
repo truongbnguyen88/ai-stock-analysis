@@ -1151,7 +1151,26 @@ union chunk covers), **single_shot_coverage** (same, over one `retrieve` of the 
 To expose the union, `MultiStepAnswer` gained an `evidence: list[RetrievedChunk]` field (the
 controller already had it; the agent tool/CLI read other fields, so no payload change). Surfaces:
 `rag eval-multistep --queries <json>` (PAID — real LLM + corpus) + `make rag-eval-multistep`;
-`configs/rag_eval_multistep.example.json` is the labeled seed. Tests are offline (a canned
+`configs/rag_eval_multistep.{json,example.json}` is the labeled set. Tests are offline (a canned
 **stateless** `TextLLM` that decides from the prompt's evidence count + a fake retriever): the
 headline asserts the union covers BOTH aspects (1.0) while single-shot covers one (0.5) → **gain
 +0.5**, plus the pure coverage / citation metrics, empty-corpus refusal, and the aggregate.
+
+**Empirical run (2026-06-26) — a rigorous negative on bridging execution.** Running the eval for real
+taught two things. (1) *Labels matter*: a first pass with generic spans (`export`, `AMD`, `data
+center` — all present in NVDA's own 10-K) scored **gain +0.00** everywhere, because single-shot
+trivially covered them. (2) After curating **discriminating** spans verified present in Micron's
+filings and *absent* from NVDA's (`CAC action`, `critical information infrastructure`,
+`may not purchase Micron products`) for genuine *bridging* questions ("which memory supplier NVIDIA
+names also discloses govt/CAC restrictions in *its own* filings?"), a $0 retrieval check confirmed the
+gain *should* be +0.5 — yet the **live loop still scored +0.00**. The trace showed why: all three hops
+stayed `ticker=NVDA` (reworded "NVDA's suppliers" 3×) and **never pivoted to query Micron's own
+filings**, so the union was 100% NVDA chunks and aspect-2 was never gathered. The control even went
+**−0.50** (the loop wandered and its capped union *missed* "competition" that one retrieval caught).
+So: the **metric is validated** (the controlled offline run shows the +0.5 it's designed to detect),
+the **retrieval substrate supports the bridge** (an unscoped "Micron … CAC" query returns the chunk),
+but the **agentic loop does not execute the entity pivot** — a decision-quality gap, not a label or
+retrieval gap. A one-line ReAct prompt nudge to pivot to the named entity was tried and **measured
+ineffective** (still NVDA-anchored at temperature 0), so it was reverted. **Backlog:** improving
+bridging execution (few-shot bridge exemplars / an explicit named-entity→query-that-entity step) is
+future work; the discriminating set is committed as the regression benchmark to re-measure against.
