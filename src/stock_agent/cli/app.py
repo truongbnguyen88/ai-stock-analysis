@@ -546,20 +546,63 @@ def chat(
     message: Annotated[
         str | None, typer.Argument(help="One-shot question; omit for an interactive session")
     ] = None,
+    tool: Annotated[
+        str | None,
+        typer.Option(
+            "--tool",
+            help=(
+                "Deterministic route — run ONE capability directly, skipping LLM routing "
+                "(e.g. forecast, news, filings, research_brief). Invalid values list every route."
+            ),
+        ),
+    ] = None,
+    ticker: Annotated[
+        str | None, typer.Option("--ticker", "-t", help="Ticker for --tool routes that need one.")
+    ] = None,
+    horizon: Annotated[
+        int | None, typer.Option("--horizon", help="Horizon in trading days (forecast / big_move).")
+    ] = None,
+    days: Annotated[
+        int | None, typer.Option("--days", help="Lookback window in days (news / price).")
+    ] = None,
+    model: Annotated[
+        str | None, typer.Option("--model", help="Model override (forecast / big_move).")
+    ] = None,
 ) -> None:
-    """Ask the research agent a question (it answers by calling tools)."""
+    """Ask the agent (LLM routing), or run one capability directly with --tool (deterministic)."""
     settings = get_settings()
     configure_logging(settings)
-    if not settings.anthropic_api_key:
-        typer.echo("ANTHROPIC_API_KEY is required for chat. Add it to your .env.")
-        raise typer.Exit(code=1)
 
     # Imported lazily so non-chat commands don't pay the agent import cost.
+    from stock_agent.agent.router import Router, RouterError
     from stock_agent.agent.runtime import AgentError, AnthropicToolClient, run_agent
     from stock_agent.agent.tools import ToolExecutor
     from stock_agent.llm.client import AnthropicClient
 
-    executor = ToolExecutor(settings, llm=AnthropicClient(settings))
+    key = settings.anthropic_api_key
+    # The executor's own LLM powers synthesis tools (news / filings); numeric routes need no LLM, so
+    # a missing key is fine for those (the tool then returns a clear "no LLM configured" error).
+    executor = ToolExecutor(settings, llm=AnthropicClient(settings) if key else None)
+
+    # ---- Deterministic routing: the user named the capability -> NO LLM routing call. ----
+    if tool is not None:
+        router = Router(executor)  # no tool_llm: the deterministic path never routes via an LLM
+        try:
+            result = router.run(
+                message or "", route=tool, ticker=ticker, horizon=horizon, days=days, model=model
+            )
+        except RouterError as exc:
+            typer.echo(f"[router error] {exc}")
+            raise typer.Exit(code=1) from exc
+        typer.echo(result.text)
+        for cite in (result.structured or {}).get("citations", []):
+            typer.echo(f"  [{cite.get('marker')}] {cite.get('label', '')}")
+        return
+
+    # ---- LLM routing (the agent tool-use loop): requires the API key. ----
+    if not key:
+        typer.echo("ANTHROPIC_API_KEY is required for chat. Add it to your .env.")
+        raise typer.Exit(code=1)
     agent_llm = AnthropicToolClient(settings)
     # Show the active SEC corpus so it's clear which embeddings filing questions are answered from.
     typer.echo(f"RAG corpus: {corpus_status(settings).one_line}")
