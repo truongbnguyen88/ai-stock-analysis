@@ -12,10 +12,13 @@ from typing import Any
 import pytest
 
 from stock_agent.agent.router import (
+    DOMAIN_NAMES,
+    DOMAINS,
     ROUTE_NAMES,
     ROUTES,
     Router,
     RouterError,
+    resolve_domain,
 )
 from stock_agent.agent.runtime import ToolResponse
 from stock_agent.agent.tools import TOOL_SCHEMAS, ToolExecutor
@@ -198,6 +201,54 @@ def test_explicit_auto_string_is_llm_path() -> None:
 def test_llm_path_without_tool_llm_errors() -> None:
     with pytest.raises(RouterError, match="requires a tool LLM"):
         _router(_RecordingExecutor()).run("q")  # route=None, no tool_llm configured
+
+
+# ---- domain layer: registry + partition invariant ---------------------------
+def test_domains_well_formed() -> None:
+    assert tuple(DOMAINS) == DOMAIN_NAMES
+    for name, dom in DOMAINS.items():
+        assert dom.name == name
+        assert dom.blurb.strip()
+        assert dom.variants  # at least one variant
+        assert dom.default in dom.variants  # the default is a real variant
+        for route in dom.variants.values():
+            assert route in ROUTES  # every variant resolves to a real granular route
+
+
+def test_domains_partition_the_granular_routes() -> None:
+    # The domains are a COMPLETE, NON-OVERLAPPING cover of the granular action set: every tool stays
+    # reachable through exactly one domain (no orphan routes, no double-listing).
+    covered: list[str] = [r for dom in DOMAINS.values() for r in dom.variants.values()]
+    assert sorted(covered) == sorted(ROUTE_NAMES)  # complete
+    assert len(covered) == len(set(covered))  # non-overlapping
+
+
+# ---- domain resolution -------------------------------------------------------
+def test_resolve_domain_default_and_explicit_variant() -> None:
+    assert resolve_domain("predictions") == "forecast"  # default variant
+    assert resolve_domain("predictions", "big-move") == "big_move"
+    assert resolve_domain("filings") == "filings"
+    assert resolve_domain("filings", "multi") == "filings_multihop"
+    assert resolve_domain("news", "headlines") == "headlines"
+
+
+def test_resolve_unknown_domain_errors() -> None:
+    with pytest.raises(RouterError, match="unknown domain"):
+        resolve_domain("nope")
+
+
+def test_resolve_unknown_variant_errors() -> None:
+    with pytest.raises(RouterError, match="no variant 'raw'"):
+        resolve_domain("news", "raw")
+
+
+def test_domain_resolves_then_dispatches_deterministically() -> None:
+    # End-to-end: a domain+variant resolves to a granular route the Router then dispatches, with no
+    # routing LLM call (the exploding LLM proves it).
+    ex = _RecordingExecutor()
+    route = resolve_domain("filings", "multi")
+    _router(ex, tool_llm=_ExplodingLLM()).run("Compare NVDA and AMD", route=route)
+    assert ex.calls == [("research_multistep", {"question": "Compare NVDA and AMD"})]
 
 
 # ---- the real ToolExecutor satisfies the Router's expectations ---------------

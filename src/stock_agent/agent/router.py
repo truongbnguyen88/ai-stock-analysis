@@ -138,6 +138,77 @@ ROUTES: dict[str, Route] = {r.name: r for r in _ROUTES}
 ROUTE_NAMES: tuple[str, ...] = tuple(ROUTES)
 
 
+# ---------------------------------------------------------------------------
+# Domain layer — the friendly ~5-way selector over the granular routes.
+# ---------------------------------------------------------------------------
+# The granular ``ROUTES`` above are the precise engine action set (one route = one tool = the future
+# A6 action). Users, though, think in DOMAINS ("news", "predictions", "filings") — so a domain
+# groups a few sibling routes and may "do a few tasks" by picking a VARIANT. The selector (CLI
+# --domain/--variant, and the planned UI dropdown) reads this layer; dispatch still resolves down to
+# one granular route, so determinism + precision are unchanged. The domains form a complete,
+# non-overlapping cover of ``ROUTES`` (asserted in tests) — every tool stays reachable.
+
+
+@dataclass(frozen=True)
+class Domain:
+    """A user-facing capability area grouping sibling granular routes.
+
+    ``variants`` maps a short variant label -> a granular route name; ``default`` is the variant
+    chosen when the caller names only the domain. A single-variant domain (e.g. ``brief``) is just a
+    friendly alias for one route.
+    """
+
+    name: str
+    blurb: str
+    variants: dict[str, str]
+    default: str
+
+
+_DOMAINS: tuple[Domain, ...] = (
+    Domain(
+        "predictions", "ML/quant forecasts and big-move odds",
+        {"forecast": "forecast", "big-move": "big_move"}, "forecast",
+    ),
+    Domain(
+        "news", "Company or sector news — synthesized, raw, or by theme",
+        {"summary": "news", "headlines": "headlines", "theme": "theme_news"}, "summary",
+    ),
+    Domain(
+        "filings", "SEC-filing research — single-shot or multi-hop",
+        {"single": "filings", "multi": "filings_multihop"}, "single",
+    ),
+    Domain(
+        "technicals", "Price statistics and technical indicators",
+        {"indicators": "technicals", "price": "price"}, "indicators",
+    ),
+    Domain(
+        "brief", "Integrated executive brief (filings + news + forecast)",
+        {"brief": "research_brief"}, "brief",
+    ),
+)
+
+DOMAINS: dict[str, Domain] = {d.name: d for d in _DOMAINS}
+DOMAIN_NAMES: tuple[str, ...] = tuple(DOMAINS)
+
+
+def resolve_domain(domain: str, variant: str | None = None) -> str:
+    """Resolve a (domain, variant) selection to a granular route name.
+
+    ``variant=None`` uses the domain's default. Raises ``RouterError`` on an unknown domain or an
+    unknown variant (listing the valid choices) so the selector fails loudly, never mis-routing.
+    """
+    spec = DOMAINS.get(domain)
+    if spec is None:
+        raise RouterError(f"unknown domain '{domain}'; choose from: {', '.join(DOMAIN_NAMES)}")
+    label = variant if variant is not None else spec.default
+    route = spec.variants.get(label)
+    if route is None:
+        raise RouterError(
+            f"domain '{domain}' has no variant '{label}'; choose from: {', '.join(spec.variants)}"
+        )
+    return route
+
+
 @dataclass
 class RouterResult:
     """Outcome of one routed request.
