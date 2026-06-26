@@ -72,7 +72,8 @@ The chat agent is a **router, not a calculator**. Its only job: **intent → too
 
 ```
 src/stock_agent/agent/
-├── runtime.py    # tool-use loop (Anthropic SDK; prompt caching)
+├── runtime.py    # tool-use loop (Anthropic SDK; prompt caching) — the LLM router/supervisor
+├── router.py     # hybrid routing: deterministic fast-path + delegate to runtime (no new LLM call)
 ├── tools.py      # tool schemas → thin wrappers over pipelines/forecasting/backtesting
 ├── prompts/      # system prompt + numbers-vs-narrative rules
 └── guards.py     # numeric-grounding check on agent output
@@ -92,6 +93,7 @@ src/stock_agent/agent/
 | `run_backtest(ticker, horizon, model?)` | `pipelines.backtest` | OOS metric suite + calibration + trust label | ✅ |
 | `get_calibration(ticker, horizon, model?)` | `pipelines.backtest` | reliability table, ECE/MCE, trust label, post-hoc recal | ✅ |
 | `search_filings(ticker, question, top_k?)` | `research.synthesis` over `rag/` | cited answer from the SEC filings (citation + number guarded) | ✅ |
+| `research_multistep(question)` | `research.agentic` (A4 ReAct loop) over `rag/` | cited multi-hop filing answer + step trace (reuses the P7 guards; ≤4 LLM calls) | ✅ |
 | `research_summary(ticker, days?)` | `pipelines.research` (P8 memo) | integrated brief (filings + news + forecast), cited | ✅ |
 
 Data tools surface `data_warnings` (stale/sparse) so the agent can caveat. Backtest/calibration let a user ask *"is your 30-day NVDA forecast well-calibrated?"* and be answered from `get_calibration`, not the model's own reasoning — bounded for chat cost (fast offline models only, horizon 5–60d, wall-clock timeout, per-session result cache; ML backtests stay a CLI op). Numbers in every tool result feed the grounding guard, so the agent may only state figures that came from a tool.
@@ -99,6 +101,15 @@ Data tools surface `data_warnings` (stale/sparse) so the agent can caveat. Backt
 ### Dependency rule
 
 `agent/` depends on `pipelines/`, `forecasting/`, `backtesting/` — never the reverse. Tools are thin adapters; all logic lives in the core modules.
+
+### Hybrid routing (deterministic fast-path + LLM routing)
+
+`agent/router.py` is a thin front-door over the tools with two ways from a request to a capability:
+
+- **LLM routing** (default) — `run_agent` (the tool-use loop above) *is* the supervisor: it selects and composes one or many tools and grounds the numbers. Handles compound requests ("pull news **and** forecast") in one turn.
+- **Deterministic routing** — when the caller **names** the capability, dispatch straight to one tool with structured params, making **no routing LLM call** (faster/cheaper/unambiguous when the user already knows what they want; numeric routes need no LLM at all).
+
+Two layers: a granular **route registry** (one route = one tool — also the future A6 RL action set) and a friendly **~5 domains** (`predictions`, `news`, `filings`, `technicals`, `brief`) that group sibling routes by a **variant**; the domains are a *complete, non-overlapping cover* of the routes (asserted in tests). Surfaces: CLI `chat --domain <area> [--variant …]` (plus `--tool <route>` for the exact route) and a Streamlit sidebar **Routing** selector. Grounding is unchanged — a deterministic turn just dispatches one already-guarded tool — and the deterministic result reuses the same chart + citation rendering as the LLM path.
 
 ### Numeric-grounding guard (the critical safeguard)
 
@@ -313,7 +324,9 @@ rag/                  chunk (section-aware, pure) · embed ONCE (Embedder Protoc
         ▼
 research/             ONE grounded synthesis call (llm/ + guards) → GroundedAnswer / ResearchMemo
         ▼
-pipelines/research · cli (research) · agent tools (search_filings · research_summary)
+research/agentic        A4 bounded ReAct loop (multi-hop) — reuses retrieval + the P7 guarded answer
+        ▼
+pipelines/research · cli (research · rag ask) · agent tools (search_filings · research_multistep · research_summary)
 ```
 
 `rag/` depends on `documents/` + an `Embedder`; `research/` depends on `rag/` + `pipelines/`
@@ -357,15 +370,20 @@ narrative with cited SEC claims — **no recommendation field**, same as the ana
 
 ### Front-ends
 
-- **CLI:** `documents download-sec` → `documents ingest` → `rag query [--answer]` → `research`.
-- **Chat agent:** two guarded tools — `search_filings(ticker, question)` (a specific filing question,
-  cited) and `research_summary(ticker)` (the integrated brief). Both make their own guarded synthesis
-  call and return *validated, cited* output, so the agent's grounding guard stays intact (it never
-  hands raw chunks to the model). Reachable only after a ticker's filings are ingested.
+- **CLI:** `documents download-sec` → `documents ingest` → `rag query [--answer]` (single-shot) /
+  `rag ask [--single]` (multi-hop ReAct) → `research`.
+- **Chat agent:** three guarded tools — `search_filings(ticker, question)` (a specific filing
+  question, cited), `research_multistep(question)` (multi-hop / comparative / change-over-time, the
+  A4 ReAct loop), and `research_summary(ticker)` (the integrated brief). All make their own guarded
+  synthesis call and return *validated, cited* output, so the agent's grounding guard stays intact
+  (it never hands raw chunks to the model). Reachable only after a ticker's filings are ingested.
 
 ### Production state
 
-Built incrementally P0–P9 (`RAG_TODO.md`). The MVP corpus = SEC filings only (transcripts / decks /
-hybrid search / reranking are V1+). As shipped: ~3 years of 10-K/10-Q/8-K across the universe
-(≈93k chunks) embedded with **voyage-4** in production (local BGE collection retained as fallback);
-the production embedder is selected by `EMBEDDING_PROVIDER` in `.env`.
+Built incrementally P0–P9 (`RAG_TODO.md`), then an **advanced-RAG track A1–A4** ([ADVANCED_RAG_TODO.md](ADVANCED_RAG_TODO.md)):
+A1 retrieval-eval harness, A2 reranking (kept available, OFF), **A3 hybrid dense⊕BM25 — promoted to the
+default** on a measured eval win, A4 **agentic multi-hop** retrieval (`research_multistep`). The MVP
+corpus = SEC filings only (transcripts / decks / GraphRAG (A5) / retrieval-RL (A6) are still future).
+As shipped: ~3 years of 10-K/10-Q/8-K across the universe (≈93k chunks, with a backfilled BM25 index)
+embedded with **voyage-4** in production (local BGE collection retained as fallback); the production
+embedder is selected by `EMBEDDING_PROVIDER` in `.env`.
