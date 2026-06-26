@@ -26,7 +26,20 @@ st.set_page_config(
     layout="wide",
 )
 
-from stock_agent.agent.runtime import AgentError, AgentGroundingError, AnthropicToolClient, run_agent
+from stock_agent.agent.router import (
+    DOMAIN_NAMES,
+    DOMAINS,
+    Router,
+    RouterError,
+    resolve_domain,
+)
+from stock_agent.agent.runtime import (
+    AgentError,
+    AgentGroundingError,
+    AnthropicToolClient,
+    ToolInvocation,
+    run_agent,
+)
 from stock_agent.agent.tools import ToolExecutor
 from stock_agent.chat.history import (
     ChatStore,
@@ -37,8 +50,8 @@ from stock_agent.chat.history import (
 )
 from stock_agent.llm.client import AnthropicClient
 from stock_agent.rag.status import corpus_status
-from stock_agent.settings import get_settings
 from stock_agent.reports.export import EXPORT_META, export_summary
+from stock_agent.settings import get_settings
 from stock_agent.ui.capabilities import CAPABILITIES
 from stock_agent.viz.charts import ChartSpec, charts_for
 from stock_agent.viz.render import to_altair, to_png
@@ -212,6 +225,10 @@ def load_resources():
     return settings, executor, llm, store
 
 settings, executor, agent_llm, store = load_resources()
+# Deterministic-routing front door (the domain selector below dispatches through this; no tool_llm
+# needed because the deterministic path never makes a routing LLM call). Auto mode still uses run_agent.
+router = Router(executor)
+_AUTO_MODE = "🤖 Auto (LLM router)"
 
 
 # ---- chat-thread persistence helpers ----
@@ -316,6 +333,39 @@ with st.sidebar:
             st.session_state.pending_prompt = template.replace("{ticker}", ticker_input)
 
     st.divider()
+    # ---- Hybrid routing: Auto (LLM picks tools) vs. a deterministic domain ----
+    st.subheader("Routing")
+    route_mode = st.selectbox(
+        "Mode",
+        [_AUTO_MODE, *DOMAIN_NAMES],
+        help=(
+            "Auto lets the LLM choose and compose tools. A domain runs that one capability "
+            "directly — no routing LLM call (faster/cheaper when you know what you want)."
+        ),
+    )
+    # Selections used by the turn handler below (module scope — a `with` block adds no scope).
+    selected_domain: str | None = None if route_mode == _AUTO_MODE else route_mode
+    selected_variant: str | None = None
+    horizon_val: int | None = None
+    days_val: int | None = None
+    if selected_domain is not None:
+        dom = DOMAINS[selected_domain]
+        st.caption(dom.blurb)
+        variant_labels = list(dom.variants)
+        selected_variant = st.selectbox(
+            "Variant", variant_labels, index=variant_labels.index(dom.default)
+        )
+        # Only surface the params the chosen domain actually uses (0 = use the tool's default).
+        if selected_domain == "predictions":
+            _h = st.number_input("Horizon (days)", min_value=0, value=20, step=5)
+            horizon_val = int(_h) or None
+        if selected_domain in ("news", "technicals", "brief"):
+            _d = st.number_input("Lookback (days)", min_value=0, value=14, step=1)
+            days_val = int(_d) or None
+        _target = dom.variants[selected_variant]
+        st.caption(f"🎯 Deterministic — runs `{_target}`, skips LLM routing.")
+
+    st.divider()
     st.subheader("💬 Chats")
     if st.button("➕ New chat", use_container_width=True):
         _save_current_thread()  # keep the one we're leaving
@@ -379,7 +429,17 @@ if not settings.anthropic_api_key:
     st.error("ANTHROPIC_API_KEY is not set. Add it to your .env file and restart.")
     st.stop()
 
-prompt = st.chat_input("Ask anything about a stock…") or pending
+# Placeholder hints what to type for the active routing mode.
+if selected_domain == "filings":
+    _placeholder = "Type your filing question…"
+elif selected_domain == "news" and selected_variant == "theme":
+    _placeholder = "Type a sector/theme (e.g. robotics)…"
+elif selected_domain is not None:
+    _placeholder = f"Press enter to run {selected_domain} on {ticker_input or 'a ticker'}…"
+else:
+    _placeholder = "Ask anything about a stock…"
+
+prompt = st.chat_input(_placeholder) or pending
 
 if prompt:
     # Show user message immediately.
@@ -387,45 +447,77 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # Run the agent and stream the response.
+    # Run the request and render the response.
     with st.chat_message("assistant"):
         charts: list[ChartSpec] = []
         sources: list[dict] = []  # type: ignore[type-arg]
-        with st.spinner("Working on your request…"):
-            try:
-                result = run_agent(
-                    prompt,
-                    llm=agent_llm,
-                    executor=executor,
-                    history=st.session_state.agent_history,  # pass prior turns
-                )
-                response = result.text
-                # Persist the full message history for the next turn.
-                st.session_state.agent_history = result.messages
-                # Charts derived from the tool results (numbers the tools produced,
-                # never the LLM) — rendered alongside the text below, not replacing it.
-                charts = charts_for(result.tool_results)
-                # Resolved SEC citations from the RAG tools (from tool output, not the LLM).
-                sources = _sources_from_tool_results(result.tool_results)
-                # Show which tools were used as a subtle annotation.
-                if result.tool_calls:
-                    unique = list(dict.fromkeys(result.tool_calls))  # preserve order
-                    st.caption(f"🔧 Tools used: {', '.join(unique)}")
-            except AgentGroundingError as exc:
-                response = (
-                    f"⚠️ The agent produced unverifiable figures and was stopped.\n\n"
-                    f"Details: {exc}\n\n"
-                    "Please rephrase your question or ask the agent to call a specific tool."
-                )
-            except AgentError as exc:
-                low = str(exc).lower()
-                if "tim" in low or "connection" in low or "interrupt" in low:
-                    response = (
-                        "⚠️ The request timed out (often a temporary network hiccup or heavy "
-                        "background load). Please try again — your conversation is preserved."
+        spinner_msg = (
+            f"Running {selected_domain}…" if selected_domain else "Working on your request…"
+        )
+        with st.spinner(spinner_msg):
+            if selected_domain is None:
+                # ---- Auto: the LLM agent loop picks + composes tools (unchanged). ----
+                try:
+                    result = run_agent(
+                        prompt,
+                        llm=agent_llm,
+                        executor=executor,
+                        history=st.session_state.agent_history,  # pass prior turns
                     )
-                else:
-                    response = f"⚠️ Agent error: {exc}"
+                    response = result.text
+                    # Persist the full message history for the next turn.
+                    st.session_state.agent_history = result.messages
+                    # Charts derived from the tool results (numbers the tools produced,
+                    # never the LLM) — rendered alongside the text below, not replacing it.
+                    charts = charts_for(result.tool_results)
+                    # Resolved SEC citations from the RAG tools (from tool output, not the LLM).
+                    sources = _sources_from_tool_results(result.tool_results)
+                    if result.tool_calls:
+                        unique = list(dict.fromkeys(result.tool_calls))  # preserve order
+                        st.caption(f"🔧 Tools used: {', '.join(unique)}")
+                except AgentGroundingError as exc:
+                    response = (
+                        f"⚠️ The agent produced unverifiable figures and was stopped.\n\n"
+                        f"Details: {exc}\n\n"
+                        "Please rephrase your question or ask the agent to call a specific tool."
+                    )
+                except AgentError as exc:
+                    low = str(exc).lower()
+                    if "tim" in low or "connection" in low or "interrupt" in low:
+                        response = (
+                            "⚠️ The request timed out (often a temporary network hiccup or heavy "
+                            "background load). Please try again — your conversation is preserved."
+                        )
+                    else:
+                        response = f"⚠️ Agent error: {exc}"
+            else:
+                # ---- Deterministic: dispatch the chosen domain (no routing LLM call). ----
+                # A deterministic turn is standalone (not part of the LLM dialogue), so
+                # agent_history is left untouched. We wrap the single tool result in a
+                # ToolInvocation to reuse the SAME chart + citation rendering as the Auto path.
+                try:
+                    route = resolve_domain(selected_domain, selected_variant)
+                    rr = router.run(
+                        prompt, route=route, ticker=ticker_input, horizon=horizon_val, days=days_val
+                    )
+                    structured = rr.structured or {}
+                    tool_name = rr.tool_calls[0] if rr.tool_calls else route
+                    invs = [ToolInvocation(name=tool_name, input={}, result=structured)]
+                    charts = charts_for(invs)
+                    sources = _sources_from_tool_results(invs)
+                    if "error" in structured:
+                        response = f"⚠️ {structured['error']}"
+                    elif "answer" in structured:
+                        response = rr.text  # synthesis tools carry a cited prose answer
+                    else:
+                        # Numeric tools: show the structured result verbatim (charts render below).
+                        response = (
+                            f"**{selected_domain} · {selected_variant}** "
+                            f"(`{tool_name}`)\n\n```json\n{rr.text}\n```"
+                        )
+                    st.caption(f"🎯 Deterministic route: {tool_name} (no LLM routing call)")
+                except RouterError as exc:
+                    response = f"⚠️ {exc}"
         st.markdown(response)
         for spec in charts:
             _render_chart(spec)
