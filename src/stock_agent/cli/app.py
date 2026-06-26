@@ -546,18 +546,40 @@ def chat(
     message: Annotated[
         str | None, typer.Argument(help="One-shot question; omit for an interactive session")
     ] = None,
+    domain: Annotated[
+        str | None,
+        typer.Option(
+            "--domain",
+            help=(
+                "Deterministic DOMAIN — run a capability area directly, skipping LLM routing: "
+                "predictions, news, filings, technicals, brief. Pair with --variant; invalid "
+                "values list the choices."
+            ),
+        ),
+    ] = None,
+    variant: Annotated[
+        str | None,
+        typer.Option(
+            "--variant",
+            help=(
+                "Variant within --domain (e.g. news: summary/headlines/theme; filings: "
+                "single/multi; predictions: forecast/big-move). Omit for the domain default."
+            ),
+        ),
+    ] = None,
     tool: Annotated[
         str | None,
         typer.Option(
             "--tool",
             help=(
-                "Deterministic route — run ONE capability directly, skipping LLM routing "
-                "(e.g. forecast, news, filings, research_brief). Invalid values list every route."
+                "Advanced: dispatch one EXACT granular route (e.g. forecast, summarize-style news, "
+                "filings_multihop), bypassing the domain layer. Invalid values list every route."
             ),
         ),
     ] = None,
     ticker: Annotated[
-        str | None, typer.Option("--ticker", "-t", help="Ticker for --tool routes that need one.")
+        str | None,
+        typer.Option("--ticker", "-t", help="Ticker for --domain/--tool routes that need one."),
     ] = None,
     horizon: Annotated[
         int | None, typer.Option("--horizon", help="Horizon in trading days (forecast / big_move).")
@@ -569,12 +591,12 @@ def chat(
         str | None, typer.Option("--model", help="Model override (forecast / big_move).")
     ] = None,
 ) -> None:
-    """Ask the agent (LLM routing), or run one capability directly with --tool (deterministic)."""
+    """Ask the agent (LLM routing), or run a capability directly via --domain (deterministic)."""
     settings = get_settings()
     configure_logging(settings)
 
     # Imported lazily so non-chat commands don't pay the agent import cost.
-    from stock_agent.agent.router import Router, RouterError
+    from stock_agent.agent.router import Router, RouterError, resolve_domain
     from stock_agent.agent.runtime import AgentError, AnthropicToolClient, run_agent
     from stock_agent.agent.tools import ToolExecutor
     from stock_agent.llm.client import AnthropicClient
@@ -584,12 +606,15 @@ def chat(
     # a missing key is fine for those (the tool then returns a clear "no LLM configured" error).
     executor = ToolExecutor(settings, llm=AnthropicClient(settings) if key else None)
 
-    # ---- Deterministic routing: the user named the capability -> NO LLM routing call. ----
-    if tool is not None:
+    # ---- Deterministic routing: the user named a domain/route -> NO LLM routing call. ----
+    # --domain (friendly, resolved via --variant) is the primary surface; --tool is the exact
+    # granular escape hatch. --domain wins if both are given.
+    if domain is not None or tool is not None:
         router = Router(executor)  # no tool_llm: the deterministic path never routes via an LLM
         try:
+            route = resolve_domain(domain, variant) if domain is not None else tool
             result = router.run(
-                message or "", route=tool, ticker=ticker, horizon=horizon, days=days, model=model
+                message or "", route=route, ticker=ticker, horizon=horizon, days=days, model=model
             )
         except RouterError as exc:
             typer.echo(f"[router error] {exc}")
