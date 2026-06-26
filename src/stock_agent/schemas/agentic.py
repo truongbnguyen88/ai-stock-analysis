@@ -17,7 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from stock_agent.schemas.research import GroundedAnswer
-from stock_agent.schemas.retrieval import ChunkFilter
+from stock_agent.schemas.retrieval import ChunkFilter, RetrievedChunk
 
 
 class ReActStep(BaseModel):
@@ -53,3 +53,7 @@ class MultiStepAnswer(BaseModel):
     trace: list[StepTrace] = Field(default_factory=list)  # executed search steps, in order
     n_steps: int = 0  # number of search steps executed (== len(trace))
     n_evidence: int = 0  # size of the deduped evidence union handed to the terminal synthesis
+    # The accumulated deduped union itself (== n_evidence chunks). Carried for transparency, the
+    # multi-step eval (union coverage), and debugging; the agent tool / CLI read the fields above,
+    # not this, so it adds no payload to a chat turn. Default empty keeps back-compat for callers.
+    evidence: list[RetrievedChunk] = Field(default_factory=list)

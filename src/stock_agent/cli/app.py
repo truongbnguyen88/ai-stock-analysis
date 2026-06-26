@@ -60,6 +60,11 @@ from stock_agent.rag.vector_store import InMemoryVectorStore, build_vector_store
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.research.agentic import answer_multistep
 from stock_agent.research.memo import render_memo_markdown
+from stock_agent.research.multistep_eval import (
+    MultiHopQuery,
+    evaluate_multihop_set,
+    format_multihop_markdown,
+)
 from stock_agent.research.synthesis import answer_question
 from stock_agent.schemas.documents import DocumentChunk, DocumentType
 from stock_agent.schemas.retrieval import ChunkFilter
@@ -1216,5 +1221,53 @@ def rag_eval(
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(
             json.dumps([r.model_dump(mode="json") for r in reports], indent=2), encoding="utf-8"
+        )
+        typer.echo(f"Wrote {len(reports)} report(s) to {report}")
+
+
+@rag_app.command("eval-multistep")
+def rag_eval_multistep(
+    queries: Annotated[
+        Path, typer.Option("--queries", "-q", help="JSON file: list of labeled multi-hop queries")
+    ],
+    top_k: Annotated[
+        int | None,
+        typer.Option("--top-k", help="Single-shot baseline top-k (default settings.rag_top_k)"),
+    ] = None,
+    report: Annotated[
+        Path | None, typer.Option("--report", help="Also write reports + summary JSON to this path")
+    ] = None,
+) -> None:
+    """Measure the A4 agentic loop's multi-hop coverage vs. a single-shot baseline (PAID: real LLM).
+
+    Loads labeled multi-hop questions — each with `aspects` (answer-bearing spans per hop) — then
+    for each runs the ReAct loop AND one single retrieval over the configured corpus, and reports
+    **coverage**, the **coverage gain** (multi-step − single-shot), citation accuracy, and loop
+    behaviour. Needs ANTHROPIC_API_KEY and the query tickers' filings ingested. See
+    `configs/rag_eval_multistep.example.json`; run via `make rag-eval-multistep`.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    if not settings.anthropic_api_key:
+        typer.echo("ANTHROPIC_API_KEY is required for eval-multistep (the loop makes LLM calls).")
+        raise typer.Exit(code=1)
+    from stock_agent.llm.client import AnthropicClient
+
+    labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    reports, summary = evaluate_multihop_set(
+        labeled, settings=settings, llm=AnthropicClient(settings), top_k=top_k
+    )
+    typer.echo(format_multihop_markdown(reports, summary))
+    if report is not None:
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            json.dumps(
+                {
+                    "summary": summary.model_dump(mode="json"),
+                    "reports": [r.model_dump(mode="json") for r in reports],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
         )
         typer.echo(f"Wrote {len(reports)} report(s) to {report}")
