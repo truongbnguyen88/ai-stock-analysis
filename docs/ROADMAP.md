@@ -122,8 +122,15 @@ invariants as the forecasting core (numbers from models, non-advisory, no scrapi
   (incremental ingest — embed only *new* chunks — + `documents refresh` + local launchd schedule).
   **RAG layer complete (P0–P9).** (Request batching + `bulk_ingest` isolation/retry added during
   9c-run hardening.)
-- **Out of scope (V1+):** earnings transcripts, investor decks, hybrid (BM25+vector) search,
-  reranking, QoQ document comparison, agentic multi-step retrieval.
+- **Advanced-RAG track (A1–A4) ✅** ([ADVANCED_RAG_TODO.md](ADVANCED_RAG_TODO.md)) — learning-oriented
+  retrieval upgrades, each default-OFF until measured: **A1** retrieval-eval harness, **A2** reranking
+  (available, OFF), **A3** hybrid BM25+vector (RRF) — **promoted to the default** on an eval win,
+  **A4** agentic multi-step (ReAct) retrieval (`research_multistep` / `rag ask`). Next: A5 GraphRAG,
+  A6 retrieval-RL.
+- **Agent: hybrid routing ✅** — deterministic capability dispatch (`chat --domain/--variant`, no
+  routing LLM call) alongside the existing LLM tool-use loop; Streamlit Routing selector. See
+  [ARCHITECTURE.md §4](ARCHITECTURE.md).
+- **Out of scope (still future):** earnings transcripts, investor decks, QoQ document comparison.
 
 ## CLI / chat surface
 
@@ -138,13 +145,15 @@ python -m stock_agent backtest --ticker AAPL                  # Phase 6
 python -m stock_agent documents download-sec --all --years 3  # official EDGAR API (free, idempotent)
 python -m stock_agent documents ingest --all                  # parse→chunk→embed→store ($0 local, or voyage)
 python -m stock_agent rag query --ticker NVDA --question "AI growth drivers?" --answer
+python -m stock_agent rag ask -q "compare NVDA and AMD risk factors"   # A4 multi-hop ReAct (--single = one-shot)
 python -m stock_agent research --ticker NVDA                  # technicals + forecast + news + filings → cited memo
 
 # Conversational agent (same core; also answers filing questions over the RAG layer)
-python -m stock_agent chat
+python -m stock_agent chat                                    # LLM routing (picks + composes tools)
 > Analyze NVDA over the last 3 months and forecast 15 and 30 days
 > Is your 30-day NVDA forecast well-calibrated?
 > What are NVDA's key risk factors per its latest 10-K?
+python -m stock_agent chat --domain predictions --variant big-move --ticker NVDA  # deterministic (no routing LLM call)
 
 # Browser chat frontend (Streamlit)
 make ui   # → http://localhost:8501
