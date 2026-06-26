@@ -174,6 +174,12 @@ class Settings(BaseSettings):
     agentic_max_steps: int = 3  # max decision iterations (+1 terminal synthesis ⇒ ≤4 LLM calls)
     agentic_per_step_k: int = 6  # chunks retrieved per search step (before the union dedup)
     agentic_max_evidence: int = 20  # cap on the deduped union handed to the terminal synthesis
+    # Deterministic entity-bridge (A4 bridging fix). After the loop, for a *bridging* question the
+    # ReAct model reliably refuses to pivot its search to a discovered related entity (it stays on
+    # the question's subject). This makes that pivot structurally: resolve company NAMES in the
+    # gathered union to tickers (configs/ticker_aliases.json) and issue this many extra $0 scoped
+    # retrievals into the most question-relevant of them (no extra LLM call). 0 disables.
+    agentic_bridge_max_entities: int = 2
     # Client-side hard ceiling on embedding tokens per ingest run (RAG_TODO 9a). Independent
     # of the provider dashboard — protects the one-time paid voyage ingest (9c) from surprise
     # over-spend. None = unlimited (the default; local fastembed is free, so no ceiling needed).

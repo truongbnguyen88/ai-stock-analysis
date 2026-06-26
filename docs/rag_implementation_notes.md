@@ -1170,7 +1170,24 @@ filings**, so the union was 100% NVDA chunks and aspect-2 was never gathered. Th
 So: the **metric is validated** (the controlled offline run shows the +0.5 it's designed to detect),
 the **retrieval substrate supports the bridge** (an unscoped "Micron … CAC" query returns the chunk),
 but the **agentic loop does not execute the entity pivot** — a decision-quality gap, not a label or
-retrieval gap. A one-line ReAct prompt nudge to pivot to the named entity was tried and **measured
-ineffective** (still NVDA-anchored at temperature 0), so it was reverted. **Backlog:** improving
-bridging execution (few-shot bridge exemplars / an explicit named-entity→query-that-entity step) is
-future work; the discriminating set is committed as the regression benchmark to re-measure against.
+retrieval gap.
+
+**The fix — a deterministic entity-bridge (`research/bridge.py`), eval-driven.** Two *prompt*
+interventions were tried and **measured ineffective** at temperature 0 — a one-line instruction
+(react.v2) AND a worked few-shot exemplar showing the ticker switching `NVDA → null` with a Micron
+query — both left every hop on `ticker=NVDA`. Conclusion: this is **not promptable** (the model is
+robustly subject-anchored); the *control policy* needs structural help, so the prompt changes were
+reverted (measure, don't assert). The structural fix runs **after** the loop and makes the pivot the
+LLM won't: for a *bridging* question (`bridge.is_bridging` — relationship/own-filing cues, so
+single-entity runs are untouched) it resolves the company NAMES in the gathered union to tickers via
+`configs/ticker_aliases.json` (`micron → MU`), drops those already searched, ranks the rest by how
+well **their own** filings match the question, and folds the top `agentic_bridge_max_entities` (=2)
+into the union — **$0, no extra LLM call** (just scoped retrievals). `n_steps` still counts only the
+LLM's loop hops; the bridge rows are tagged `entity-bridge` in the trace. **Measured result on the
+discriminating set:** the regulatory bridge went **+0.00 → +0.50** (the union now reaches Micron's
+own CAC chunk); a second pricing bridge (`DRAM`/`NAND`) similarly. (The single-topic control's −0.50
+is a *separate* loop-nondeterminism issue — the loop's capped union can miss what one retrieval
+catches — out of scope for the bridge.) The committed `configs/rag_eval_multistep.json` is the
+regression benchmark; spans were chosen to be present in the *bridge's* entity-scoped retrieval and
+absent from single-shot. Offline tests: `tests/unit/test_bridge.py` (gate, alias resolution, ranking
++ cap, corpus-absence skip, end-to-end `answer_multistep` reaching the supplier's filings).
