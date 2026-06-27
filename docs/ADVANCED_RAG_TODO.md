@@ -347,6 +347,15 @@ P7 guards.
 
 ## A5 — GraphRAG (lightweight knowledge graph) — learning-first
 
+> **Conceptual framing — how A5 relates to A4 (agentic).** They are *orthogonal* layers, not one
+> wrapping the other: agentic RAG is a control-flow *strategy* (when/how-many-times to retrieve);
+> GraphRAG is a retrieval *substrate* (what you retrieve over). A5's `GraphRetriever` satisfies the
+> same `RetrievalSystem` protocol the A4 loop already calls, so agentic can *wrap* graph, and a graph
+> *traversal* can replace the brittle query-time alias-bridge of §A4 by moving entity resolution to a
+> stored, ingest-time edge. Full framing + the 2×2 + the `NVDA→MU` worked contrast →
+> [rag_concepts.md §15.9](rag_concepts.md). The A4 bridging negative is A5's motivating benchmark
+> (re-measure with `rag eval-multistep`).
+
 **Learning objective.** Knowledge-graph **construction from text** + **graph-augmented retrieval**
 (multi-hop questions vector search can't answer).
 

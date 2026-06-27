@@ -1448,6 +1448,96 @@ chunk → $\text{cov}(E_{\text{multi}}) = 2/2 = 1.0$, so $\Delta_{\text{cov}} = 
 embedder swap (the same reason §11.1 uses them), so one labeled set scores any retrieval config.
 Mechanism + CLI → `rag_implementation_notes.md` §A4; the labeled seed → `example_rag_questions.md`.
 
+### 15.8 Worked end-to-end example — single retrieval vs. the agentic loop
+
+A concrete trace of one labeled question through both paths on the live ~93k-chunk SEC corpus (real
+numbers; the companion to the coverage math in §15.7).
+
+**Question.** *"Among the memory suppliers NVIDIA names as key dependencies, which one discloses
+significant government or regulatory restrictions in its own SEC filings?"* This is **bridging**: the
+answer needs evidence from two different companies' filings — NVIDIA's (to learn *who* the suppliers
+are) and that supplier's own (its regulatory disclosure).
+
+**Labels.** Two aspects, each a set of answer-bearing spans (§11.1 / §15.7):
+- aspect 1 — "NVDA names the supplier": spans `Micron`, `SK Hynix`.
+- aspect 2 — "that supplier's own govt/CAC restriction": spans `critical information infrastructure`,
+  `CAC action`, `may not purchase Micron products` (verified present in Micron's filings, absent from
+  NVIDIA's — the discrimination §15.7 demands).
+
+**Path A — single retrieval** (`retrieve(question, top_k=8)`, unscoped, no LLM). Actual top-8 came
+back as a mix of `NVDA` (×5), `SMCI`, `LLY`, `MCHP` chunks. Scoring: aspect 1 ✓ (NVIDIA's risk-factor
+chunk names Micron) · aspect 2 ✗ (no Micron chunk retrieved) → **coverage 0.50**. The failure mode is
+instructive: the global top-8 grabbed *semantically similar* regulatory-risk chunks from **unrelated**
+firms (SMCI, LLY, MCHP) but never Micron's specific one — because the literal question is about NVIDIA,
+nothing ranks a Micron chunk highly.
+
+**Path B — agentic loop + entity-bridge** (`answer_multistep`). The real ReAct trace:
+
+```
+hop 1: ticker=NVDA  q="memory suppliers key dependencies single source"      -> 6 chunks
+hop 2: ticker=NVDA  q="memory suppliers Samsung SK Hynix Micron dependency"  -> 6 chunks
+hop 3: ticker=NVDA  q="memory suppliers named HBM GDDR dependency risk"       -> 6 chunks
+```
+
+The loop *alone* stays on NVIDIA (the subject-anchoring documented in §A4) → union all-NVDA → still
+0.50. The deterministic **entity-bridge** then pivots: it scans the union text, resolves `micron -> MU`
+via the alias map, and forces `retrieve(question, ticker=MU)` → Micron's own chunk containing the CAC
+spans. Union = NVIDIA + Micron → aspect 1 ✓, aspect 2 ✓ → **coverage 1.00**.
+
+**Scoring** (`evaluate_multihop`): `single = 0.50`, `multi = 1.00`, **`gain = +0.50`**;
+`citation_accuracy = 1.00` (both inline `[n]` markers resolved to chunks that truly contain the spans).
+
+| | single retrieval | agentic RAG |
+|---|---|---|
+| companies in evidence | NVDA, SMCI, LLY, MCHP | NVDA **+ Micron (MU)** |
+| aspect 1 / aspect 2 | ✓ / ✗ | ✓ / ✓ |
+| coverage | 0.50 | 1.00 |
+| gain | — | **+0.50** |
+
+**Takeaways.** (1) the gain is a *controlled* experiment — the retriever is held fixed, only the
+strategy differs, so `+0.50` is the value of being agentic *here*; (2) the eval + trace together
+**localize** the failure — the loop alone scored 0.50 with all hops on `ticker=NVDA`, pinpointing an
+*agent-decision* gap (not labels or retrieval), which is exactly what justified the structural bridge;
+(3) the signal only appears with **discriminating** labels — with generic spans this same question
+scored +0.00 because single-shot already had them.
+
+### 15.9 How agentic RAG relates to GraphRAG (A5) — orthogonal layers, not a wrapper
+
+It is tempting to picture GraphRAG (A5) as a bigger box that *contains* agentic RAG (or vice-versa).
+The cleaner model is **two independent axes**:
+- **Agentic RAG** answers *how* you retrieve — a control-flow **strategy** (loop; decide
+  retrieve-more / stop). It lives *above* retrieval and calls a retriever N times.
+- **GraphRAG** answers *what* you retrieve over — a retrieval **substrate**: an entity–relationship
+  graph plus a primitive that **traverses edges**. It lives *inside* one retrieval call.
+
+| | vector retriever | graph retriever (A5) |
+|---|---|---|
+| **single-shot (P7)** | plain RAG | "basic GraphRAG" (one traversal) |
+| **agentic loop (A4)** | what we have today | A4 calling A5 (iterative traversal) |
+
+All four compose. The glue is the `RetrievalSystem` protocol (`retrieve(query) -> chunks`): the A4
+loop's *act* step calls a `RetrievalSystem`, and A5's `GraphRetriever` *is* a `RetrievalSystem`. So if
+either wraps the other, **agentic wraps graph** (agentic = outer orchestration; graph = inner
+retrieval method) — not the reverse.
+
+**The bridging case makes the difference concrete** (our `NVDA -> Micron(MU)` pivot):
+- *Agentic + vector (today):* the loop must discover the relationship **at query time**, and since the
+  LLM won't pivot, a deterministic **alias-dictionary** scan of the chunk text resolves `micron -> MU`
+  — brittle to typos / abbreviations / firms outside the universe (§A4, and §15.7's labels caveat).
+- *Graph retriever (A5):* the relationship `NVDA --depends_on--> MU` is a **stored edge**, extracted
+  and resolved **once, offline, at ingest** — where a strong NER/LLM pass + a verification step is
+  affordable, with provenance back to the chunk it was stated in. At query time there is **no
+  string-matching**; retrieval simply **traverses the edge**.
+
+So a single graph-retrieval *is* the hop: resolve the question's entity (NVDA) → traverse `depends_on`
+→ neighbor MU (the graph supplies the **who**) → scoped vector search on MU for the question (the
+**what**, e.g. Micron's CAC chunk) → union with NVDA's chunks. The edge does the pivot the agentic
+loop strained to perform. Two consequences: GraphRAG often **reduces** the burden on the agentic layer
+(some multi-hops collapse to a single traversal), *and* the agentic loop can still **wrap** graph
+retrieval for genuinely deep chains (3+ hops, or reasoning *between* hops). Net mental model: move the
+`micron -> MU` resolution from *query-time inside the agent* to *ingest-time inside the graph*, and the
+hop becomes part of the **index** rather than a runtime decision. (A5 design → [ADVANCED_RAG_TODO.md §A5](ADVANCED_RAG_TODO.md).)
+
 ---
 
 ## 16. References
