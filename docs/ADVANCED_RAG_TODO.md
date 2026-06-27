@@ -347,6 +347,15 @@ P7 guards.
 
 ## A5 — GraphRAG (lightweight knowledge graph) — learning-first
 
+> **Conceptual framing — how A5 relates to A4 (agentic).** They are *orthogonal* layers, not one
+> wrapping the other: agentic RAG is a control-flow *strategy* (when/how-many-times to retrieve);
+> GraphRAG is a retrieval *substrate* (what you retrieve over). A5's `GraphRetriever` satisfies the
+> same `RetrievalSystem` protocol the A4 loop already calls, so agentic can *wrap* graph, and a graph
+> *traversal* can replace the brittle query-time alias-bridge of §A4 by moving entity resolution to a
+> stored, ingest-time edge. Full framing + the 2×2 + the `NVDA→MU` worked contrast →
+> [rag_concepts.md §15.9](rag_concepts.md). The A4 bridging negative is A5's motivating benchmark
+> (re-measure with `rag eval-multistep`).
+
 **Learning objective.** Knowledge-graph **construction from text** + **graph-augmented retrieval**
 (multi-hop questions vector search can't answer).
 
@@ -354,33 +363,141 @@ P7 guards.
 are exposed to a TSMC disruption?"*, *"What risks does NVDA share with AMD?"* — answered by graph
 traversal, then grounded in the filings the edges came from.
 
-**Design (deliberately minimal MVP).**
-- **Schema** (`schemas/graph.py`): `Entity { name, type ∈ {company, product, segment, competitor,
-  customer, supplier, risk, regulatory_topic} }`, `Edge { subject, relation ∈ {competes_with,
-  supplies_to, depends_on, exposed_to, acquired, operates_in, mentions_risk}, object, provenance:
-  list[str] (chunk_ids), filing_date }`. **Provenance is mandatory** — every edge carries the
-  chunk_id(s) it was extracted from, so graph answers cite real filings.
-- **Extraction** (`graph/extract.py`): **LLM-assisted, offline, batched, cost-gated** — one
-  structured-output call per (ticker, section) over **10-K Item 1 (Business) + Item 1A (Risk
-  Factors)** only for the MVP → triples with provenance. Rules/regex pre-filter to cut cost
-  (candidate entity spans). A `documents extract-graph --ticker/--all` step (like ingestion); reuses
-  the `EmbedBudgetExceeded`-style spend ceiling (`graph_max_extract_calls`).
-- **Storage** (`graph/store.py`): **SQLite** `nodes`/`edges` tables (persistent, queryable, no dep) +
-  **NetworkX** loaded from SQLite for traversal/neighbors/multi-hop. Neo4j deferred.
-- **Retrieval** (`graph/retriever.py`): an entity/relation question → resolve entities → traverse
-  (1–2 hops) → collect edge-provenance `chunk_id`s → fetch those chunks → **union with vector
-  retrieval** → rerank/synthesis. A `GraphRetriever` that satisfies `RetrievalSystem` for the union
-  case. CLI `rag graph-query`.
-- **Scope guard:** MVP = ~5 entity types, ~4 relations, 2 sections, a handful of tickers. Success =
-  correctly answers N hand-written multi-hop questions that dense retrieval demonstrably fails.
+### Locked decisions (resolve before coding — do not re-litigate)
+1. **Types vs. relations.** Earlier sketches listed `supplier`/`customer`/`competitor` as entity
+   *types*; those are **relations**, not types. **Entity types (MVP, 5):** `company`, `product`,
+   `segment`, `risk`, `regulatory_topic`. **Relations (MVP, 4):** `depends_on` (company→company,
+   e.g. NVDA→MU — the bridging edge), `competes_with` (company→company), `mentions_risk`
+   (company→risk), `exposed_to` (company→regulatory_topic). Defer `supplies_to` (= inverse of
+   `depends_on`, derive on traversal), `acquired`, `operates_in`.
+2. **Node identity = ticker for companies.** A company node's canonical `id` is its **ticker**
+   (e.g. `MU`), resolved **at extraction time** via `configs/ticker_aliases.json` (REUSE
+   `research/bridge.load_alias_map` + `mentioned_tickers`). This is the whole point — it moves the
+   `micron → MU` resolution the A4 entity-bridge does at *query* time to a **once, offline, verified**
+   step (§15.9). Unresolvable company names → store with `ticker=None` (lower-value, still cited).
+   Non-company nodes (`risk`/`topic`) use a normalized-name id.
+3. **Provenance is mandatory + verified.** Every `Edge` carries the `chunk_id(s)` it came from. A
+   **verification pass** (the edge analogue of the P7 citation guard) **drops any edge whose
+   provenance chunk text does not contain both the subject and object surface names** — the
+   hallucinated-edge guard. Plus a model `confidence` ≥ `graph_min_confidence`.
+4. **Extraction is offline, batched, cost-gated, default-OFF.** A separate `documents extract-graph`
+   step (never at query time); one structured-output LLM call per `(ticker, section)` over **10-K
+   Item 1 (Business) + Item 1A (Risk Factors)** only; a candidate pre-filter (regex over alias /
+   risk keywords) cuts the call set; a `GraphExtractBudgetExceeded` spend ceiling
+   (`graph_max_extract_calls`) mirrors `EmbedBudgetExceeded`.
+5. **`GraphRetriever` satisfies `RetrievalSystem`** (`name` + `retrieve(query, *, top_k, where)`), so
+   it drops into `build_retrieval_system` / the A4 loop / the eval harness **with zero changes** to
+   callers (the §15.9 glue). Default-OFF (a new `graph` config), promoted only on a measured win.
+6. **Storage = SQLite (source of truth) + NetworkX (traversal view).** `data/graph/<namespace>.db`;
+   NetworkX loaded from SQLite for k-hop neighbors. New dep: `networkx` (lightweight, pure-Python).
+   Neo4j deferred.
 
-**Tests** (canned `TextLLM`): extraction → expected triples **with provenance**; SQLite graph
-add/query/neighbors; `GraphRetriever` traverse → chunk_ids; graph-sourced chunks cite correctly
-(provenance → real `source_url`); offline.
+### Dependencies & reuse (what to build on — most of A5 is wiring, not new infra)
+- **Chunked corpus** — chunks already carry `chunk_id`, `ticker`, `section` (`documents/` +
+  `rag/chunking`). Extraction reads chunks filtered to Item 1 / Item 1A; the GraphRetriever fetches
+  provenance chunks by id.
+- **Entity resolver** — `research/bridge.py` (`load_alias_map`, `mentioned_tickers`) +
+  `configs/ticker_aliases.json`. **The single most important reuse**: extraction resolves
+  object-company names → tickers with the *same* map, but offline + verified.
+- **`RetrievalSystem` Protocol** (`rag/retriever.py`) + **`build_retrieval_system` / `build_named_system`**
+  (`rag/read_path.py`) — add a `graph` config; the GraphRetriever composes/unions with the live
+  hybrid retriever.
+- **LLM + parsing** — `llm/client.TextLLM.complete_json`, `research/_shared.loads_lenient` (lenient
+  JSON), the P7 numbered-source + provenance pattern from `research/prompts.build_user`.
+- **Spend gate** — `rag/pipeline.EmbedBudgetExceeded` (mirror it).
+- **Chunk-by-id fetch** — `rag/sparse_store.Fts5SparseStore.fetch(ids)->{id:chunk}` already does this;
+  reuse (or add a `get(chunk_ids)` to the vector store) so the GraphRetriever can materialize
+  provenance chunks.
+- **Measurement** — `configs/rag_eval_multistep.json` + `rag eval-multistep`. **A5's success metric is
+  the A4 bridging benchmark**: does graph traversal earn the +0.5 bridging gain *without* the
+  query-time alias-bridge? (compare graph vs. the A4 entity-bridge vs. plain hybrid).
 
-**Risks.** Extraction accuracy / hallucinated edges → provenance + a verification pass (drop edges
-whose provenance chunk doesn't contain the entities) + confidence threshold. Cost → offline batch +
-spend gate. Scope creep → keep the MVP tiny; this is a learning project, not a core dependency.
+### Schemas (`schemas/graph.py`)
+```python
+EntityType = Literal["company", "product", "segment", "risk", "regulatory_topic"]
+Relation   = Literal["depends_on", "competes_with", "mentions_risk", "exposed_to"]
+
+class Entity(BaseModel):
+    id: str                      # canonical: ticker for companies ("MU"); normalized name otherwise
+    name: str                    # surface form as written ("Micron")
+    type: EntityType
+    ticker: str | None = None    # resolved ticker for company entities (else None)
+
+class Edge(BaseModel):
+    subject: str                 # entity id — the filing's company (e.g. "NVDA")
+    relation: Relation
+    object: str                  # entity id (e.g. "MU", or a risk-node id)
+    provenance: list[str] = Field(min_length=1)   # chunk_ids the triple was extracted from
+    filing_date: Date
+    source_url: str
+    confidence: float = 1.0
+```
+
+### Ordered build steps (each a small green vertical slice — `make check` green before the next)
+
+- **A5.0 — Schemas + SQLite `GraphStore` (NO LLM, NO network). ← START HERE.**
+  `schemas/graph.py` (above) + `graph/store.py`: a `GraphStore` Protocol + `SqliteGraphStore`
+  (`nodes`/`edges` tables; idempotent `add_entities`/`add_edges` upsert by id;
+  `neighbors(entity_id, *, relations=None, hops=1)`, `provenance_chunk_ids(...)`, `get_entity`,
+  `count`). `settings.graph_store_dir = data/graph`. **Tests** (temp sqlite, hand-built triples):
+  add → neighbors (1- and 2-hop), idempotent upsert, provenance retrieval, namespacing. *Deliverable:
+  a queryable graph store, no extraction yet.*
+
+- **A5.1 — Extraction (LLM-assisted, offline, cost-gated, verified).**
+  `graph/prompts.py` (`GRAPH_EXTRACT_SYSTEM`: extract typed `(subject, relation, object)` triples
+  from a NUMBERED filing section, returning JSON with the supporting chunk-number(s) + `confidence`;
+  `build_extract_user(ticker, numbered_chunks)`) + `graph/extract.py`
+  (`extract_edges(ticker, section_chunks, *, llm, alias_map) -> list[Edge]`: candidate pre-filter →
+  one `complete_json` per section → parse → resolve object names to tickers (`mentioned_tickers`) →
+  map chunk-numbers to `chunk_id`s → **verification drop** (provenance chunk must contain both
+  surface names) + confidence threshold → `GraphExtractBudgetExceeded` gate). CLI
+  `documents extract-graph --ticker/--all` (reads ingested Item 1 / 1A chunks → `GraphStore`).
+  **Tests** (canned `TextLLM`, offline): expected edges with provenance; `micron → MU` resolution; a
+  hallucinated edge (provenance lacks the object name) is dropped; spend gate. *Deliverable: a
+  populated graph from real filings (run on the benchmark tickers).*
+
+- **A5.2 — `GraphRetriever` (satisfies `RetrievalSystem`).**
+  `graph/retriever.py`: `GraphRetriever(graph_store, vector_retriever, chunk_fetch)`.
+  `retrieve(query, *, top_k, where)`: seed entity = `where.ticker` (or `mentioned_tickers(query)`) →
+  traverse 1–2 hops → neighbor tickers + edge-provenance chunk_ids → **(who)** materialize provenance
+  chunks + **(what)** a scoped vector retrieval per neighbor → **union** with a base
+  `vector_retriever.retrieve(query)` → dedup → top_k. `name="graph(<base>)"`. Add `build_graph_system`
+  (or a `graph` lattice config) in `rag/read_path.py`; CLI `rag graph-query --question [--ticker]`.
+  **Tests** (fake `GraphStore` + fake vector retriever, offline): traversal pulls the neighbor's
+  chunks; provenance chunks present and cite the real `source_url`; union dedups. *Deliverable: the
+  bridging hop done by traversal, not the alias-bridge.*
+
+- **A5.3 — Integration + measurement (the payoff + the A-N teaching obligation).**
+  Make `GraphRetriever` usable as the A4 loop's retriever / a `build_retrieval_system` mode. **Re-run
+  `rag eval-multistep` on `configs/rag_eval_multistep.json`** with the GraphRetriever and compare to
+  (a) plain hybrid and (b) the A4 entity-bridge: does traversal earn the bridging gain on its own? If
+  graph wins, gate the alias-bridge OFF when graph is active (it becomes the fallback for entities not
+  yet in the graph). Docs per CLAUDE.md A-N rule: mark **A5 ✅** here; `rag_implementation_notes.md`
+  §A5 (mechanism); `rag_concepts.md` §16 (graph theory — KG construction from text, traversal,
+  provenance-as-citation; obey the MathJax escaping rules); extend `example_rag_questions.md` with
+  structural/graph questions. *Deliverable: a measured graph-vs-bridge-vs-hybrid verdict on the
+  bridging benchmark + a promotion decision.*
+
+### Config knobs (settings)
+`graph_store_dir: Path = data/graph` · `graph_max_extract_calls: int | None = None` (spend ceiling) ·
+`graph_min_confidence: float = 0.5` · `graph_sections: list[str] = ["Item 1. Business", "Item 1A. Risk Factors"]`.
+Graph retrieval stays a **config/lattice option** (default-OFF), promoted only on a measured win
+(mirrors the A2/A3 "default-OFF until measured" discipline).
+
+### Scope guard + success criterion
+MVP = 5 entity types, 4 relations, 2 sections, and the **benchmark tickers only** (NVDA + the
+suppliers/peers in `configs/rag_eval_multistep.json`: MU, AMD, INTC, AVGO, …). **Success = the A4
+bridging questions reach +0.5 gain via graph traversal *without* the query-time alias-bridge**, with
+every graph-sourced claim citing a real filing chunk. Not a core dependency — a learning capstone.
+
+### Risks (and mitigations baked into the steps above)
+- **Hallucinated edges** → mandatory provenance + the verification drop (A5.1) + confidence threshold.
+- **Extraction cost** → offline batch + candidate pre-filter + `GraphExtractBudgetExceeded` gate.
+- **Entity-resolution gaps** (typos/abbreviations/out-of-universe — the A4 brittleness §15.9) →
+  resolve offline where you can extend `ticker_aliases.json` and human-verify; unresolved names are
+  stored but lower-value. This is precisely A5's improvement over the A4 query-time bridge.
+- **Scope creep** → keep the MVP tiny; resist adding entity types / relations / sections until the
+  bridging benchmark is beaten.
 
 ---
 
