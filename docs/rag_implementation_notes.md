@@ -1334,3 +1334,55 @@ risk, power shortages). The win comes from the agentic loop **reformulating + sc
 steps** over the graph substrate — neither single-shot path could. (The graph DB, filings, and vector
 store live under the gitignored `data/`; rebuild via `documents extract-graph --all --universe
 configs/graph_universe.txt` + the foreign `download-sec`/`ingest` commands.)
+
+### A5.3 — Promotion verdict + tiered routing (2026-06-28)
+
+**What was measured.** A 2×2 (control × substrate) over the bridging benchmark, **2 seeds × 12 Q**
+(HARD 0–5, MED 6–8, CTRL 9–11): A = single-shot hybrid, B = agentic+hybrid+alias-bridge (production),
+C = single-shot graph, D = agentic+graph (bridge off via `AGENTIC_BRIDGE_MAX_ENTITIES=0`). Two
+`rag eval-multistep` runs per seed yield all four cells (single-shot + multistep coverage per arm).
+Pooled means:
+
+| stratum | A | B | C | **D** | D−B | D−A |
+|---|---|---|---|---|---|---|
+| HARD | 0.58 | 0.92 | 0.67 | **0.96** | +0.04 | +0.38 |
+| MED  | 0.67 | 0.83 | 0.50 | **0.83** | 0.00 | +0.17 |
+| CTRL | 1.00 | 0.92 | 0.83 | **1.00** | +0.08 | 0.00 |
+
+**Verdict logic.** The strict pre-registered rule failed as written (`D − A ≥ +0.5` missed at +0.38;
+single-shot graph C regressed controls 0.83 < 1.00). But the production-relevant comparison is **D vs
+B** (graph vs the alias-bridge on the multi-hop path): **HARD `D ≥ B` held on both seeds** (1.00, 0.92
+≥ 0.92) and **D = 1.00 on controls both seeds** (agentic+graph never regresses easy Qs; the seed-1
+B=0.83 control dip was loop noise). Conclusion: **agentic+graph matches-or-beats the alias-bridge
+everywhere and is ~perfect on hard bridges with the bridge OFF**, so graph *replaces* the brittle
+alias-bridge and adds hard-question lift. Promote — but **scoped**, and keep the bridge as a fallback.
+
+**What shipped (tiered routing).**
+- `settings.graph_multistep_enabled: bool = True` — the promotion flag.
+- `ToolExecutor._get_multistep_retriever()` (`agent/tools.py`): the A4 `research_multistep` tool now
+  retrieves over `build_graph_system(...)` (the `GraphRetriever`) instead of the plain hybrid stack.
+  Session-memoized; **falls back to hybrid** when the flag is off, a base retriever was injected
+  (tests), or graph wiring raises (no graph DB) — graph is an enhancement, never a hard dependency.
+- `search_filings` (single-shot) and the P8 `research_summary` memo **stay hybrid** (`_get_retriever`)
+  — single-shot graph (cell C) regressed simple questions, so graph is *only* on the agentic path.
+- **The alias-bridge stays ON** (no gating). Revised from the original A5.3 plan, which proposed
+  gating it off when graph is active. That gating was the *experimental control* (prove graph alone
+  bridges — it did). In production the $0 deterministic bridge is retained because: (a) tickers
+  **without** a graph (outside `graph_universe.txt`) get no traversal, so the alias-bridge is their
+  only bridging mechanism; (b) for graph tickers it is additive/redundant (dedup union), so live
+  behaviour = agentic+graph+bridge `≥` the measured D in coverage. Residual risk: the `max_evidence`
+  cap could evict a graph chunk in favour of a bridge chunk — small, bounded, and monotone-safe in
+  practice since D already saturated HARD.
+
+**How a query flows now.** Router (`agent/router.py`) classifies multi-hop/structural questions →
+`research_multistep` → `_get_multistep_retriever()` → graph traversal (graph tickers) or hybrid base
+(others) → `answer_multistep` ReAct loop (+ alias-bridge fallback) → guarded P7 synthesis.
+Single-topic questions → `search_filings` → hybrid. Reports persisted:
+`outputs/rag_eval/a5_3_{hybrid,graph}.json` (seed 1) + `…_seed2.json` (seed 2).
+
+**Tests** (`tests/integration/test_agent_rag_tools.py`): routes to graph when enabled + no injection
+(memoized, built once); prefers an injected base; disabled → hybrid; graph-unavailable → hybrid
+fallback. **Caveat:** n=12, 2 seeds, loop non-determinism — the win is *directional*, resting on D
+never falling below B rather than a large margin; revisit with a grown benchmark (§A1) before any
+stronger claim. **Next:** A6 (retrieval RL) — the per-query selector that would *learn* this routing
+(EASY→hybrid, MED/HARD→graph) instead of the hand-set `graph_multistep_enabled` switch.

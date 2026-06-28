@@ -1,16 +1,65 @@
 [
   {
-    "question": "Among the memory suppliers NVIDIA names as key dependencies, which one discloses significant government or regulatory restrictions in its own SEC filings?",
+    "question": "Among the memory suppliers NVIDIA names as key dependencies, which one discloses significant Chinese government or cybersecurity-review restrictions in its own SEC filings?",
     "aspects": [
       {"name": "NVDA names the memory supplier", "spans": ["Micron", "SK Hynix"]},
-      {"name": "that supplier's own government/CAC restriction", "spans": ["critical information infrastructure", "CAC action", "may not purchase Micron products"]}
+      {"name": "that supplier's own CAC / critical-infrastructure restriction", "spans": ["critical information infrastructure"]}
     ]
   },
   {
-    "question": "Among the memory suppliers NVIDIA depends on, which one warns about cyclical oversupply and declining average selling prices for its own products?",
+    "question": "Among the memory suppliers NVIDIA depends on, which one warns about cyclical oversupply and declining prices for its own products?",
     "aspects": [
       {"name": "NVDA names the memory supplier", "spans": ["Micron", "SK Hynix"]},
-      {"name": "that supplier's own memory-pricing risk", "spans": ["DRAM", "NAND"]}
+      {"name": "that supplier's own DRAM/NAND pricing risk", "spans": ["NAND"]}
+    ]
+  },
+  {
+    "question": "Which company NVIDIA relies on to fabricate its chips warns about regional political stability in its own SEC filings?",
+    "aspects": [
+      {"name": "NVDA names the foundry", "spans": ["Taiwan Semiconductor", "TSMC"]},
+      {"name": "that foundry's own geopolitical-stability risk", "spans": ["political stability"]}
+    ]
+  },
+  {
+    "question": "NVIDIA's primary foundry concentrates its fabrication in a few sites; what does that company disclose about where its fabs are located?",
+    "aspects": [
+      {"name": "NVDA names the foundry", "spans": ["Taiwan Semiconductor", "TSMC"]},
+      {"name": "that foundry's own site concentration", "spans": ["Science Park", "Hsinchu"]}
+    ]
+  },
+  {
+    "question": "Among NVIDIA's named competitors, which one's own filing states it depends on TSMC to manufacture its leading-edge (7nm-class) processors?",
+    "aspects": [
+      {"name": "NVDA names the competitor", "spans": ["Advanced Micro Devices"]},
+      {"name": "that competitor's own TSMC leading-edge dependency", "spans": ["7 nm", "7 nanometer"]}
+    ]
+  },
+  {
+    "question": "Which NVIDIA competitor discloses its own integrated-device-manufacturing / foundry strategy in its filings?",
+    "aspects": [
+      {"name": "NVDA names the competitor", "spans": ["Intel"]},
+      {"name": "that competitor's own foundry strategy", "spans": ["IDM 2.0"]}
+    ]
+  },
+  {
+    "question": "Which company NVIDIA depends on to fabricate its chips warns about earthquake risk to its manufacturing facilities?",
+    "aspects": [
+      {"name": "NVDA names the foundry", "spans": ["Taiwan Semiconductor", "TSMC"]},
+      {"name": "that foundry's own earthquake/natural-disaster risk", "spans": ["earthquake"]}
+    ]
+  },
+  {
+    "question": "Which NVIDIA memory supplier warns about the heavy capital expenditures required to build and upgrade its fabs?",
+    "aspects": [
+      {"name": "NVDA names the memory supplier", "spans": ["Micron", "SK Hynix"]},
+      {"name": "that supplier's own capex intensity", "spans": ["capital expenditures"]}
+    ]
+  },
+  {
+    "question": "Which NVIDIA memory supplier discloses risk from declining average selling prices for its products?",
+    "aspects": [
+      {"name": "NVDA names the memory supplier", "spans": ["Micron", "SK Hynix"]},
+      {"name": "that supplier's own ASP-decline risk", "spans": ["average selling price"]}
     ]
   },
   {
@@ -18,6 +67,20 @@
     "aspects": [
       {"name": "data center demand", "spans": ["data center"]},
       {"name": "competition", "spans": ["competition"]}
+    ]
+  },
+  {
+    "question": "What does NVIDIA disclose about U.S. export controls affecting its business in China?",
+    "aspects": [
+      {"name": "export controls", "spans": ["export control"]},
+      {"name": "China exposure", "spans": ["China"]}
+    ]
+  },
+  {
+    "question": "What does Micron disclose about its DRAM and NAND product lines?",
+    "aspects": [
+      {"name": "DRAM", "spans": ["DRAM"]},
+      {"name": "NAND", "spans": ["NAND"]}
     ]
   }
 ]

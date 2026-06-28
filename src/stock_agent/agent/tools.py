@@ -34,7 +34,7 @@ from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.rag.embeddings import embedding_namespace
-from stock_agent.rag.read_path import build_retrieval_system
+from stock_agent.rag.read_path import build_graph_system, build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.rag.vector_store import build_vector_store, collection_name_for
 from stock_agent.research.agentic import answer_multistep
@@ -618,6 +618,8 @@ class ToolExecutor:
         # repeated filing questions / the research summary don't reload the embedding
         # model and re-open the store each call. Tests inject a fake by setting it.
         self._retriever: RetrievalSystem | None = None
+        # A5.3: session-memoized GraphRetriever for the multi-hop path (graph traversal ⊕ hybrid).
+        self._graph_retriever: RetrievalSystem | None = None
 
     def _get_retriever(self) -> RetrievalSystem:
         """Build (once) and return the shared SEC retriever for this session.
@@ -643,6 +645,32 @@ class ToolExecutor:
                 chunks=n_chunks,
             )
         return self._retriever
+
+    def _get_multistep_retriever(self) -> RetrievalSystem:
+        """Retriever for the A4 multi-hop loop — the A5.3-promoted GraphRetriever by default.
+
+        Routing policy (measured over 2 seeds): the agentic/multi-hop path uses graph traversal
+        (graph-built tickers bridge via stored edges; tickers without edges degrade to the hybrid
+        base and rely on the still-ON alias-bridge), while single-shot ``search_filings`` keeps the
+        plain hybrid retriever (single-shot graph regressed easy questions). Falls back to hybrid
+        if ``graph_multistep_enabled`` is off, a base retriever was injected (tests), or
+        graph wiring is unavailable — so graph is a safe enhancement, never a hard dependency.
+        """
+        if not self._settings.graph_multistep_enabled:
+            return self._get_retriever()
+        # An explicitly-injected base retriever (tests) takes precedence over building a real graph
+        # stack: reuse it directly so unit/integration tests never load an embedder or open the
+        # graph DB. (Memoize so repeated multi-hop calls in one session reuse the same instance.)
+        if self._retriever is not None:
+            return self._retriever
+        if self._graph_retriever is None:
+            try:
+                self._graph_retriever = build_graph_system(self._settings)
+                log.info("agent.graph_retriever_active")
+            except Exception as exc:  # noqa: BLE001 — graph is an enhancement; degrade to hybrid
+                log.warning("agent.graph_retriever_unavailable", error=str(exc))
+                self._graph_retriever = self._get_retriever()
+        return self._graph_retriever
 
     # ---- data helpers --------------------------------------------------------
     def _load(self, ticker: str, days: int) -> LoadResult:
@@ -1243,7 +1271,9 @@ class ToolExecutor:
                 question,
                 settings=self._settings,
                 llm=self._llm,  # type: ignore[arg-type]  # guarded non-None above
-                retriever=self._get_retriever(),  # reuse the session embedder + store
+                # A5.3: multi-hop path runs over the GraphRetriever (traversal-based bridging for
+                # graph-built tickers; hybrid base + alias-bridge fallback otherwise).
+                retriever=self._get_multistep_retriever(),
             )
 
         try:

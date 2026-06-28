@@ -216,6 +216,62 @@ def test_research_multistep_without_llm_errors() -> None:
     assert "error" in out and "LLM" in out["error"]
 
 
+# ---- A5.3 multi-hop routing (graph vs hybrid) --------------------------------
+def test_multistep_routes_to_graph_when_enabled_and_no_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Default policy: the multi-hop path builds + memoizes the GraphRetriever (single-shot stays
+    # hybrid). We stub build_graph_system so no real graph DB / embedder is touched.
+    graph = _retriever([])
+    calls = {"n": 0}
+
+    def _fake_build(settings: object) -> Retriever:
+        calls["n"] += 1
+        return graph
+
+    monkeypatch.setattr("stock_agent.agent.tools.build_graph_system", _fake_build)
+    ex = ToolExecutor(Settings(_env_file=None), llm=None)  # graph_multistep_enabled defaults True
+    assert ex._get_multistep_retriever() is graph
+    assert ex._get_multistep_retriever() is graph  # memoized
+    assert calls["n"] == 1  # built once
+
+
+def test_multistep_prefers_injected_base_over_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An injected base retriever (tests / explicit) short-circuits graph construction.
+    def _boom(settings: object) -> Retriever:
+        raise AssertionError("build_graph_system must not be called when a base is injected")
+
+    monkeypatch.setattr("stock_agent.agent.tools.build_graph_system", _boom)
+    base = _retriever([])
+    ex = _executor(llm=None, retriever=base)
+    assert ex._get_multistep_retriever() is base
+
+
+def test_multistep_disabled_uses_hybrid(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(settings: object) -> Retriever:
+        raise AssertionError("graph disabled: build_graph_system must not be called")
+
+    monkeypatch.setattr("stock_agent.agent.tools.build_graph_system", _boom)
+    base = _retriever([])
+    ex = ToolExecutor(Settings(_env_file=None, graph_multistep_enabled=False), llm=None)
+    ex._retriever = base  # disabled path returns the hybrid retriever
+    assert ex._get_multistep_retriever() is base
+
+
+def test_multistep_falls_back_to_hybrid_when_graph_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Graph wiring failure (e.g. no graph DB) must degrade to hybrid, never break QA.
+    def _raise(settings: object) -> Retriever:
+        raise RuntimeError("no graph store")
+
+    hybrid = _retriever([])
+    monkeypatch.setattr("stock_agent.agent.tools.build_graph_system", _raise)
+    ex = ToolExecutor(Settings(_env_file=None), llm=None)  # _retriever is None
+    monkeypatch.setattr(ex, "_get_retriever", lambda: hybrid)
+    assert ex._get_multistep_retriever() is hybrid
+
+
 # ---- research_summary ---------------------------------------------------------
 def _memo() -> ResearchMemo:
     return ResearchMemo(
