@@ -25,7 +25,8 @@
 13. [Hybrid search — BM25 and Reciprocal Rank Fusion](#13-hybrid-search--bm25-and-reciprocal-rank-fusion)
 14. [The four retrieval configurations (dense / reranked / hybrid / hybrid+rerank)](#14-the-four-retrieval-configurations-dense--reranked--hybrid--hybridrerank)
 15. [Agentic RAG — the ReAct loop for multi-hop retrieval](#15-agentic-rag--the-react-loop-for-multi-hop-retrieval)
-16. [References](#16-references)
+16. [GraphRAG — knowledge graphs and graph-augmented retrieval](#16-graphrag--knowledge-graphs-and-graph-augmented-retrieval)
+17. [References](#17-references)
 
 ---
 
@@ -1540,7 +1541,293 @@ hop becomes part of the **index** rather than a runtime decision. (A5 design →
 
 ---
 
-## 16. References
+## 16. GraphRAG — knowledge graphs and graph-augmented retrieval
+
+§§4–13 retrieve over a **bag of chunks**: the corpus is an unordered set $D$ and the only structure
+is geometric (cosine proximity in embedding space) or lexical (term overlap). §15 (agentic) added
+*control flow* on top of that bag — multiple retrievals — but each call still hits the same flat
+index. **GraphRAG** changes the *substrate*: it builds an explicit **entity–relationship graph** over
+the corpus and retrieves by **traversing edges**, so that "who depends on whom", "who competes with
+whom", "what risk is shared" become first-class, queryable structure instead of something the
+embedder must accidentally encode in a dot product. This section is the durable theory; the A5 build
+log lives in [rag_implementation_notes.md](rag_implementation_notes.md) §A5.
+
+### 16.0 The failure mode that motivates a graph
+
+Three question shapes defeat flat retrieval even with hybrid + reranking + an agentic loop:
+
+1. **Relational / structural** — *"Who are NVDA's key suppliers?"* The answer is a *set of entities*,
+   not a passage. A supplier may be named once, in a subordinate clause; cosine similarity to the
+   word "supplier" is weak, and the entity you actually want (`MU`, `TSM`) may not appear in the query
+   at all.
+2. **Multi-hop bridging** — *"Does NVDA's main memory supplier face the same capacity risk NVDA
+   warns about?"* This needs `NVDA → (supplier) → MU`, then MU's *own* risk disclosure. Vector search
+   on the NVDA query never surfaces MU's filing because MU's risk text is not semantically close to a
+   *NVDA* question (§15.1's fixed-point problem; §15.9's bridging case).
+3. **Global / sensemaking** — *"What themes connect the semiconductor sector's risk disclosures?"*
+   No single chunk contains the answer; it is a property of the *whole corpus*. Top-$k$ retrieval
+   structurally cannot see it (you would need all chunks at once).
+
+A graph addresses (1) and (2) directly (traverse typed edges), and the *global* GraphRAG variant
+(§16.6) addresses (3) via community summaries. Our A5 MVP targets (1) and (2) — the **local**,
+entity-centric, query-focused variant — because that is where SEC QA and the A4 bridging benchmark
+live.
+
+### 16.1 What a knowledge graph is (formal definition)
+
+A **knowledge graph** is a directed, edge-labeled multigraph
+
+$$
+G = (V,\, R,\, E), \qquad E \subseteq V \times R \times V,
+$$
+
+- $V$ — the **entities** (vertices). In A5: typed nodes — `company`, `product`, `segment`, `risk`,
+  `regulatory_topic`. Each entity has a *canonical id* (for companies, the **ticker**, e.g. `MU`) and
+  a *surface form* (as written, e.g. "Micron").
+- $R$ — the finite set of **relation types** (edge labels). In A5: `depends_on`, `competes_with`,
+  `mentions_risk`, `exposed_to`.
+- $E$ — the **edges**, each a **triple** $(s, r, o)$: subject entity $s$, relation $r$, object entity
+  $o$ (e.g. $(\text{NVDA},\, \texttt{depends-on},\, \text{MU})$). "Multigraph" because two entities
+  can be joined by several relations; "directed" because $\texttt{depends-on}$ is asymmetric
+  (NVDA depends on MU $\ne$ MU depends on NVDA).
+
+Every edge additionally carries **provenance** — the `chunk_id`(s) the triple was extracted from, a
+`filing_date`, a `source_url`, and a model `confidence`. Provenance is what makes a graph answer
+*citeable* (§16.7); an edge with no provenance is inadmissible.
+
+Two derived objects drive retrieval. The **typed neighborhood** of an entity $v$ under relation
+$r$:
+
+$$
+N_r(v) \;=\; \{\, u \in V : (v, r, u) \in E \,\},
+$$
+
+and its undirected/relation-agnostic version $N(v)=\bigcup_{r} \big(N_r(v)\cup N_r^{-1}(v)\big)$,
+where $N_r^{-1}$ follows edges *backwards* (so `supplies_to` is just `depends_on` traversed in
+reverse — we store one direction and derive the other, per the A5 locked decisions).
+
+### 16.2 Multi-hop reachability — the adjacency-matrix view
+
+Stack the (relation-agnostic) edges into an **adjacency matrix** $A \in \{0,1\}^{n \times n}$,
+$n=\lvert V\rvert$, with $A_{ij}=1$ iff there is an edge $i \to j$. The classic identity: the entry
+
+$$
+\big(A^{k}\big)_{ij} \;=\; \big\lvert\{\text{directed walks of length } k \text{ from } i \text{ to } j\}\big\rvert,
+$$
+
+so $j$ is **reachable from $i$ within $K$ hops** iff $\big(\sum_{k=1}^{K} A^{k}\big)_{ij} > 0$. This
+is the formal meaning of "$K$-hop traversal": the bridging hop NVDA → MU is a length-1 walk; "which
+of NVDA's suppliers' competitors…" is length-2. In practice we never materialize $A^k$ (dense, $n^2$)
+— we run **breadth-first search** from the seed entity to depth $K$ (here $K\in\{1,2\}$), which is
+$O(\lvert V\rvert + \lvert E\rvert)$ and only visits the reachable subgraph. The matrix view is the
+*why*; BFS is the *how*.
+
+**Optional: relevance propagation (Personalized PageRank).** Hard $K$-hop is a 0/1 cutoff. A softer,
+principled generalization scores every node by a random walk that restarts at the seed set $s$ (a
+probability vector concentrated on the query's entities):
+
+$$
+\pi \;=\; (1-\alpha)\, P^{\top} \pi \;+\; \alpha\, s
+\qquad\Longrightarrow\qquad
+\pi \;=\; \alpha\,\big(I - (1-\alpha)\,P^{\top}\big)^{-1} s,
+$$
+
+where $P$ is the row-normalized adjacency (transition matrix), $\alpha \in (0,1)$ the restart
+probability, and $\pi$ the stationary **personalized PageRank** vector — each entry $\pi_v$ is "how
+much probability mass the seed-anchored walk puts on $v$", a graded structural relevance that decays
+smoothly with distance. Several research GraphRAG systems rank candidate nodes/chunks by $\pi$. A5
+uses plain bounded BFS (simpler, exact, debuggable); PPR is the natural upgrade if 1–2-hop proves too
+blunt.
+
+### 16.3 Construction from text — the offline extraction pipeline
+
+The hard part of GraphRAG is not traversal; it is **turning prose into a faithful graph**. This is
+done **once, offline, at ingest** (never at query time), as a cost-gated batch. Five stages:
+
+1. **Candidate selection (cheap pre-filter).** Only chunks likely to contain a relation are sent to
+   the LLM — a regex/keyword scan over alias names + risk vocabulary on 10-K **Item 1 (Business)** and
+   **Item 1A (Risk Factors)** chunks. This cuts the paid-call set and bounds spend
+   (`graph_max_extract_calls`, mirroring `EmbedBudgetExceeded`).
+2. **Triple extraction (one structured LLM call per `(ticker, section)`).** Formally, extraction
+   approximates the conditional
+
+   $$
+   p\big(T \mid c\big), \qquad T = \{(s_i, r_i, o_i)\}_{i=1}^{m},
+   $$
+
+   the set of typed triples $T$ supported by chunk text $c$, emitted as JSON with, per triple, the
+   supporting **chunk-number(s)** and a `confidence`. The schema constrains $r_i \in R$ and the node
+   types — the model fills a *typed template*, it does not invent relation labels.
+3. **Entity resolution / canonicalization.** A surface name ("Micron", "Micron Technology, Inc.")
+   must map to one canonical id ("MU"), or two filings produce two un-joinable nodes and the graph
+   never connects. We reuse the **deterministic alias map** (`research/bridge.load_alias_map`,
+   `configs/ticker_aliases.json`) — the *same* resolver the A4 query-time bridge uses, but applied
+   **offline and verified** (§15.9's whole point: move `micron → MU` from query-time to ingest-time).
+   Resolution is a name-matching map $\rho:\text{surface}\to\text{id}\cup\{\bot\}$; unresolved company
+   names are stored with `ticker=None` (lower-value but still cited), non-company nodes get a
+   normalized-name id.
+4. **Verification — the hallucinated-edge guard.** The edge analogue of the P7 **citation guard**.
+   For a **company→company** edge ($r \in \{\texttt{depends-on}, \texttt{competes-with}\}$) keep the
+   triple $(s,r,o)$ **iff the object's surface name (or a resolved-ticker alias) literally appears in
+   its provenance chunk** $c$, and `confidence` $\ge$ `graph_min_confidence`. The subject $s$ is the
+   filing's *own* company — written as "we/our", so it is implicit and not required to appear; the
+   load-bearing check is the **object**: a fabricated supplier/competitor name will not be in the
+   text. Symbolically, drop the edge unless
+   $\big(\exists\, a \in \text{alias}(o):\ a \subseteq c\big) \,\wedge\, \text{conf} \ge \tau$.
+   Risk/regulatory objects ($\texttt{mentions-risk}$, $\texttt{exposed-to}$) are model-*paraphrased*
+   (no canonical surface to match), so they pass on confidence + a valid provenance mapping rather
+   than a substring test. This keeps a *generated* graph grounded: an edge the model asserted but the
+   text does not name is discarded, so no fabricated relationship can be traversed into an answer.
+5. **Upsert with provenance.** Surviving edges/entities are written idempotently (upsert by id) to
+   the store; re-running extraction merges rather than duplicates.
+
+The result is a **grounded graph**: every edge is both a typed fact *and* a pointer back to the exact
+filing chunk that licenses it.
+
+### 16.4 Graph-augmented retrieval — turning a traversal into chunks
+
+`GraphRetriever` satisfies the **same `RetrievalSystem` contract** as every other retriever
+(`retrieve(query, *, top_k, where) -> EvidenceSet`), so it drops into `build_retrieval_system`, the
+A4 loop, and the A1 eval harness with zero caller changes (§15.9's glue). One `retrieve` call is:
+
+1. **Seed.** Resolve the query's anchor entity — `where.ticker`, else `mentioned_tickers(query)`
+   (reuse the bridge resolver). Seed set $s_0 = \{\text{NVDA}\}$.
+2. **Traverse.** BFS 1–2 hops over the chosen relations → neighbor entities
+   $\mathcal{N} = \bigcup_{r}N_r(\text{seed})$ and the **edge-provenance chunk ids** along the way.
+   *(The graph supplies the **who**.)*
+3. **Materialize provenance.** Fetch the provenance chunks by id (reusing
+   `Fts5SparseStore.fetch(ids)` / a vector-store `get`) — these are the chunks the edges were
+   extracted from, so they *state the relationship* and cite a real `source_url`.
+4. **Scoped vector search per neighbor.** For each neighbor entity (e.g. MU) run a normal filtered
+   vector retrieval of the *original question* scoped to that entity
+   (`ChunkFilter(ticker="MU")`). *(This supplies the **what** — e.g. Micron's capacity-risk chunk —
+   which the structural edge alone does not contain.)*
+5. **Union + dedup + top-$k$.** Combine (a) the base `vector_retriever.retrieve(query)`, (b) the
+   provenance chunks, (c) the per-neighbor scoped hits; dedup by `chunk_id`; return the top-$k$. The
+   union guarantees graph retrieval **never loses** the plain-dense recall — it only *adds* the
+   structurally-reached evidence.
+
+So the "hop" is no longer a runtime string-match the agent must improvise; it is a stored edge the
+index already contains. `name = "graph(<base>)"` so the eval harness can compare it head-to-head.
+
+### 16.5 Local vs. global GraphRAG — two retrieval regimes
+
+There are two distinct things called "GraphRAG"; they answer different question shapes:
+
+| | **Local / query-focused** (A5) | **Global / sensemaking** (Microsoft GraphRAG) |
+|---|---|---|
+| Seed | the query's entities | the whole graph |
+| Mechanism | BFS from seed → neighbors → chunks | **community detection** (Leiden/Louvain) → per-community LLM **summaries** → map-reduce over summaries |
+| Answers | "who/what is related to X" (entity-centric, multi-hop) | "what are the corpus-wide themes" (no anchor entity) |
+| Cost | $0/local traversal at query time | summaries precomputed offline; query fans out over them |
+| In this repo | **built (A5)** | out of scope (V2+) |
+
+**Global** GraphRAG (Edge et al., 2024) partitions the graph into **communities** — clusters of
+densely-interlinked entities found by modularity optimization (Leiden) — pre-summarizes each
+community with an LLM, then answers a global query by mapping it over every community summary and
+reducing the partial answers. Modularity, the objective the clustering maximizes, is
+
+$$
+Q \;=\; \frac{1}{2\lvert E\rvert}\sum_{i,j}\Big(A_{ij} - \frac{k_i k_j}{2\lvert E\rvert}\Big)\,
+\mathbb{1}[\,c_i = c_j\,],
+$$
+
+where $k_i$ is the degree of node $i$, $c_i$ its community, and the $k_ik_j/2\lvert E\rvert$ term is
+the edge count expected **by chance** under a degree-preserving random graph — so $Q$ rewards
+communities with *more* internal edges than chance predicts. A5 deliberately does **not** build this:
+SEC QA is overwhelmingly entity-anchored (a ticker is almost always in the question), so the local
+regime captures the value at a fraction of the infra. Global is the natural V2 if "sector-wide theme"
+questions become important.
+
+### 16.6 Provenance as citation — the grounding invariant survives
+
+The repo's non-negotiables (numbers-from-models, every claim cited to a *retrieved* chunk) hold
+unchanged because a graph answer is **never** synthesized from the graph topology directly. Traversal
+only **selects chunk ids**; those chunks become an ordinary `EvidenceSet` handed to the *existing* P7
+`answer_question`, whose **citation guard** (every `[n]` ∈ the retrieved union) and **NumberGrounding**
+(every figure traceable to a chunk) run exactly as before. The edge-verification step (§16.3.4) is a
+*second* grounding layer at *construction* time — the edge analogue of the citation guard — so even
+the structure that *routes* retrieval is itself grounded. Net: graph retrieval changes *which* chunks
+are found, never *how* the answer is checked.
+
+### 16.7 Worked end-to-end example — the NVDA → MU bridging question
+
+**Question:** *"Does NVDA's main memory supplier face the same supply-capacity risk that NVDA warns
+about?"* — a genuine 2-hop: identify the supplier, then read **its** risk disclosure.
+
+**Stage 0 — offline graph construction (once, at ingest).**
+From NVDA's 10-K Item 1 (Business), chunk `nvda_10k_business_007` contains:
+> "We purchase high-bandwidth memory from suppliers including **Micron** and SK Hynix…"
+
+Extraction emits the triple, resolution maps the surface form, verification passes (the chunk
+contains both "NVDA"/"NVIDIA" and "Micron"):
+
+$$
+\big(\text{NVDA},\ \texttt{depends-on},\ \text{MU}\big),\quad
+\text{provenance} = [\texttt{nvda-10k-business-007}],\ \text{conf}=0.9.
+$$
+
+Independently, MU's own 10-K Item 1A yields `mu_10k_risk_021`:
+> "Our results depend on **memory capacity** utilization; an industry oversupply or our inability to
+> scale capacity could materially harm margins."
+
+stored as $(\text{MU},\ \texttt{mentions-risk},\ \text{capacity-risk})$ with that provenance.
+
+**Stage 1 — query time, the single `GraphRetriever.retrieve` call.**
+
+| Step | Action | Result |
+|---|---|---|
+| Seed | `mentioned_tickers(q)` | `{NVDA}` |
+| Traverse | BFS 1 hop on `depends_on` from NVDA | neighbor `MU`; edge-provenance `nvda_10k_business_007` |
+| Materialize | fetch provenance chunk by id | the "purchase…from Micron" chunk (states the relationship, cites NVDA's 10-K URL) |
+| Scoped vector | `retrieve(q, where=ChunkFilter(ticker="MU"))` | `mu_10k_risk_021` (Micron's capacity-risk chunk) |
+| Base vector | `retrieve(q)` (no filter) | NVDA's own supply-risk chunk(s) |
+| Union/dedup/top-k | merge a+b+c | {NVDA supply risk, NVDA→Micron edge chunk, MU capacity risk} |
+
+**Stage 2 — terminal synthesis (reused P7, unchanged).** `answer_question` receives that union and
+produces, e.g.: *"NVDA names Micron `[1]` among its memory suppliers; Micron's own filing flags
+memory-capacity oversupply as a material risk `[2]`, the same class of supply-capacity exposure NVDA
+discloses `[3]`."* The citation guard confirms `[1][2][3]` are all in the retrieved union; numbers (if
+any) are chunk-traceable.
+
+**Contrast with the alternatives** (the A5 success metric — re-measured on `rag eval-multistep`):
+
+- **Plain hybrid (single shot):** retrieves NVDA's supply-risk chunk; **misses MU entirely** (MU's
+  text isn't close to an NVDA query). Bridging aspect uncovered.
+- **A4 agentic + query-time alias bridge:** *can* get there, but only by scanning chunk text for
+  alias strings at query time — brittle to "Micron Technology", typos, or a supplier outside the alias
+  file (§15.9).
+- **GraphRAG:** the `NVDA → MU` edge was resolved and **verified once, offline**; at query time the
+  hop is a deterministic traversal of the index. The resolution moved from a fragile runtime decision
+  into the **index itself**.
+
+### 16.8 Complexity, cost, and when the graph earns its keep
+
+- **Construction cost** (offline, one-time per filing): $O(\lvert \text{candidate chunks}\rvert)$
+  LLM calls, hard-capped by `graph_max_extract_calls`. This is the *only* paid step — graph retrieval
+  is $0.
+- **Query cost:** BFS is $O(\lvert V\rvert + \lvert E\rvert)$ on the reachable subgraph (milliseconds
+  for our small per-ticker graphs) + the scoped vector searches (same cost as any retrieval). No LLM
+  call in traversal.
+- **Storage:** SQLite (`nodes`/`edges` tables) as source of truth + NetworkX in-memory for traversal;
+  Neo4j deferred.
+- **When it helps:** relational/structural questions and bridging multi-hops where the connecting
+  entity is *not* in the query. **When it doesn't:** single-entity factoid lookups (plain hybrid is
+  already optimal — graph adds nothing but extraction cost), and anything where extraction recall is
+  poor (a missed edge is an invisible failure). Hence A5 is **default-OFF, promoted only on a measured
+  win** on the A4 bridging benchmark — the same discipline as A2/A3, and a *rigorous negative is a
+  valid outcome*.
+
+**Principal failure modes (and the mitigations baked into A5):** (i) **hallucinated edges** → the
+verification drop + confidence threshold (§16.3.4); (ii) **extraction recall gaps** → a missing edge
+silently breaks a hop, so the union always *also* includes plain vector retrieval as a floor; (iii)
+**entity-resolution errors** → offline, human-extendable alias map, unresolved names stored but
+low-value; (iv) **scope creep** → the MVP is frozen at 5 entity types / 4 relations / 2 sections /
+benchmark tickers until the bridging benchmark is beaten.
+
+---
+
+## 17. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -1565,3 +1852,11 @@ hop becomes part of the **index** rather than a runtime decision. (A5 design →
   self-critique-and-retry pattern §15.2 contrasts ReAct against.
 - Trivedi et al. (2023), *Interleaving Retrieval with Chain-of-Thought Reasoning (IRCoT)* —
   multi-step retrieval for multi-hop QA.
+- Edge et al. (2024), *From Local to Global: A Graph RAG Approach to Query-Focused Summarization* —
+  Microsoft GraphRAG; the community-detection + map-reduce **global** regime of §16.5.
+- Han et al. (2024), *Retrieval-Augmented Generation with Graphs (GraphRAG): A Survey* — taxonomy of
+  graph construction, indexing, and graph-augmented retrieval.
+- Blondel et al. (2008) / Traag et al. (2019), *Louvain* / *Leiden* — modularity-optimizing community
+  detection (the clustering behind global GraphRAG, §16.5).
+- Haveliwala (2003), *Topic-Sensitive PageRank* — the personalized-PageRank relevance propagation of
+  §16.2.

@@ -75,7 +75,7 @@ implementations of the same "query (+filter) → ranked chunks" contract, so `re
 | **A2 ✅** | Reranking | Biggest quality win per effort; local-first, self-contained | Ship value | **Low–Med** (~1.5d) |
 | **A3 ✅** | Hybrid Search | Fixes a *different* failure mode (exact ticker/section/number terms) | Ship value | **Med** (~2d) |
 | **A4 ✅** | Agentic RAG | Needs strong retrieval primitives first; bounded LLM cost | Ship value | **Med–High** (~2.5d) |
-| **A5** | GraphRAG | Heaviest infra; lower near-term ROI for SEC QA | Learning-first | **High** (~3–4d) |
+| **A5 ✅** | GraphRAG | Heaviest infra; lower near-term ROI for SEC QA | Learning-first | **High** (~3–4d) |
 | **A6** | Retrieval + RL | Capstone; needs A1 metrics + usage logs to define a reward | Learning-first | **High** (~3–4d) |
 
 **Build order: A1 → A2 → A3 → A4 → A5 → A6.** A2↔A3 are swappable (both feed A1; final pipeline is
@@ -345,7 +345,23 @@ P7 guards.
 
 ---
 
-## A5 — GraphRAG (lightweight knowledge graph) — learning-first
+## A5 — GraphRAG (lightweight knowledge graph) — learning-first ✅
+
+> **Status: code DONE (2026-06-27).** Shipped all four slices: `schemas/graph.py` (`Entity`/`Edge` +
+> `RELATION_OBJECT_TYPE`); `graph/store.py` (`GraphStore` Protocol + `SqliteGraphStore` — idempotent
+> upserts, bounded BFS `neighbors`/`provenance_chunk_ids`, `build_graph_store` namespaced per
+> embedder); `graph/extract.py` + `graph/prompts.py` (offline, cost-gated triple extraction →
+> alias-resolve → **hallucinated-edge guard** [object must appear in the cited chunk] + confidence
+> gate; `GraphExtractBudgetExceeded`) wired to `documents extract-graph`; `graph/retriever.py`
+> (`GraphRetriever` — base ⊕ traversal fused by **RRF**, satisfies `RetrievalSystem`) wired via
+> `rag/read_path.build_graph_system`, `rag graph-query`, and `rag ask --graph` / `rag eval-multistep
+> --graph` (the A5.3 measurement hook into the existing bridging benchmark). Default-OFF; all
+> retrieval $0/local; the only paid step is offline extraction. `make check` green (751 passed; 25 new
+> graph tests). Mechanism → [rag_implementation_notes.md](rag_implementation_notes.md) §A5; theory →
+> [rag_concepts.md](rag_concepts.md) §16. **Deferred (by design):** the *measured* promotion verdict
+> (run `rag eval-multistep --graph` on the real corpus vs. hybrid + the A4 entity-bridge — a local
+> paid run, like the model backtests); gating the query-time alias-bridge OFF when graph wins; global
+> GraphRAG (communities/Leiden) and Neo4j remain V2+.
 
 > **Conceptual framing — how A5 relates to A4 (agentic).** They are *orthogonal* layers, not one
 > wrapping the other: agentic RAG is a control-flow *strategy* (when/how-many-times to retrieve);
@@ -435,7 +451,7 @@ class Edge(BaseModel):
 
 ### Ordered build steps (each a small green vertical slice — `make check` green before the next)
 
-- **A5.0 — Schemas + SQLite `GraphStore` (NO LLM, NO network). ← START HERE.**
+- **A5.0 ✅ — Schemas + SQLite `GraphStore` (NO LLM, NO network).**
   `schemas/graph.py` (above) + `graph/store.py`: a `GraphStore` Protocol + `SqliteGraphStore`
   (`nodes`/`edges` tables; idempotent `add_entities`/`add_edges` upsert by id;
   `neighbors(entity_id, *, relations=None, hops=1)`, `provenance_chunk_ids(...)`, `get_entity`,
@@ -443,7 +459,7 @@ class Edge(BaseModel):
   add → neighbors (1- and 2-hop), idempotent upsert, provenance retrieval, namespacing. *Deliverable:
   a queryable graph store, no extraction yet.*
 
-- **A5.1 — Extraction (LLM-assisted, offline, cost-gated, verified).**
+- **A5.1 ✅ — Extraction (LLM-assisted, offline, cost-gated, verified).**
   `graph/prompts.py` (`GRAPH_EXTRACT_SYSTEM`: extract typed `(subject, relation, object)` triples
   from a NUMBERED filing section, returning JSON with the supporting chunk-number(s) + `confidence`;
   `build_extract_user(ticker, numbered_chunks)`) + `graph/extract.py`
@@ -456,7 +472,7 @@ class Edge(BaseModel):
   hallucinated edge (provenance lacks the object name) is dropped; spend gate. *Deliverable: a
   populated graph from real filings (run on the benchmark tickers).*
 
-- **A5.2 — `GraphRetriever` (satisfies `RetrievalSystem`).**
+- **A5.2 ✅ — `GraphRetriever` (satisfies `RetrievalSystem`).**
   `graph/retriever.py`: `GraphRetriever(graph_store, vector_retriever, chunk_fetch)`.
   `retrieve(query, *, top_k, where)`: seed entity = `where.ticker` (or `mentioned_tickers(query)`) →
   traverse 1–2 hops → neighbor tickers + edge-provenance chunk_ids → **(who)** materialize provenance
@@ -467,7 +483,7 @@ class Edge(BaseModel):
   chunks; provenance chunks present and cite the real `source_url`; union dedups. *Deliverable: the
   bridging hop done by traversal, not the alias-bridge.*
 
-- **A5.3 — Integration + measurement (the payoff + the A-N teaching obligation).**
+- **A5.3 ✅ (code) — Integration + measurement (the payoff + the A-N teaching obligation).**
   Make `GraphRetriever` usable as the A4 loop's retriever / a `build_retrieval_system` mode. **Re-run
   `rag eval-multistep` on `configs/rag_eval_multistep.json`** with the GraphRetriever and compare to
   (a) plain hybrid and (b) the A4 entity-bridge: does traversal earn the bridging gain on its own? If
@@ -490,6 +506,15 @@ suppliers/peers in `configs/rag_eval_multistep.json`: MU, AMD, INTC, AVGO, …).
 bridging questions reach +0.5 gain via graph traversal *without* the query-time alias-bridge**, with
 every graph-sourced claim citing a real filing chunk. Not a core dependency — a learning capstone.
 
+> **Operational scope decision (2026-06-27): graph is built for the semis/AI complex ONLY, not the
+> full universe.** Extraction is the one paid A5 step (~$40-60 to do all ~110 training names — too
+> expensive and wasted, since GraphRAG is query-local: §16.5). The committed extraction set is
+> **`configs/graph_universe.txt`** (NVDA + AVGO AMD INTC QCOM TXN AMAT MU MRVL LRCX KLAC ADI NXPI
+> MCHP ANET DELL — 16 names, ~$8-12). Build with `documents extract-graph --all --universe
+> configs/graph_universe.txt`. Extraction `max_tokens` is 4000 (Item 1A is long; a tight cap
+> truncates the JSON and silently drops a section's edges). Grow the list only when a new ticker is
+> actually queried structurally; `--all` over the whole `configs/universe.txt` is deliberately avoided.
+
 ### Risks (and mitigations baked into the steps above)
 - **Hallucinated edges** → mandatory provenance + the verification drop (A5.1) + confidence threshold.
 - **Extraction cost** → offline batch + candidate pre-filter + `GraphExtractBudgetExceeded` gate.
@@ -498,6 +523,50 @@ every graph-sourced claim citing a real filing chunk. Not a core dependency — 
   stored but lower-value. This is precisely A5's improvement over the A4 query-time bridge.
 - **Scope creep** → keep the MVP tiny; resist adding entity types / relations / sections until the
   bridging benchmark is beaten.
+
+### A5 follow-ups — polish (PLANNED, deferred 2026-06-27; do before the A5.3 promotion verdict)
+
+Two known issues surfaced while building the 16-ticker graph. Both are **deferred, not abandoned** —
+fix #2 in particular gates the A5.3 "does graph beat the A4 bridge" measurement, so do these before
+running the promotion benchmark. Neither is implemented yet.
+
+- **F1 — Unresolved-company node de-duplication (data quality, Low effort).**
+  *Symptom:* the same out-of-universe company appears as several nodes — punctuation/suffix variants
+  (`Hon Hai Precision Industry Co.` vs `… Co., Ltd.`, `Global Foundries` vs `GlobalFoundries`,
+  `Apple Inc.` vs `Apple`) and acronym variants (`TSMC`↔`Taiwan Semiconductor`, `UMC`↔`United
+  Microelectronics`, `SMIC`↔`Semiconductor Manufacturing International`). Resolved-ticker nodes
+  (ASML/AMD/NVDA/MU…) already dedup correctly — this is only the `ticker=None` companies.
+  *Root cause:* `graph/extract._build_edge` ids an unresolved company by `_normalize_node_id(raw
+  surface)`, so every surface form is a distinct id.
+  *Plan:*
+  (a) **Cheap tier** — id unresolved companies by `_core_name(obj_name)` (suffix-stripped +
+      punctuation-normalized) instead of the raw slug. Merges the suffix/spacing variants. Low risk
+      (watch for rare core-name collisions between genuinely different firms).
+  (b) **Acronym tier (optional)** — add the common foreign suppliers/foundries to
+      `configs/ticker_aliases.json` (or a sidecar alias map) so `TSMC`/`Taiwan Semiconductor` resolve
+      to one canonical id; defer unless the duplicates actually hurt traversal.
+  *Files:* `graph/extract.py` (the unresolved-company `obj_id`); extend `tests/unit/test_graph_extract.py`
+  (two surface variants → one node id). *Migration:* existing graph has the dup nodes under old ids —
+  clear + rebuild the 16-ticker graph (idempotent) after the change, or write a one-time node-merge.
+
+- **F2 — Bridge ranking: guarantee neighbor evidence in top-k (the A5.3 blocker, Med effort).**
+  *Symptom:* `rag graph-query` *gathers* the bridged neighbor's chunks (e.g. MU's risk chunk) but
+  they rank **below top-k**, so the bridge doesn't surface in the returned set (verified: MU is
+  ingested + reachable; the chunks are fetched, then RRF-crowded out).
+  *Root cause:* `graph/retriever.GraphRetriever.retrieve` fuses `[base_ids, graph_ids]` by RRF, but
+  base chunks (seed-filtered) **also appear in `graph_ids` as edge provenance** → double-counted →
+  they dominate; the genuinely-new scoped-neighbor chunks appear once at a lower rank and fall off.
+  *Plan (do (a), measure, add (b) only if needed):*
+  (a) **De-double-count** — build the graph ranking as `(provenance ∪ scoped) − base_ids`, so the
+      fused graph list is *only the new evidence the base didn't already return*. Removes the
+      inflation; the neighbor's chunks then rank on their own merit.
+  (b) **Reserve a floor** — guarantee `min(graph_floor, available)` scoped-neighbor slots in the
+      final top-k (new config `graph_min_neighbor_slots`, e.g. 2), filling the rest by RRF. Makes the
+      bridge deterministically visible regardless of score scale.
+  *Files:* `graph/retriever.py`; `settings.py` (if (b)); extend `tests/unit/test_graph_retriever.py`
+  (neighbor chunk present in top-k even when base fills it). *Measure:* this is exactly what
+  `rag eval-multistep --graph` scores — run it vs. plain hybrid + the A4 entity-bridge **after** F2 to
+  produce the A5.3 promotion verdict. Until F2 lands, a graph-vs-bridge benchmark understates graph.
 
 ---
 

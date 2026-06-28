@@ -1,0 +1,51 @@
+# GraphRAG (A5) extraction universe — the semis/AI complex ONLY (one ticker per line; # = comment).
+#
+# WHY A SUBSET, NOT `--all`: graph extraction is the only PAID step in A5 (one claude-sonnet call per
+# filing-section over the long 10-K Item 1 / Item 1A). Extracting the full ~110-name training universe
+# costs ~$40-60 and is wasted for entity-anchored SEC QA — GraphRAG is query-local (you traverse from
+# the question's ticker, §16.5), so you only need each queried ticker's own out-edges plus its named
+# neighbors' INGESTED filings (already present). This list = NVDA + its supplier/peer complex, which
+# covers the A4 bridging benchmark and every realistic "who supplies / competes with / is exposed to"
+# question. Grow only when a new ticker is actually queried structurally.
+#
+# Build:  python -m stock_agent documents extract-graph --all --universe configs/graph_universe.txt
+# Query:  python -m stock_agent rag graph-query -q "..." --ticker NVDA
+# Decision recorded 2026-06-27. Full-universe graph is deliberately out of scope (cost).
+#
+# === BUILD LOG (which tickers' graphs exist) ===
+# 2026-06-27: graphs BUILT for all 16 tickers below (10-K Item 1 + Item 1A; claude-sonnet-4-6;
+#   ~3 calls/ticker, ~$6-7 total; 634 nodes / 1,352 edges). data/graph/voyage-voyage-4.db.
+#   NOTE: INTC's 10-K renders Item headers only in its TOC, so section detection collapses it into
+#   'Preamble' — extract.py.select_extraction_chunks falls back to cue-bearing whole-10-K chunks
+#   (capped 40/filing) for such filers, so INTC built (83 edges). Re-run Build to refresh (idempotent).
+#
+# 2026-06-28: ADDED 4 FOREIGN filers (file 20-F, not 10-K) to complete the upstream bridges —
+#   esp. NVDA -> TSMC (foundry) and TSMC -> ASML (litho equipment). 20-F has a different item
+#   structure, so extraction always uses the cue-bearing whole-document fallback (see extract.py
+#   _GRAPH_DOC_TYPES). Downloaded explicitly: `download-sec --ticker <T> --forms 20-F` (NOT via the
+#   domestic `--all`, whose default forms are 10-K/10-Q/8-K). NB: Samsung & SK Hynix are NOT SEC
+#   filers, so the other HBM makers remain un-ingestable; Micron is the only memory supplier in-graph.
+#
+# --- The 16 domestic semis/AI tickers (10-K) ---
+NVDA   # GPUs / AI accelerators (the hub; bridging-benchmark subject)
+AVGO   # networking + custom silicon (Broadcom)
+AMD    # CPUs / GPUs / accelerators
+INTC   # CPUs / foundry
+QCOM   # mobile / edge SoCs (Qualcomm)
+TXN    # analog / embedded (Texas Instruments)
+AMAT   # semiconductor equipment (Applied Materials)
+MU     # DRAM / HBM memory (Micron) — NVDA's key memory supplier (the NVDA->MU bridge)
+MRVL   # data-center networking / custom silicon (Marvell)
+LRCX   # wafer-fab equipment (Lam Research)
+KLAC   # process control / metrology (KLA)
+ADI    # analog / mixed-signal (Analog Devices)
+NXPI   # automotive / edge (NXP)
+MCHP   # microcontrollers (Microchip)
+ANET   # data-center switching (Arista) — NVDA networking peer/customer
+DELL   # AI servers / systems (Dell) — downstream integrator
+
+# --- 4 foreign filers (20-F) — upstream foundry / equipment / IP (added 2026-06-28) ---
+TSM    # Taiwan Semiconductor (TSMC) — NVDA's foundry; the NVDA->TSM bridge target
+ASML   # ASML — EUV litho equipment; upstream of TSMC (TSM->ASML 2-hop)
+ARM    # Arm Holdings — CPU IP / architecture licensing
+STM    # STMicroelectronics — analog / automotive / MEMS
