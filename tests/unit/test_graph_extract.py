@@ -61,6 +61,17 @@ def test_resolve_company() -> None:
     assert resolve_company("Some Unknown Corp", _ALIAS) is None
 
 
+def test_committed_alias_map_resolves_tsmc_acronym() -> None:
+    # F1 acronym dedup: the *committed* configs/ticker_aliases.json must resolve both the full name
+    # and the "TSMC" acronym to the SEC ticker TSM, so the acronym collapses into the one TSM node
+    # (not a stray unresolved `tsmc` node). Guards the alias entry against removal.
+    from stock_agent.research.bridge import load_alias_map
+
+    am = load_alias_map()
+    assert resolve_company("Taiwan Semiconductor Manufacturing Company", am) == "TSM"
+    assert resolve_company("TSMC", am) == "TSM"
+
+
 def test_extract_depends_on_with_provenance() -> None:
     chunks = [_chunk(0, "We purchase high-bandwidth memory from Micron and other suppliers.")]
     llm = _FakeLLM([_triples(

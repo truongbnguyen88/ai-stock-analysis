@@ -524,13 +524,14 @@ every graph-sourced claim citing a real filing chunk. Not a core dependency — 
 - **Scope creep** → keep the MVP tiny; resist adding entity types / relations / sections until the
   bridging benchmark is beaten.
 
-### A5 follow-ups — polish (PLANNED, deferred 2026-06-27; do before the A5.3 promotion verdict)
+### A5 follow-ups — polish (status as of 2026-06-28)
 
-Two known issues surfaced while building the 16-ticker graph. Both are **deferred, not abandoned** —
-fix #2 in particular gates the A5.3 "does graph beat the A4 bridge" measurement, so do these before
-running the promotion benchmark. Neither is implemented yet.
+Issues found while building the graph + running a 3-architecture eval. **F1, F2, D1, D3 are DONE**
+(F2/D1/D3 in PR #38; F1 across PR #38 (core-name tier) + the polish PR (acronym tier)). The remaining
+open item is the **A5.3 promotion verdict** (run `rag eval-multistep --graph` vs hybrid + the A4
+bridge). One investigated item closed as a **negative** (see "Item A" below) — no fix, by design.
 
-- **F1 — Unresolved-company node de-duplication (data quality, Low effort).**
+- **F1 — Unresolved-company node de-duplication (data quality) — DONE.**
   *Symptom:* the same out-of-universe company appears as several nodes — punctuation/suffix variants
   (`Hon Hai Precision Industry Co.` vs `… Co., Ltd.`, `Global Foundries` vs `GlobalFoundries`,
   `Apple Inc.` vs `Apple`) and acronym variants (`TSMC`↔`Taiwan Semiconductor`, `UMC`↔`United
@@ -538,18 +539,25 @@ running the promotion benchmark. Neither is implemented yet.
   (ASML/AMD/NVDA/MU…) already dedup correctly — this is only the `ticker=None` companies.
   *Root cause:* `graph/extract._build_edge` ids an unresolved company by `_normalize_node_id(raw
   surface)`, so every surface form is a distinct id.
-  *Plan:*
-  (a) **Cheap tier** — id unresolved companies by `_core_name(obj_name)` (suffix-stripped +
-      punctuation-normalized) instead of the raw slug. Merges the suffix/spacing variants. Low risk
-      (watch for rare core-name collisions between genuinely different firms).
-  (b) **Acronym tier (optional)** — add the common foreign suppliers/foundries to
-      `configs/ticker_aliases.json` (or a sidecar alias map) so `TSMC`/`Taiwan Semiconductor` resolve
-      to one canonical id; defer unless the duplicates actually hurt traversal.
+  *Done:*
+  (a) **Core-name tier (PR #38)** — id unresolved companies by `_core_name(obj_name)` (suffix-stripped
+      + punctuation-normalized); merges suffix/spacing variants (`… Co.`/`… Co., Ltd.`).
+  (b) **Acronym tier (polish PR)** — added `"tsmc"`→TSM and `"asml"`→ASML to
+      `configs/ticker_aliases.json` (the confirmed dup was a stray `tsmc` node created by AVGO/INTC/
+      NXPI filings using the acronym; TSMC's US ticker is **TSM** — the NYSE ADR, CIK 1046179).
+      Guarded by `test_committed_alias_map_resolves_tsmc_acronym`. **Materializing the merge in the
+      live graph needs a clean rebuild** (`extract-graph --all`) — the graph lives under gitignored
+      `data/`; re-extract alone leaves the old `tsmc`-keyed edges. (Out-of-universe acronyms like
+      `UMC`/`SMIC` can't resolve — no ticker in the universe — so they stay as name nodes.)
   *Files:* `graph/extract.py` (the unresolved-company `obj_id`); extend `tests/unit/test_graph_extract.py`
   (two surface variants → one node id). *Migration:* existing graph has the dup nodes under old ids —
   clear + rebuild the 16-ticker graph (idempotent) after the change, or write a one-time node-merge.
 
-- **F2 — Bridge ranking: guarantee neighbor evidence in top-k (the A5.3 blocker, Med effort).**
+- **F2/D1/D3 — Bridge ranking & traversal policy (the A5.3 blockers) — DONE (PR #38).**
+  Three fixes so the bridged neighbor actually surfaces: **F2** de-double-counts base vs. graph before
+  RRF; **D1** round-robins neighbor selection across relations (a competes_with-heavy hub no longer
+  starves depends_on suppliers); **D3** leads the graph ranking with scoped-neighbor chunks and caps
+  provenance (subject-own provenance was flooding the ranking — the real blocker). Original F2 writeup:
   *Symptom:* `rag graph-query` *gathers* the bridged neighbor's chunks (e.g. MU's risk chunk) but
   they rank **below top-k**, so the bridge doesn't surface in the returned set (verified: MU is
   ingested + reachable; the chunks are fetched, then RRF-crowded out).
@@ -567,6 +575,19 @@ running the promotion benchmark. Neither is implemented yet.
   (neighbor chunk present in top-k even when base fills it). *Measure:* this is exactly what
   `rag eval-multistep --graph` scores — run it vs. plain hybrid + the A4 entity-bridge **after** F2 to
   produce the A5.3 promotion verdict. Until F2 lands, a graph-vs-bridge benchmark understates graph.
+
+- **Item A — `TSM→ASML` / `TSM→AMAT` equipment 2-hop — INVESTIGATED, closed as a NEGATIVE (no fix).**
+  *Hypothesis was:* the foundry→equipment edge didn't extract because the fallback cap cut the
+  relevant chunk; "raise the cap / add equipment cues" would complete it. *Diagnosis (raw 20-F text):*
+  TSMC names **ASML 0×** (so the edge isn't in the filing) and **Applied Materials 8× — all in Item 6
+  director bios** (Michael Splinter was AMAT's CEO; a director advises AMAT), i.e. personnel
+  affiliations, **not** supplier relationships. So capturing it would manufacture **false edges**, and
+  the current first-N cap correctly excludes them. **No code change** — raising the cap / adding
+  equipment cues is rejected (it would degrade precision). The real wafer/material suppliers TSMC
+  *does* disclose already extract (GlobalWafers, Shin-Etsu, SUMCO, Siltronic, Soitec). The legitimate
+  path to a foundry→equipment edge is the deferred **`supplies_to`/customer relation** mined from the
+  equipment maker's *own* filing (ASML/AMAT name their customers) and derived on traversal — an A5
+  scope extension, not a polish tweak.
 
 ---
 
