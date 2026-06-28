@@ -15,8 +15,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# MVP corpus = SEC filings; widen (transcript/presentation/news/internal) in V1.
-DocumentType = Literal["10-K", "10-Q", "8-K"]
+# MVP corpus = SEC filings. Domestic issuers file 10-K/10-Q/8-K; **foreign private issuers**
+# (e.g. TSMC, ASML, ARM, STM) file the annual **20-F** instead of a 10-K — same role (business +
+# risk factors), different item structure. We ingest 20-F so the graph can bridge to foreign
+# suppliers/foundries. (6-K interim reports are out of scope — noisy/unstructured.)
+DocumentType = Literal["10-K", "10-Q", "8-K", "20-F"]
 DocumentSource = Literal["SEC"]
 
 _SEC_ARCHIVES = "https://www.sec.gov/Archives/edgar/data"

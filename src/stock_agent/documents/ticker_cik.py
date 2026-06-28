@@ -20,12 +20,14 @@ def normalize_ticker(ticker: str) -> str:
 def load_universe(path: Path) -> list[str]:
     """Read tickers from a universe file (one per line; ``#`` comments; blanks ignored).
 
-    Kept local to ``documents`` (a 3-line reader) rather than importing the training
+    Both full-line (``# note``) and **inline** (``NVDA  # GPUs``) comments are stripped, so a
+    universe file can annotate each ticker (e.g. ``configs/graph_universe.txt`` documents the sector
+    of each name). Kept local to ``documents`` (a tiny reader) rather than importing the training
     module's loader, so the RAG layer does not depend on ``forecasting`` internals.
     """
     tickers: list[str] = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
+        stripped = line.split("#", 1)[0].strip()  # drop inline + full-line comments
+        if stripped:
             tickers.append(normalize_ticker(stripped))
     return tickers

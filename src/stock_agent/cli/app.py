@@ -21,6 +21,12 @@ if TYPE_CHECKING:
 
 from stock_agent.documents.download import DEFAULT_FORMS, bulk_download
 from stock_agent.documents.ticker_cik import load_universe, normalize_ticker
+from stock_agent.graph.extract import (
+    GraphExtractBudgetExceeded,
+    extract_edges,
+    select_extraction_chunks,
+)
+from stock_agent.graph.store import build_graph_store
 from stock_agent.llm.client import AnthropicClient
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
@@ -51,6 +57,7 @@ from stock_agent.rag.pipeline import (
 )
 from stock_agent.rag.read_path import (
     LATTICE_SYSTEMS,
+    build_graph_system,
     build_named_system,
     build_retrieval_system,
 )
@@ -59,6 +66,7 @@ from stock_agent.rag.status import corpus_status
 from stock_agent.rag.vector_store import InMemoryVectorStore, build_vector_store
 from stock_agent.reports.render_md import render_markdown
 from stock_agent.research.agentic import answer_multistep
+from stock_agent.research.bridge import load_alias_map
 from stock_agent.research.memo import render_memo_markdown
 from stock_agent.research.multistep_eval import (
     MultiHopQuery,
@@ -683,7 +691,9 @@ documents_app = typer.Typer(
 )
 app.add_typer(documents_app, name="documents")
 
-_ALLOWED_FORMS: tuple[DocumentType, ...] = ("10-K", "10-Q", "8-K")
+# 20-F = foreign private issuers' annual report (TSMC/ASML/ARM/STM) — pass it explicitly via
+# --forms; it is NOT in DEFAULT_FORMS, so domestic `--all` downloads stay 10-K/10-Q/8-K only.
+_ALLOWED_FORMS: tuple[DocumentType, ...] = ("10-K", "10-Q", "8-K", "20-F")
 
 
 @documents_app.command("download-sec")
@@ -884,6 +894,78 @@ def backfill_sparse_cmd(
     )
 
 
+@documents_app.command("extract-graph")
+def extract_graph_cmd(
+    ticker: Annotated[
+        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
+    ] = None,
+    extract_all: Annotated[
+        bool, typer.Option("--all", help="Extract for every ticker in the universe file")
+    ] = False,
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Universe file used with --all")
+    ] = Path("configs/universe.txt"),
+) -> None:
+    """Build the A5 knowledge graph from ingested filings (PAID: one LLM call per filing-section).
+
+    Offline, cost-gated extraction (advanced-RAG A5.1): for each ticker it parses + chunks the
+    downloaded filings, keeps only the configured graph sections (10-K Item 1 / Item 1A), and makes
+    one structured-output call per filing-section to extract typed, **verified, provenance-bearing**
+    `(subject, relation, object)` edges into the SQLite graph store. Edges whose object is absent
+    from the cited chunk are dropped (the hallucinated-edge guard). Bounded by
+    `settings.graph_max_extract_calls` (a run-wide ceiling). Idempotent — re-running upserts.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    if not settings.anthropic_api_key:
+        typer.echo("ANTHROPIC_API_KEY is required for extract-graph (extraction makes LLM calls).")
+        raise typer.Exit(code=1)
+    llm = AnthropicClient(settings)
+    alias_map = load_alias_map()
+    graph_store = build_graph_store(settings)
+    tickers = _ingest_tickers(extract_all, ticker, universe)
+
+    ceiling = settings.graph_max_extract_calls
+    used = 0
+    n_entities = 0
+    n_edges = 0
+    for sym in tickers:
+        if ceiling is not None and used >= ceiling:
+            typer.echo(f"Reached extraction call ceiling ({ceiling}); stopping before {sym}.")
+            break
+        chunks = select_extraction_chunks(
+            build_chunks(
+                sym, documents_dir=settings.documents_dir,
+                chunk_tokens=settings.rag_chunk_tokens, chunk_overlap=settings.rag_chunk_overlap,
+            ),
+            settings.graph_sections,
+            alias_map,
+        )
+        remaining = None if ceiling is None else ceiling - used
+        try:
+            res = extract_edges(
+                sym, chunks, llm=llm, alias_map=alias_map,
+                min_confidence=settings.graph_min_confidence, max_calls=remaining,
+            )
+        except GraphExtractBudgetExceeded as exc:
+            typer.echo(f"Aborting at {sym}: {exc}")
+            break
+        graph_store.add_entities(res.entities)
+        graph_store.add_edges(res.edges)
+        used += res.calls
+        n_entities += len(res.entities)
+        n_edges += len(res.edges)
+        typer.echo(
+            f"  {sym}: {len(res.edges)} edge(s), {len(res.entities)} entity(ies) "
+            f"({res.calls} LLM call(s))"
+        )
+    counts = graph_store.count()
+    typer.echo(
+        f"Graph now has {counts.nodes:,} node(s), {counts.edges:,} edge(s) "
+        f"(this run: +{n_edges} edge(s) across {used} LLM call(s))."
+    )
+
+
 @documents_app.command("refresh")
 def refresh(
     ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")] = None,
@@ -1035,6 +1117,47 @@ def rag_query(
         typer.echo(textwrap.shorten(rc.chunk.text, width=280))
 
 
+@rag_app.command("graph-query")
+def rag_graph_query(
+    question: Annotated[str, typer.Option("--question", "-q", help="Natural-language question")],
+    ticker: Annotated[
+        str | None,
+        typer.Option("--ticker", "-t", help="Seed entity (else from the query)"),
+    ] = None,
+    top_k: Annotated[
+        int | None, typer.Option("--top-k", help="Chunks to return (default settings.rag_top_k)")
+    ] = None,
+    answer: Annotated[
+        bool, typer.Option("--answer", help="Synthesize a cited answer (one LLM call) instead")
+    ] = False,
+) -> None:
+    """Retrieve via the A5 GraphRetriever (traversal ⊕ vector); with --answer, a cited answer.
+
+    Seeds the traversal from `--ticker` (or company names in the question), folds in neighbor
+    companies' chunks + the relationship-stating provenance chunks, and fuses with the vector
+    base by RRF. Traversal is $0/local; build the graph first with `documents extract-graph`.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    retriever = build_graph_system(settings)
+    where = ChunkFilter(ticker=normalize_ticker(ticker)) if ticker else None
+    evidence = retriever.retrieve(question, top_k=top_k or settings.rag_top_k, where=where)
+
+    if answer:
+        grounded = answer_question(question, evidence, llm=AnthropicClient(settings))
+        typer.echo(grounded.answer)
+        for cite in grounded.citations:
+            typer.echo(f"  [{cite.marker}] {cite.label}")
+        return
+
+    if evidence.is_empty:
+        typer.echo("No matching evidence found. Ingest + extract-graph first.")
+        raise typer.Exit(code=1)
+    for i, rc in enumerate(evidence.chunks, start=1):
+        typer.echo(f"\n[{i}] {rc.citation_label()}  (score {rc.score:.3f})")
+        typer.echo(textwrap.shorten(rc.chunk.text, width=280))
+
+
 @rag_app.command("ask")
 def rag_ask(
     question: Annotated[str, typer.Option("--question", "-q", help="Multi-hop question")],
@@ -1048,19 +1171,25 @@ def rag_ask(
     max_steps: Annotated[
         int | None, typer.Option("--max-steps", help="Cap decision steps (default settings)")
     ] = None,
+    graph: Annotated[
+        bool, typer.Option("--graph", help="Retrieve via the A5 GraphRetriever (traversal+vector)")
+    ] = False,
 ) -> None:
     """Answer a question with the A4 multi-hop ReAct loop (`--single` for one-shot).
 
     Bounded agentic retrieval: each step reasons over evidence-so-far and either retrieves more or
     stops, then the reused P7 guarded synthesis answers over the union. ``--single`` falls back to
     one retrieval + one ``answer_question`` (the plain `rag query --answer` path) for comparison.
+    ``--graph`` swaps in the A5 graph retriever (build the graph first: `documents extract-graph`).
     """
     settings = get_settings()
     configure_logging(settings)
     llm = AnthropicClient(settings)
+    # The retrieval substrate (A5 graph or the default vector/hybrid stack); both satisfy the same
+    # RetrievalSystem contract, so the loop / single-shot path are agnostic to the choice.
+    retriever = build_graph_system(settings) if graph else build_retrieval_system(settings)
 
     if not multi:
-        retriever = build_retrieval_system(settings)
         evidence = retriever.retrieve(question, top_k=settings.rag_top_k)
         grounded = answer_question(question, evidence, llm=llm)
         typer.echo(grounded.answer)
@@ -1068,7 +1197,9 @@ def rag_ask(
             typer.echo(f"  [{cite.marker}] {cite.label}")
         return
 
-    result = answer_multistep(question, settings=settings, llm=llm, max_steps=max_steps)
+    result = answer_multistep(
+        question, settings=settings, llm=llm, retriever=retriever, max_steps=max_steps
+    )
     # Trace first (what the loop did), then the cited answer — transparency for an agentic run.
     for i, st in enumerate(result.trace, start=1):
         scope = f" [{st.ticker}]" if st.ticker else ""
@@ -1237,6 +1368,9 @@ def rag_eval_multistep(
     report: Annotated[
         Path | None, typer.Option("--report", help="Also write reports + summary JSON to this path")
     ] = None,
+    graph: Annotated[
+        bool, typer.Option("--graph", help="Run the loop over the A5 GraphRetriever (A5.3 measure)")
+    ] = False,
 ) -> None:
     """Measure the A4 agentic loop's multi-hop coverage vs. a single-shot baseline (PAID: real LLM).
 
@@ -1244,7 +1378,8 @@ def rag_eval_multistep(
     for each runs the ReAct loop AND one single retrieval over the configured corpus, and reports
     **coverage**, the **coverage gain** (multi-step − single-shot), citation accuracy, and loop
     behaviour. Needs ANTHROPIC_API_KEY and the query tickers' filings ingested. See
-    `configs/rag_eval_multistep.example.json`; run via `make rag-eval-multistep`.
+    `configs/rag_eval_multistep.example.json`; run via `make rag-eval-multistep`. ``--graph`` runs
+    both arms over the A5 graph retriever (the A5.3 bridging-benchmark comparison vs. hybrid).
     """
     settings = get_settings()
     configure_logging(settings)
@@ -1254,8 +1389,9 @@ def rag_eval_multistep(
     from stock_agent.llm.client import AnthropicClient
 
     labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    retriever = build_graph_system(settings) if graph else None  # None → default hybrid read path
     reports, summary = evaluate_multihop_set(
-        labeled, settings=settings, llm=AnthropicClient(settings), top_k=top_k
+        labeled, settings=settings, llm=AnthropicClient(settings), retriever=retriever, top_k=top_k
     )
     typer.echo(format_multihop_markdown(reports, summary))
     if report is not None:
