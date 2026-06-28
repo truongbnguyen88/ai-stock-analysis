@@ -8,12 +8,14 @@ result; the union dedups; ``RetrievalSystem`` conformance.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 
 from stock_agent.graph.retriever import GraphRetriever
+from stock_agent.graph.store import Direction, GraphCounts
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.schemas.documents import DocumentChunk
-from stock_agent.schemas.graph import Edge, Entity
+from stock_agent.schemas.graph import Edge, Entity, Relation
 from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChunk
 
 _ALIAS = {"NVDA": ["NVIDIA"], "MU": ["Micron"]}
@@ -49,17 +51,36 @@ class _FakeBase:
 
 
 class _FakeGraph:
-    """A one-edge graph: NVDA --depends_on--> MU, with provenance + the two company nodes."""
+    """One-edge graph implementing the GraphStore Protocol (only neighbors/get_entity are used)."""
 
     def __init__(self, edges: list[Edge], entities: dict[str, Entity]) -> None:
         self._edges = edges
         self._entities = entities
 
-    def neighbors(self, entity_id, *, relations=None, hops=1, direction="out"):
+    def neighbors(
+        self, entity_id: str, *, relations: Sequence[Relation] | None = None,
+        hops: int = 1, direction: Direction = "out",
+    ) -> list[Edge]:
         return [e for e in self._edges if e.subject == entity_id]
 
-    def get_entity(self, entity_id):
+    def get_entity(self, entity_id: str) -> Entity | None:
         return self._entities.get(entity_id)
+
+    # Unused by GraphRetriever — present so _FakeGraph structurally satisfies GraphStore.
+    def add_entities(self, entities: Sequence[Entity]) -> None:
+        raise NotImplementedError
+
+    def add_edges(self, edges: Sequence[Edge]) -> None:
+        raise NotImplementedError
+
+    def provenance_chunk_ids(
+        self, entity_id: str, *, relations: Sequence[Relation] | None = None,
+        hops: int = 1, direction: Direction = "out",
+    ) -> list[str]:
+        raise NotImplementedError
+
+    def count(self) -> GraphCounts:
+        return GraphCounts(nodes=0, edges=0)
 
 
 def _edge() -> Edge:
@@ -69,7 +90,7 @@ def _edge() -> Edge:
     )
 
 
-def _fetch(ids):
+def _fetch(ids: Sequence[str]) -> dict[str, DocumentChunk]:
     table = {"nvda:prov": _NVDA_PROV, "nvda:1": _NVDA_BASE, "mu:risk": _MU_RISK}
     return {i: table[i] for i in ids if i in table}
 
@@ -129,7 +150,9 @@ class _FullBase:
 
     name = "fullbase"
 
-    def retrieve(self, query, *, top_k, where=None):
+    def retrieve(
+        self, query: str, *, top_k: int, where: ChunkFilter | None = None
+    ) -> EvidenceSet:
         if where is not None and where.ticker == "MU":
             return EvidenceSet(query=query, chunks=[RetrievedChunk(chunk=_MU_RISK, score=0.7)])
         return EvidenceSet(query=query, chunks=[

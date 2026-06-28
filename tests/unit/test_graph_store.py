@@ -20,7 +20,7 @@ def _edge(
     subj: str, rel: str, obj: str, *, prov: list[str], url: str = _URL, conf: float = 0.9
 ) -> Edge:
     return Edge(
-        subject=subj, relation=rel, object=obj, provenance=prov,  # type: ignore[arg-type]
+        subject=subj, relation=rel, object=obj, provenance=prov,
         filing_date=date(2025, 2, 26), source_url=url, confidence=conf,
     )
 
@@ -43,8 +43,8 @@ def test_add_and_get_entity(tmp_path: Path) -> None:
         [_company("NVDA", "NVIDIA"), Entity(id="capacity", name="capacity", type="risk")]
     )
     assert g.get_entity("NVDA") == _company("NVDA", "NVIDIA")
-    assert g.get_entity("capacity") is not None
-    assert g.get_entity("capacity").ticker is None
+    cap = g.get_entity("capacity")
+    assert cap is not None and cap.ticker is None  # non-company node carries no ticker
     assert g.get_entity("MISSING") is None
 
 

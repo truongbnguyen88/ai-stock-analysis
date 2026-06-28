@@ -44,13 +44,13 @@ def _chunk(idx: int, text: str, *, ticker: str = "NVDA", doc: str = "NVDA:10-K:2
            section: str = "Item 1. Business", document_type: str = "10-K") -> DocumentChunk:
     return DocumentChunk(
         chunk_id=f"{doc}:{idx}", document_id=doc, chunk_index=idx, text=text,
-        ticker=ticker, document_type=document_type, source="SEC",  # type: ignore[arg-type]
+        ticker=ticker, document_type=document_type, source="SEC",
         source_url=f"https://www.sec.gov/Archives/edgar/data/x/{ticker.lower()}.htm",
         filing_date=date(2025, 2, 26), section=section,
     )
 
 
-def _triples(*items: dict) -> str:
+def _triples(*items: dict[str, object]) -> str:
     return json.dumps({"triples": list(items)})
 
 
