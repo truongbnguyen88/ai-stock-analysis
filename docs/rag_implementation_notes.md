@@ -1191,3 +1191,146 @@ catches — out of scope for the bridge.) The committed `configs/rag_eval_multis
 regression benchmark; spans were chosen to be present in the *bridge's* entity-scoped retrieval and
 absent from single-shot. Offline tests: `tests/unit/test_bridge.py` (gate, alias resolution, ranking
 + cap, corpus-absence skip, end-to-end `answer_multistep` reaching the supplier's filings).
+
+## A5 — GraphRAG (`schemas/graph.py`, `graph/`, `rag/read_path.build_graph_system`) ✅ (code)
+
+> **Status (2026-06-27).** A5 **code complete + green** across all four slices (A5.0–A5.3). Default-OFF;
+> all retrieval is $0/local; the only paid step is offline extraction. 25 new graph tests; `make check`
+> green (751 passed). The *measured* promotion verdict (graph vs. hybrid vs. the A4 entity-bridge on
+> `configs/rag_eval_multistep.json`) is a **local paid run** — deferred like the model backtests, run
+> via `rag eval-multistep --graph`. Theory → `rag_concepts.md` §16.
+
+**Role.** A retrieval **substrate** (not a control strategy — that's A4): build an entity/relationship
+graph over the corpus and retrieve by **traversal**, so structural ("who are NVDA's suppliers") and
+multi-hop **bridging** ("does NVDA's memory supplier face the same capacity risk") questions become a
+graph hop instead of something the embedder must accidentally encode. Orthogonal to A4: `GraphRetriever`
+satisfies the same `RetrievalSystem` contract the A4 loop calls, so **agentic can wrap graph** (§15.9).
+The motivating benchmark is the A4 bridging negative: can a *stored, ingest-time* edge do the
+`NVDA→MU` pivot the A4 query-time alias-bridge does, but more robustly?
+
+**Key files / mechanism (step-by-step).**
+
+1. **`schemas/graph.py` — the typed graph.** `Entity { id, name, type, ticker }` (5 types:
+   `company`/`product`/`segment`/`risk`/`regulatory_topic`; a company's canonical `id` is its
+   **ticker**). `Edge { subject, relation, object, provenance: list[str] (min_length=1), filing_date,
+   source_url, confidence }` (4 relations: `depends_on`/`competes_with`/`mentions_risk`/`exposed_to`).
+   `RELATION_OBJECT_TYPE` maps each relation → its object entity type, so the object type is **derived**
+   from the relation, never asked of the LLM (removes a failure mode). Provenance is mandatory — an
+   edge with no chunk_id is inadmissible (the citeability anchor).
+
+2. **`graph/store.py` — `SqliteGraphStore` (A5.0, NO LLM/network).** Two tables (`nodes`/`edges`) with
+   **idempotent upserts**: nodes keyed by `id`; edges by `_edge_key = (subject, relation, object,
+   source_url)` — the *same* triple from a *different* filing is two pieces of evidence (two rows),
+   re-extracting the *same* filing upserts the one row. `provenance` is a JSON array column; indices on
+   `subject` + `object` make both out- and in-edge lookups O(degree). **Traversal** is `neighbors(id,
+   *, relations=None, hops=1, direction="out"|"in"|"both")` — a **bounded BFS** that returns the
+   *edges crossed* (so the caller gets both the neighbor `edge.object` and the provenance
+   `edge.provenance`); a visited-set makes cyclic graphs (mutual `competes_with`) terminate. The matrix
+   view ($\sum_k A^k$) is the *why*; BFS over the reachable subgraph is the *how*. `build_graph_store`
+   namespaces `data/graph/<embedder-namespace>.db` (parallel to the vector/sparse stores). No NetworkX
+   — the per-ticker graphs are tiny and exact BFS over indexed rows is dependency-free + debuggable.
+
+3. **`graph/extract.py` + `graph/prompts.py` — extraction (A5.1, offline, cost-gated).** Per
+   `(filing, section)`: a **candidate pre-filter** (alias name OR relation cue present) skips groups
+   with nothing to extract → bounds the paid-call set; a `graph_max_extract_calls` ceiling raises
+   `GraphExtractBudgetExceeded` (mirrors `EmbedBudgetExceeded`). One `complete_json` call
+   (`GRAPH_EXTRACT_SYSTEM`, numbered chunks) → typed triples each citing a chunk number + confidence.
+   Each triple is then **validated** (known relation, in-range chunk pointer, `confidence ≥
+   graph_min_confidence`) and **verified** — the **hallucinated-edge guard**: a company→company edge is
+   kept only if the object's surface name (or a resolved-ticker alias) literally appears in the cited
+   chunk (a fabricated supplier won't be); the subject is the filing's own company ("we/our"), so it's
+   implicit; risk/topic objects are paraphrased → confidence-only. Object **company names resolve to
+   tickers** via the **shared** `research/bridge` alias map + `mentioned_tickers` (the same resolver
+   the A4 query-time bridge uses — but applied **once, offline, verified**: §15.9's whole point).
+   `filter_graph_sections` matches the configured sections by **item-code** ("Item 1." → `1`, "Item
+   1A." → `1a`), tolerant of header wording, equality on the code (so "Item 1" ≠ "Item 10"). CLI:
+   `documents extract-graph --ticker/--all` (run-wide budget across tickers; idempotent upsert).
+
+4. **`graph/retriever.py` — `GraphRetriever` (A5.2), a drop-in `RetrievalSystem`.** One `retrieve`:
+   (a) **base** = the wrapped vector/hybrid retriever (the recall floor); (b) **seed** = `where.ticker`
+   else companies named in the query (alias map); (c) **traverse** BFS → the edges give **provenance**
+   chunk_ids (the "who" — chunks that *state* the relationship, materialized via the injected
+   `chunk_fetch` = sparse store's `fetch`) and **neighbor** company tickers; (d) **scope** = a vector
+   retrieval of the *same query* filtered to each neighbor (the "what" — e.g. MU's own risk chunk a
+   NVDA query never surfaces); (e) **fuse** base ⊕ graph rankings by **Reciprocal Rank Fusion** (reuses
+   `rag.hybrid.reciprocal_rank_fusion`), so graph evidence surfaces despite incomparable score scales
+   (cosine vs. confidence vs. BM25), then `top_k`. No seed / no edges → returns the base result
+   verbatim (graph never *loses* recall, only adds). `name = "graph(<base>)"`.
+
+5. **Wiring (A5.3).** `rag/read_path.build_graph_system` wraps `build_retrieval_system` (one shared
+   sparse store feeds both the hybrid base and the provenance `fetch`); graph imports are **lazy** so
+   there's no import cycle (`read_path` → `graph.retriever` → `rag.hybrid`/`rag.retriever`, never back).
+   Surfaces: `rag graph-query -q … [--ticker] [--answer]`; the **A4 loop over graph** via `rag ask
+   --graph` (passes the graph retriever into `answer_multistep`); and the **measurement hook** `rag
+   eval-multistep --graph` (runs the bridging benchmark over graph for the A5.3 verdict).
+
+**Grounding (invariants unchanged).** Traversal only *selects* chunk_ids; those become an ordinary
+`EvidenceSet` handed to the **existing** P7 `answer_question` — citation guard + `NumberGrounding` run
+exactly as before. The extraction verification (step 3) is a *second* grounding layer at construction
+time (the edge analogue of the citation guard). Numbers stay model-only; non-advisory unchanged.
+
+**Config (settings).** `graph_store_dir` · `graph_max_extract_calls` (None = ∞) · `graph_min_confidence`
+(0.5) · `graph_sections` (Item 1 / Item 1A) · `graph_hops` (1) · `graph_max_neighbors` (5) ·
+`graph_per_neighbor_k` (4). Default-OFF: nothing builds a `GraphRetriever` unless a caller asks for
+`build_graph_system` / `--graph`.
+
+**Tests (offline, no LLM/network).** `test_graph_store.py` (upsert idempotency, 1-/2-hop BFS,
+direction, relation filter, cycle termination, provenance, namespacing); `test_graph_extract.py`
+(canned LLM → edges with provenance; `micron→MU` resolution; hallucinated-edge drop; confidence +
+self-edge filtering; budget gate; candidate pre-filter; section item-code filter);
+`test_graph_retriever.py` (fakes: bridging surfaces the neighbor + provenance chunk a base query
+misses; seed-from-query; no-seed/no-edges degrade to base; union dedups; `RetrievalSystem`
+conformance). 25 tests; `make check` green.
+
+**Next (deferred, by design).** The *measured* promotion decision: a local `rag eval-multistep --graph`
+on the real corpus comparing **graph vs. hybrid vs. the A4 entity-bridge** — does traversal earn the
+bridging gain *without* the query-time alias-bridge? If yes, gate the alias-bridge OFF when graph is
+active (it becomes the fallback for entities not yet in the graph). Global GraphRAG (community
+detection/Leiden, §16.5) + Neo4j stay V2+.
+
+### A5 refinements (post-implementation, 2026-06-28) — traversal policy + foreign filers
+
+Building the 16-ticker graph and running a 3-architecture eval (single / single+graph / agentic+graph)
+on a hard bridging question surfaced several real defects in the *retrieval/traversal policy* (the
+graph store + extraction were sound). All fixed with regression tests; `make check` green (761).
+
+- **F1 — unresolved-company node dedup.** `graph/extract._build_edge` now ids an unresolved company
+  by its **core name** (`_normalize_node_id(_core_name(obj))`), so surface variants collapse to one
+  node ("Hon Hai Precision Industry Co." / "… Co., Ltd." → `hon-hai-precision-industry`). Resolved
+  companies keep their ticker id. (Acronym variants like TSMC↔Taiwan Semiconductor still differ —
+  needs an alias entry; out of scope.)
+- **F2 — de-double-count base vs. graph in fusion.** `GraphRetriever.retrieve` excludes ids already
+  in the base ranking from the graph list before RRF. Edge-provenance chunks are usually the seed's
+  *own* base chunks; counting them twice let base dominate and pushed the bridged-neighbor chunks
+  below `top_k`. Now neighbor chunks rank on their own merit.
+- **D1 — relation-balanced neighbor selection.** `_neighbor_tickers` was one confidence-sorted list
+  capped at `max_neighbors`; for a hub like NVDA (many `competes_with` edges at conf 1.0, sorting
+  before `depends_on`) the suppliers got starved. Now it **round-robins across relations**
+  (`_RELATION_PRIORITY`: depends_on first), so suppliers and competitors both get representation.
+- **D3 — provenance flood.** `_traverse` returned provenance-first; a hub's dozens of subject-own
+  provenance chunks flooded the graph ranking and buried the scoped-neighbor payload. Now it returns
+  **scoped-neighbor chunks first** (the "what") and **caps provenance** (`max_provenance`, the "who").
+  This was the actual blocker — neighbors were selected (D1) and retrieved but out-ranked by their
+  own subject's provenance.
+
+**Foreign-filer (20-F) support.** Foreign private issuers (TSMC, ASML, ARM, STM) file the annual
+**20-F**, not a 10-K. Added `"20-F"` to `schemas/documents.DocumentType` and the CLI `_ALLOWED_FORMS`
+(the EDGAR provider was already form-agnostic; download/ingest paths use `ref.form` throughout). 20-F
+has a different item structure (its "Item 1" is *Directors*, not Business), so it must never match the
+10-K section codes: `graph/extract` keeps precise section matching 10-K-only and routes 20-F through
+the **cue-bearing whole-document fallback** (the same path INTC uses), via a widened
+`_GRAPH_DOC_TYPES = ("10-K", "20-F")` candidate pool. `load_universe` now strips inline `#` comments
+so `configs/graph_universe.txt` can annotate each ticker. Foreign filers are downloaded explicitly
+(`download-sec --ticker TSM --forms 20-F`), **not** via the domestic `--all` (whose default forms are
+10-K/10-Q/8-K). Samsung & SK Hynix are **not** SEC filers, so Micron remains the only ingestable
+memory supplier; TSMC/ASML/ARM/STM are in `graph_universe.txt` (foreign section).
+
+**Measured outcome (local, paid eval — not CI).** With TSMC's 20-F ingested, the `NVDA→TSMC` foundry
+bridge completes. On *"what upstream company does NVIDIA depend on to build its accelerators, and what
+does THAT company warn could limit output?"*: single-hybrid cites only an **AMD proxy**; single+graph
+surfaced the wrong neighbor (Micron) and returned *insufficient*; **agentic+graph uniquely cited
+TSMC's own 20-F** (equipment from limited suppliers, ~96% sole-sourced wafers, Taiwan geopolitical
+risk, power shortages). The win comes from the agentic loop **reformulating + scoping to TSM across
+steps** over the graph substrate — neither single-shot path could. (The graph DB, filings, and vector
+store live under the gitignored `data/`; rebuild via `documents extract-graph --all --universe
+configs/graph_universe.txt` + the foreign `download-sec`/`ingest` commands.)

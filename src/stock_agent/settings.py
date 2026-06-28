@@ -189,6 +189,19 @@ class Settings(BaseSettings):
     processed_dir: Path = Path("data/processed")  # parsed text + chunks
     vector_store_dir: Path = Path("data/vectorstore")  # persistent Chroma store
     sparse_store_dir: Path = Path("data/sparse")  # persistent SQLite FTS5 BM25 index (A3 hybrid)
+    graph_store_dir: Path = Path("data/graph")  # persistent SQLite knowledge graph (A5 GraphRAG)
+
+    # GraphRAG (advanced-RAG A5) — a lightweight entity/relationship graph over the corpus,
+    # retrieved by traversal (default-OFF; promoted only on a measured bridging win). Extraction is
+    # offline, batched, and cost-gated; retrieval (traversal) is $0/local.
+    graph_max_extract_calls: int | None = None  # spend ceiling on extraction LLM calls (None = ∞)
+    graph_min_confidence: float = 0.5  # drop extracted edges below this self-reported confidence
+    # Sections extraction reads (10-K Item 1 Business + Item 1A Risk Factors only — where supplier/
+    # competitor/risk relations live). Matched by item-code, tolerant of header wording variants.
+    graph_sections: list[str] = ["Item 1. Business", "Item 1A. Risk Factors"]
+    graph_hops: int = 1  # GraphRetriever traversal depth (1 = direct neighbors; 2 = their edges)
+    graph_max_neighbors: int = 5  # cap neighbor entities expanded into scoped vector searches
+    graph_per_neighbor_k: int = 4  # chunks retrieved per neighbor in the scoped "what" search
 
     @property
     def earnings_priority(self) -> list[str]:

@@ -155,6 +155,29 @@ or a query that depends on a first finding?** If yes → agentic; if no → sing
 
 ---
 
+## Structural questions best served by the graph (A5 `--graph` / `rag graph-query`)
+
+These are **relational/structural** — the answer is a *set of related entities* or needs the
+*bridging hop* an NVDA-flavored query can't surface — so the A5 `GraphRetriever` (traversal ⊕ vector)
+fits even when single-shot looks tempting. Build the graph first: `documents extract-graph --ticker …`.
+The graph supplies the **who** (a stored, ingest-time edge); a scoped vector search supplies the
+**what**; everything is still grounded in the cited filing chunk (theory → [rag_concepts.md §16](rag_concepts.md)).
+
+- "Who are NVDA's key suppliers / foundry partners?" (traverse `depends_on`)
+- "Which companies does NVDA name as competitors?" (traverse `competes_with`)
+- "Does NVDA's main memory supplier disclose the same capacity risk NVDA warns about?" (the
+  `NVDA → MU` bridge done by a stored edge, not a query-time alias scan — §16.7)
+- "Which of NVDA's suppliers also flag U.S.–China export-control risk in *their own* filings?"
+  (1-hop to suppliers, then their `mentions_risk` / `exposed_to` edges)
+- "What companies are exposed to a TSMC disruption?" (inverse `depends_on` traversal — who depends *on* TSM)
+
+How it relates to the loop: graph is a **retrieval substrate**, the loop is a **control strategy**
+(§15.9) — they compose, and `rag ask --graph` runs the A4 loop *over* graph retrieval for deep chains.
+A plain single-entity factoid ("what is NVDA's revenue-recognition policy?") gains nothing from the
+graph — keep it single-shot.
+
+---
+
 ## Using these for evaluation
 
 This catalog is the seed for the A4 **multi-step eval set** (`rag eval-multistep` /

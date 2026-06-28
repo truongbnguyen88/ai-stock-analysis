@@ -14,6 +14,8 @@ knows the stack's shape; ``research/``, the agent tools, and the ``rag query`` C
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from stock_agent.rag.embeddings import build_embedder
 from stock_agent.rag.hybrid import HybridRetriever
 from stock_agent.rag.rerank import RerankingRetriever, build_reranker
@@ -21,6 +23,9 @@ from stock_agent.rag.retriever import RetrievalSystem, Retriever
 from stock_agent.rag.sparse_store import SparseStore, build_sparse_store
 from stock_agent.rag.vector_store import VectorStore, build_vector_store
 from stock_agent.settings import Settings
+
+if TYPE_CHECKING:
+    from stock_agent.graph.store import GraphStore
 
 
 def build_retrieval_system(
@@ -63,6 +68,37 @@ _LATTICE: dict[str, tuple[str, bool]] = {
     "hybrid": ("hybrid", False),
     "hybrid+rerank": ("hybrid", True),
 }
+
+
+def build_graph_system(
+    settings: Settings,
+    *,
+    store: VectorStore | None = None,
+    sparse_store: SparseStore | None = None,
+    graph_store: GraphStore | None = None,
+) -> RetrievalSystem:
+    """Wrap the configured retriever in the A5 ``GraphRetriever`` (graph traversal ⊕ vector).
+
+    The base is the normal ``build_retrieval_system`` stack (dense/hybrid/rerank by config); the
+    GraphRetriever adds graph-traversed evidence and materializes provenance chunks via the sparse
+    store's ``fetch`` (one shared instance feeds both the hybrid base and the provenance lookup).
+    Graph imports are lazy so this stays a pure-wiring add-on (default-OFF: callers opt in by
+    calling this factory instead of ``build_retrieval_system``). ``graph_store`` is for tests.
+    """
+    from stock_agent.graph.retriever import GraphRetriever
+    from stock_agent.graph.store import build_graph_store
+
+    sparse = sparse_store or build_sparse_store(settings)
+    base = build_retrieval_system(settings, store=store, sparse_store=sparse)
+    gstore = graph_store or build_graph_store(settings)
+    return GraphRetriever(
+        gstore,
+        base,
+        sparse.fetch,
+        hops=settings.graph_hops,
+        max_neighbors=settings.graph_max_neighbors,
+        per_neighbor_k=settings.graph_per_neighbor_k,
+    )
 
 
 def build_named_system(

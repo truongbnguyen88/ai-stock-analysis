@@ -153,6 +153,14 @@ def test_load_universe(tmp_path: Path) -> None:
     assert load_universe(p) == ["NVDA", "MSFT", "AMD"]
 
 
+def test_load_universe_strips_inline_comments(tmp_path: Path) -> None:
+    # graph_universe.txt annotates each ticker with an inline sector comment; the loader must
+    # strip everything from '#' onward (full-line and inline) and keep just the symbol.
+    p = tmp_path / "u.txt"
+    p.write_text("# header\nNVDA  # GPUs / AI accelerators\nMU\t# DRAM / HBM\n")
+    assert load_universe(p) == ["NVDA", "MU"]
+
+
 # ---- 9d: date-bounded history + bulk download --------------------------------
 
 
