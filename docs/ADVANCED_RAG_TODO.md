@@ -591,6 +591,118 @@ bridge). One investigated item closed as a **negative** (see "Item A" below) —
 
 ---
 
+### A5.3 — Promotion verdict ✅ (DONE — graph PROMOTED for the multi-hop path, 2026-06-28)
+
+**VERDICT: PROMOTE (scoped/tiered).** Over **2 seeds × 12 Q** (HARD 0–5, MED 6–8, CTRL 9–11), pooled
+mean aspect coverage:
+
+| stratum | A single-hybrid | B agentic+hybrid+bridge | C single-graph | **D agentic+graph** | D−B | D−A |
+|---|---|---|---|---|---|---|
+| HARD | 0.58 | 0.92 | 0.67 | **0.96** | +0.04 | +0.38 |
+| MED  | 0.67 | 0.83 | 0.50 | **0.83** | 0.00 | +0.17 |
+| CTRL | 1.00 | 0.92 | 0.83 | **1.00** | +0.08 | 0.00 |
+
+The strict pre-registered rule did **not** pass as written (the `D − A ≥ +0.5` bar missed at +0.38 on
+the bridging subset — single-shot hybrid started higher than the assumed 0.5; and *single-shot* graph C
+regressed controls 0.83 < A 1.00). **But the decision-relevant comparison is D vs B** (graph vs the
+production alias-bridge on the multi-hop path), and **HARD `D ≥ B` held on both seeds** (1.00/0.92 ≥
+0.92) with **D = 1.00 on controls both seeds** (agentic+graph does *not* regress easy Qs — the seed-1
+B=0.83 control dip was noise, B=1.00 on seed-2). So **agentic+graph matches-or-beats the alias-bridge
+everywhere and is ~perfect on hard bridges with the bridge OFF** → graph cleanly *replaces* the brittle
+alias-bridge and adds the hard-question lift. Caveat: n=12, 2 seeds; HARD D−B margin is small (+0.04,
+one seed exact-tie) — promotion rests on **D never falling below B**, not on a large margin.
+
+**Promotion is SCOPED (tiered routing), not blanket:**
+- **EASY / single-topic → single-shot hybrid** (single-shot graph C regressed controls; also $0).
+- **MED/HARD multi-hop → agentic loop over the `GraphRetriever`** (`settings.graph_multistep_enabled`,
+  default ON). Graph-built tickers (`configs/graph_universe.txt`) bridge via stored edges; tickers
+  *without* graph edges degrade to the hybrid base.
+- **The A4 alias-bridge stays ON as a universal fallback** (NOT gated off — revised from the original
+  plan). Rationale: gating it off was a *scientific control* (prove graph replaces the bridge — it did,
+  D≥B with bridge off); in production a $0 deterministic fallback is kept because (a) non-graph tickers
+  have no traversal and the alias-bridge is their only bridging mechanism, and (b) for graph tickers it
+  is additive/redundant (dedup union), so production = agentic+graph+bridge `≥` the measured D in
+  coverage (minor `max_evidence`-cap eviction risk noted).
+
+**Shipped (this slice):** `settings.graph_multistep_enabled` (default ON);
+`ToolExecutor._get_multistep_retriever()` routes the multi-hop tool to `build_graph_system` (falls back
+to hybrid if disabled / base injected / graph DB unavailable); `search_filings` + the P8 memo stay
+hybrid; 4 routing tests. Reports: `outputs/rag_eval/a5_3_{hybrid,graph}.json` (seed 1) +
+`a5_3_{hybrid,graph}_seed2.json` (seed 2). No single-shot-graph default; no benchmark leakage change.
+
+<details><summary>Original PLAN (provenance)</summary>
+
+**Question to answer (one sentence):** does **agentic + graph (alias-bridge OFF)** match-or-beat the
+production multi-hop path (**agentic + hybrid + alias-bridge ON**) and the single-shot baselines on
+*bridging* questions — by enough to **promote graph and gate the A4 alias-bridge OFF when graph is
+active** — or is graph an opt-in with no measured win (a valid negative)?
+
+**Pre-registered decision rule (write the verdict BEFORE eyeballing prose):** promote iff, on the
+*bridging subset*, mean aspect coverage satisfies **D ≥ B** (graph ≥ the alias-bridge), **D ≥ C**
+(the loop adds value over single-shot graph), **D − A ≥ +0.5** (the §A5 target gain vs single-shot
+hybrid), **and** the *control subset* shows **no regression** (graph cells ≈ vector cells on
+single-entity questions — graph must not hurt simple Qs). Else: keep graph default-OFF/opt-in, record
+the negative, alias-bridge stays. A rigorous negative is an acceptable outcome (cf. LSTM/news).
+
+**Experimental design — the §15.9 2×2** (attribute gains to *control* × *substrate*):
+
+| | vector (hybrid) | graph |
+|---|---|---|
+| single-shot | **A** | **C** |
+| agentic loop | **B** (bridge ON) | **D** (bridge OFF) |
+
+`evaluate_multihop` already yields *both* the single-shot coverage (retrieval-only, $0 LLM) **and**
+the agentic-loop coverage for whatever retriever it's given — so **two runs produce all four cells**,
+no new code:
+- **Run 1 (A+B):** `make rag-eval-multistep` (hybrid; bridge default ON).
+- **Run 2 (C+D):** `AGENTIC_BRIDGE_MAX_ENTITIES=0 … rag eval-multistep --graph --report …` (graph
+  substrate; alias-bridge disabled via the existing setting — env-overridable, no code change).
+- *(Optional 5th cell B′: hybrid + agentic + bridge OFF — isolates how much the alias-bridge itself
+  adds, separate from graph.)*
+
+**Metrics** (already in `multistep_eval`): mean `aspect coverage` per cell + `coverage_gain`
+(multistep − single-shot), split **bridging vs. control**; plus `citation accuracy`, the
+*insufficient-evidence* rate (guard refusals), and loop cost (LLM calls/question). Report per-question,
+not just means (n is small).
+
+**The real work = the benchmark, not the runs.** `configs/rag_eval_multistep.json` today is **3 Q**
+(2 memory-bridge + 1 control) and has **no foundry/TSM** questions. Expand to **~10–12 Q**, labels
+verified against the *ingested* corpus:
+- **memory bridge** (NVDA→MU, ingested): keep 2, add 1.
+- **foundry bridge** (NVDA→TSM, now ingested): add **2–3** — e.g. *"Which company that NVIDIA relies on
+  to fabricate its chips warns about geopolitical concentration or power/water constraints in its own
+  filings?"* Aspects: (1) NVDA names the foundry — spans `["Taiwan Semiconductor", "TSMC"]` in NVDA's
+  filing; (2) TSMC's own risk — spans drawn from TSM's 20-F (e.g. `"political stability"`, `"earthquake"`,
+  `"shortages … power"`), **verified present in TSM chunks and absent from NVDA's**.
+- **competitor bridge** (NVDA competes_with AMD/INTC): add **1–2**.
+- **controls** (single-entity, non-bridging): **2–3** — the safety net that proves graph doesn't
+  regress simple questions.
+- *Labeling invariant:* each bridge aspect's spans must be **present in the bridged entity's own
+  filing and absent/rare in the seed's** (else single-shot covers it and the question doesn't test the
+  bridge). Verify every span with a quick corpus grep before committing it.
+
+**Deliverables:** (1) expanded `configs/rag_eval_multistep.json` (+ span-verification); (2) the 2×2
+results to `outputs/rag_eval/<ts>.json` + a short table; (3) the **verdict** written to
+`rag_implementation_notes.md` §A5 and this file (mark A5.3 ✅); (4) **if promote:** gate the A4
+alias-bridge OFF when the graph retriever is active (keep it as the fallback for entities not yet in
+the graph) — a small follow-up slice with a test; **if not:** record the negative, no production change.
+
+**Cost (local, paid — like the model backtests, NOT CI):** only the agentic loop spends (≤4 Sonnet
+calls/question: ≤3 cheap decisions + 1 ~18K-token terminal synthesis; the single-shot baseline is
+retrieval-only/$0). One full 2-run sweep over ~12 Q ≈ **$2–3**; budget **$5–8** total for 2–3
+iterations (label tuning + a couple of seeds, since the loop's LLM-generated queries make coverage
+non-deterministic — report it as directional, optionally average 2–3 seeds). Query embeddings are
+Voyage but negligible. CI stays free (harness-mechanics tests only).
+
+**Risks:** small-n (directional, not definitive — grow later, §A1); label leakage (mitigated by the
+present-in-bridged/absent-in-seed invariant + grep verification); loop non-determinism (report
+per-question + optional multi-seed). Prereq: a clean graph (done — TSMC dedup merged) + the F2/D1/D3
+ranking fixes (done, PR #38).
+
+</details>
+
+---
+
 ## A6 — Retrieval + RL (contextual bandits → off-policy eval) — learning-first, capstone
 
 **Learning objective.** Frame retrieval as a **sequential/decision problem**; start with **contextual

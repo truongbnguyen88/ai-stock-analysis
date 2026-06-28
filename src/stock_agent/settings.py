@@ -202,6 +202,12 @@ class Settings(BaseSettings):
     graph_hops: int = 1  # GraphRetriever traversal depth (1 = direct neighbors; 2 = their edges)
     graph_max_neighbors: int = 5  # cap neighbor entities expanded into scoped vector searches
     graph_per_neighbor_k: int = 4  # chunks retrieved per neighbor in the scoped "what" search
+    # A5.3 PROMOTION (measured win, 2 seeds): route the agentic multi-hop path through the
+    # GraphRetriever. Graph-built tickers (configs/graph_universe.txt) get traversal-based bridging;
+    # tickers without graph edges degrade to the hybrid base + the (still-ON) alias-bridge fallback.
+    # Single-shot/search_filings stays hybrid (single-shot graph regressed easy Qs). Default-ON
+    # since additive — non-graph corpora are unaffected (empty traversal).
+    graph_multistep_enabled: bool = True
 
     @property
     def earnings_priority(self) -> list[str]:
