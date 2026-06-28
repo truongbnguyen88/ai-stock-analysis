@@ -29,18 +29,21 @@ These resolve the brief's "questions to answer" up front, given *this* codebase:
 3. **Labels stay chunking-invariant.** Keep the P9b **answer-span** labels (+ add `expected_section`
    / `expected_document_type`); **never** `expected_chunk_ids` (they break on every re-chunk, which
    A2/A3 do constantly). The brief's `expected_chunk_ids` schema is explicitly rejected.
-4. **No torch — ever** (the documented macOS torch+lightgbm OpenMP segfault is why the MVP uses
-   fastembed/onnxruntime). Rerankers: **fastembed onnx cross-encoder** (local default) | **Voyage
+4. **No torch in the base path** (the documented macOS torch+lightgbm OpenMP segfault is why the MVP
+   uses fastembed/onnxruntime). Rerankers: **fastembed onnx cross-encoder** (local default) | **Voyage
    `rerank-2` API** (opt-in, key already wired) | **no-op** (fallback). No `sentence-transformers`/torch.
+   **A6 exception (2026-06-28):** torch is allowed ONLY inside the isolated RL trainer (`[rl]` extra,
+   lazy import, OpenMP-isolated from lightgbm); base imports + CI stay torch-free (see §A6 decision 1).
 5. **Sparse backend = SQLite FTS5** (Python stdlib `sqlite3`; persistent; BM25 via `bm25()`; metadata
    filter via SQL `WHERE`) — no new dependency, available in CI for deterministic tests. `rank_bm25`/
    Tantivy rejected (extra dep / Rust). Fusion = **Reciprocal Rank Fusion** (rank-based → no
    cosine-vs-BM25 score-normalization), not weighted score-sum.
 6. **Graph store = SQLite tables + NetworkX in-memory** (Neo4j deferred); extraction = **LLM-assisted,
    offline, cost-gated, with chunk-id provenance on every edge** (so graph answers stay citeable).
-7. **RL = contextual bandits first, not full RL.** MVP = retrieval **logging + off-policy evaluation
-   (IPS / doubly-robust)**; an ε-greedy / LinUCB policy only if OPE shows headroom. Reward = the A1
-   metrics (+ later, user feedback). Full multi-step RL (agentic retrieval as an MDP) is deferred.
+7. **RL = contextual bandits first, THEN full RL** (updated 2026-06-28 — see §A6's two-phase plan).
+   **A6.1** = retrieval **logging + off-policy evaluation (IPS / DR)** + an ε-greedy / LinUCB bandit if
+   OPE shows headroom. **A6.2** = full multi-step RL (the agentic loop as an MDP; **PPO**, offline on a
+   simulator) — no longer deferred. Reward = A1 metrics (+ later, user feedback).
 8. **Citations + numbers never weaken.** Rerank/hybrid don't touch chunks (only order) → citations
    unchanged. Agentic/graph cite via the **union of retrieved chunks** / **edge provenance**; the
    existing citation guard + `NumberGrounding` run on every synthesis call. Numbers stay model-only.
@@ -703,47 +706,205 @@ ranking fixes (done, PR #38).
 
 ---
 
-## A6 — Retrieval + RL (contextual bandits → off-policy eval) — learning-first, capstone
+## A6 — Retrieval + RL — learning-first capstone (TWO phases: bandits → full RL)
 
-**Learning objective.** Frame retrieval as a **sequential/decision problem**; start with **contextual
-bandits** and **off-policy evaluation** (the safe, offline way) — connecting RAG to your RL /
-decision-systems focus.
+> **Scope decision (2026-06-28, user).** Locked decision #7 ("contextual bandits first; full
+> multi-step RL deferred") is now **two explicit phases**: **A6.1 = contextual bandits + off-policy
+> evaluation** (the safe MVP), then **A6.2 = full reinforcement learning for RAG** (the agentic
+> retrieval loop as a sequential MDP). A6.2 is no longer "out of scope" — it is the second deliverable.
+> A6.1 ships and is validated on its own; A6.2 is gated on A6.1's infra **and** a benchmark large
+> enough for sequential RL (see the A6.2 prerequisite gate). Both obey the eval-first / default-OFF /
+> no-torch / offline-only invariants. A rigorous **negative** (adaptive retrieval ≈ the best fixed
+> pipeline) is an acceptable, valuable outcome for either phase (cf. the LSTM/news negatives).
 
-**User value.** A policy that *adapts retrieval per query* (a risk question wants section-filtered
-hybrid; a broad "overview" wants dense + high-k) instead of one fixed config — *if* it beats the
-tuned A2+A3 pipeline. Plus a reusable retrieval-telemetry + OPE harness.
+**Learning objective.** Treat retrieval as a *decision* problem — A6.1: a one-shot **contextual
+bandit** (pick the retrieval config per query); A6.2: a **finite-horizon MDP** (the multi-hop loop —
+*what to retrieve, where to point it, when to stop*) learned end-to-end against a reward oracle.
 
-**Design (non-overengineered, staged).**
-- **Frame as contextual bandits, not full RL** (single-step decision; no long horizon):
-  - **Context (state):** query features — length, has-ticker, question-type (risk/financial/business
-    via a cheap keyword/heuristic classifier), entity count.
-  - **Action:** a discrete retrieval config — `{mode: dense|hybrid, rerank: on|off, top_k, fetch_k,
-    section_filter: on|off}` (a small enumerated set, e.g. 6–10 arms).
-  - **Reward:** the A1 metrics on labeled queries (nDCG / citation-accuracy − latency penalty);
-    later, **implicit user feedback** (citation clicked / answer accepted / question rephrased) +
-    explicit thumbs. Multi-objective → watch **reward hacking** (a high-recall/noisy arm games nDCG
-    but hurts faithfulness — penalize).
-- **MVP = telemetry + off-policy evaluation, NOT online learning:**
-  1. **Retrieval log** (`rag/retrieval_log.py`, `schemas/retrieval_log.py`): per retrieval — context
-     features, chosen action, propensity (if randomized), retrieved chunk_ids + scores, downstream
-     answer + guard outcomes, optional feedback → JSONL under `data/retrieval_logs/` (config-gated
-     `retrieval_logging`, default off).
-  2. **Off-policy evaluation** (`rag/ope.py`): IPS + doubly-robust estimators on logged data —
-     "what reward *would* policy π have gotten?" without deploying it. CLI `rag policy-eval`.
-  3. **Policy** (`rag/policy.py`): a fixed baseline policy + an ε-greedy / LinUCB contextual bandit,
-     trained offline against the eval-harness reward oracle; promoted only if OPE shows headroom over
-     the best fixed pipeline.
-- **Honest framing:** a well-tuned hybrid+rerank pipeline is a strong baseline; "does adaptive
-  retrieval help?" is a real research question with a possible **rigorous negative** (cf. the LSTM/
-  news-feature negatives). The logging + OPE infra is valuable regardless.
+**What already exists (do NOT rebuild — wire into these):**
+- **Action executor:** `rag/read_path.build_named_system(name, settings)` over
+  `LATTICE_SYSTEMS = (dense, reranked, hybrid, hybrid+rerank)` **+ `build_graph_system`** — explicitly
+  designed as the A6 action-space seed. A policy's action → a `RetrievalSystem` via these factories.
+- **Reward oracle:** `rag/eval.py::evaluate_query` (per-query `hit@k` / `MRR` / **`nDCG@k`** /
+  `precision`/`recall` + `citation_accuracy` over `LabeledQuery` answer-span labels) for single-shot;
+  `research/multistep_eval.py` (**aspect coverage** of the accumulated union) for multi-hop. These are
+  the `r` in every estimator below — no human labels needed to bootstrap.
+- **Benchmarks:** `configs/rag_eval_queries.json` (single-shot `LabeledQuery`) +
+  `configs/rag_eval_multistep.json` (12 multi-hop Q, HARD/MED/CTRL strata).
+- **Context-feature sources:** `agent/router.py` (route/domain taxonomy), `research/bridge.is_bridging`,
+  `schemas/` query metadata (ticker, length). Featurizer is a *pure* function over these.
+- **Discipline to mirror:** `backtesting/` (train/test split, seed logging, `outputs/experiments/<run_id>/`,
+  reward-hacking/baseline guardrails, report dispersion) — RL eval is "backtesting for retrieval policies."
 
-**Tests** (offline): log round-trip; action-space enumeration; **IPS/DR golden values** (hand-computed
-on a tiny logged dataset); fixed + ε-greedy policies deterministic under seed; reward computed from
-the eval harness; reward-hacking sentinel (a degenerate arm scores low on the composite reward).
+---
 
-**Risks.** Reward design / reward hacking → multi-objective + held-out check. Sparse feedback →
-bootstrap reward from the A1 benchmark first. Over-engineering → bandits + OPE only; defer deep/
-multi-step RL. Distribution shift (logged policy ≠ eval policy) → DR estimator + propensity logging.
+### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first)
+
+**Frame.** Single-step decision. **Context** `x` = featurized query (length; has-ticker; entity count;
+question-type ∈ {risk, financial, business, overview, bridging} via a cheap keyword/router heuristic;
+`is_bridging`). **Action** `a` = a named retrieval config (the `LATTICE_SYSTEMS` ∪ {graph} arms; later
+extended with `top_k` / `section_filter` variants — keep ≤ ~8–10 arms). **Reward** `r` = composite from
+the oracle:
+
+$$r \;=\; \underbrace{\text{nDCG@}k}_{\text{quality}} \;-\; \lambda_{c}\,\big(\text{LLM calls}+\text{latency}\big) \;-\; \lambda_{f}\,\big(\text{citation-guard failures}\big)$$
+
+(coverage replaces `nDCG@k` for multi-hop queries). The cost/faithfulness penalties are the
+**reward-hacking** guard: a noisy high-recall arm that games quality but spends tokens or breaks
+grounding is penalized. `λ_c`, `λ_f` are config (start small; sensitivity-test).
+
+**Build steps (each a green vertical slice; default-OFF; deterministic tests):**
+- **A6.1a — Telemetry.** `schemas/retrieval_log.py` (`RetrievalLogEntry`: context features, chosen
+  action, **propensity** `μ(a|x)` if randomized, retrieved `chunk_id`s + scores, downstream answer +
+  guard outcomes, optional reward/feedback, seed, timestamp) + `rag/retrieval_log.py` (append-only
+  JSONL writer under `data/retrieval_logs/`, config-gated `settings.retrieval_logging=False`). The
+  read path logs **only when enabled**; byte-identical when off. *Tests:* round-trip; off → no file.
+- **A6.1b — Featurizer.** `rag/policy_features.py` — pure `query → ContextVector` (numpy). *Tests:*
+  golden vectors for a risk/financial/bridging/overview query; stable ordering.
+- **A6.1c — Reward oracle adapter.** `rag/reward.py` — wrap `evaluate_query` / `multistep_eval` into
+  `reward(x, a) -> float` (the composite above). Used both to *label logs offline* and to *train*. This
+  lets us synthesize a logged dataset by running each arm over the labeled benchmark (a uniform-random
+  logging policy `μ`, so propensities are known and OPE is exact). *Tests:* composite math; the
+  reward-hacking sentinel arm scores low.
+- **A6.1d — OPE.** `rag/ope.py` — **IPS**, **self-normalized IPS (SNIPS)**, **doubly-robust (DR)**
+  estimators with a ridge reward-model `q̂(x,a)` for the DR control variate, + bootstrap CIs. CLI
+  `rag policy-eval`. *Tests:* **hand-computed IPS/SNIPS/DR golden values** on a tiny 3-sample logged
+  set; DR = IPS when `q̂≡0`; SNIPS ∈ convex hull of rewards.
+
+$$\hat V_{\text{IPS}}(\pi)=\frac1N\sum_i \frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}\,r_i,\qquad \hat V_{\text{DR}}(\pi)=\frac1N\sum_i\Big[\hat q(x_i,\pi)+\frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}\big(r_i-\hat q(x_i,a_i)\big)\Big]$$
+
+- **A6.1e — Policy.** `rag/policy.py` — a `Policy` Protocol (`act(x) -> (action, propensity)`) with
+  `FixedPolicy` (always the promoted system = the baseline to beat), **ε-greedy**, and **LinUCB**
+  (linear contextual bandit). Trained **offline** against A6.1c on a *train* split. *Tests:* fixed +
+  ε-greedy deterministic under seed; LinUCB UCB math on a 2-arm toy; train/test split disjoint.
+- **A6.1f — Gated integration + verdict.** A `PolicyRetriever` (or a read-path hook) that asks the
+  policy for a per-query named system, **default-OFF** (`settings.adaptive_retrieval=False`). **Promote
+  only if** OPE (DR, held-out queries) shows the bandit beats the best fixed pipeline beyond its
+  bootstrap CI. Record in `validations_results.md` (the A5.3 template) + `rag_implementation_notes.md`.
+
+**A6.1 deliverable:** logging + OPE + bandit infra, a `rag policy-eval` number on held-out queries, and
+a promote/keep-opt-in verdict. Likely outcome to pre-register: the tuned hybrid(+graph for multi-hop)
+pipeline is strong, so a **modest win or a rigorous negative** — both ship the reusable infra.
+
+---
+
+### A6.2 — Full reinforcement learning for RAG (the agentic loop as an MDP)
+
+**Idea.** A6.1 optimizes a *single* retrieval choice. A6.2 learns the **whole multi-hop trajectory** —
+generalizing the A4 ReAct loop (whose policy is currently a fixed LLM prompt) and the A5 entity-bridge
+(a fixed heuristic) into **one learned sequential policy**. This is the genuine RL phase.
+
+**MDP formalization** (finite horizon `T = agentic_max_steps`):
+- **State** `s_t` = featurized (query features ⊕ step index `t` ⊕ budget remaining ⊕ evidence summary:
+  chunk count, distinct tickers/sections covered, marginal-coverage of the last action, set of entities
+  *named in the union but not yet retrieved*). Pure function of the trajectory so far → numpy vector.
+- **Action** `a_t ∈ {STOP} ∪ {(config c, scope σ)}` where `c ∈ LATTICE ∪ {graph}` and
+  `σ ∈ {self-ticker, discovered-entity_j, none}`. One action jointly chooses **which retriever**, **where
+  to point it** (the bridge decision, now learned), and **whether to stop** (the reflective stop, now
+  learned). This strictly contains A6.1 (config) and A4/A5 (scope + stop).
+- **Transition** `P(s_{t+1}|s_t,a_t)`: deterministic given the retrieval result (corpus is fixed). To
+  keep rollouts $0 and reproducible, query text per `(σ, c)` comes from a **templated generator** (no
+  LLM in the loop); an **LLM-in-the-loop** variant (bounded cost) is a later ablation, not the default.
+- **Reward**: terminal `R = coverage(final union) − λ_c·(steps + LLM calls) − λ_f·(guard failures)`;
+  optional **potential-based shaping** `r_t = γ·Φ(s_{t+1}) − Φ(s_t)` with `Φ` = current union coverage
+  (Ng-Harada — preserves the optimal policy, densifies the signal). Objective:
+
+$$\max_\theta\; \mathbb{E}_{\tau\sim\pi_\theta}\Big[\textstyle\sum_{t=0}^{T}\gamma^{t} r_t\Big]$$
+
+- **Environment** `rag/rl/env.py` — a Gym-style `reset()/step(a)` RAG-retrieval MDP over the labeled
+  multi-hop benchmark, using A6.1c as the reward. **This simulator is the key enabler**: it yields
+  unlimited, deterministic, $0 rollouts (templated queries), so RL is tractable without live LLM cost.
+
+**Algorithm ladder (RESOLVED — PPO primary; backend separate from algorithm).** *Backend* (the autodiff
+library: numpy / JAX / **torch**) and *algorithm* (the RL update: REINFORCE / **PPO** / DQN / CQL) are
+orthogonal — any algorithm can be written in any backend. We have a **simulator** (the templated $0
+rollout env), and on-policy methods want exactly that, so **PPO is the primary algorithm**. Staged so
+each rung de-risks the next:
+1. **Behavior cloning (BC, supervised warm-start).** Imitate the current A4 ReAct loop + A5 bridge
+   decisions from logged trajectories → a sane initial policy. No RL yet; pure cross-entropy on
+   (state → expert action). Gives PPO a good init and a non-trivial baseline.
+2. **REINFORCE with a learned baseline** (numpy **linear-softmax** policy, manual gradients). The
+   always-available, **CI-tested default** and a correctness sanity-check for the PG machinery (PPO is a
+   stabilized REINFORCE, so this de-risks the PPO impl). Advantage `G_t − b(s_t)`:
+
+$$\nabla_\theta J(\theta)=\mathbb{E}_{\tau\sim\pi_\theta}\Big[\textstyle\sum_t \nabla_\theta\log\pi_\theta(a_t\mid s_t)\,\big(G_t-b(s_t)\big)\Big]$$
+
+3. **PPO (the main learner)** — actor-critic policy gradient with the **clipped surrogate** objective
+   (prevents destructively large updates; the RLHF/agent-RL workhorse). MLP policy + value head on the
+   `s_t` features, trained on-policy over the $0 simulator. Backend = **torch** (isolated `[rl]` extra,
+   lazy-imported, OpenMP-isolated from lightgbm + a day-1 smoke test) or **JAX** if the isolation chafes:
+
+$$L^{\text{CLIP}}(\theta)=\mathbb{E}_t\Big[\min\big(\rho_t(\theta)\,\hat A_t,\;\operatorname{clip}(\rho_t(\theta),1-\epsilon,1+\epsilon)\,\hat A_t\big)\Big],\quad \rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}$$
+
+4. **(Optional) GRPO-style** group-relative advantage — sample `G` trajectories per query, center the
+   reward by the per-query group mean (no learned critic); fits a tiny-data regime, a clean tie to
+   modern RL-for-LLM.
+5. **CQL / FQI (offline-from-logs branch only).** The value-based (DQN-family) path, reserved for
+   learning purely from **logged trajectories with no simulator** (decision #5's "door open"):
+   **Fitted Q-Iteration** with a linear / lightgbm `Q(s,a)` + a **Conservative Q-Learning** pessimism
+   penalty for offline OOD-action overestimation. Not vanilla DQN (too unstable on small data); only
+   used if we ever drop the simulator for real logged feedback.
+
+*Why not DQN as primary:* value-based off-policy shines when you can **only** learn from a fixed logged
+dataset — moot here (we built a simulator), and it's finicky/overestimating on small data. On-policy PPO
+over the simulator is more stable and is the better learning vehicle for this track.
+
+**Evaluation protocol (mirror `backtesting` §10):** train/test **split of the query benchmark**; report
+the learned policy vs four baselines — (i) best fixed pipeline (A6.1f), (ii) the **A6.1 bandit**, (iii)
+the **A4 hand-prompted ReAct loop** (the A5.3 B/D cells), (iv) a random-action policy. Metrics: mean
+return, coverage, **cost (steps + LLM calls)**, train-vs-held-out gap (overfit check), seed-averaged
+(loop non-determinism), reward-hacking sentinel. OPE (A6.1d) for any logged-trajectory component.
+
+**A6.2 prerequisite GATE (met by A6.0).** Sequential RL needs state-distribution coverage the current
+**12-query** multi-hop benchmark cannot provide → **A6.0 grows `rag_eval_multistep.json` to ~100
+corpus-verified questions** first (before A6.1, since it helps both). Without this, A6.2 overfits and
+the honest result is "insufficient data for sequential RL" — a valid finding, but A6.0 makes the attempt
+meaningful.
+
+**A6.2 deliverable:** `rag/rl/{env,policy,train}.py`, a `rag rl-train` / `rag rl-eval` CLI, a held-out
+comparison table in `validations_results.md`, and a verdict: does a *learned* retrieval policy beat the
+hand-built ReAct loop + the bandit? (Pre-registered: plausibly a **rigorous negative** on a small
+action/state space — the hand-prompted loop is a strong baseline — but the env + RL harness are the
+durable, reusable artifact and the core learning goal.)
+
+---
+
+### A6 — decisions RESOLVED (2026-06-28, user-confirmed; build to these)
+
+1. **RL algorithm + backend.** **Algorithm = PPO** (primary), staged **BC warm-start → REINFORCE/linear
+   baseline → PPO → (optional GRPO)**, with **CQL/FQI reserved for the offline-from-logs branch only**.
+   **Backend: torch is ALLOWED** for the PPO MLP — but as an **isolated optional `[rl]` extra**,
+   lazy-imported, kept out-of-process / OpenMP-isolated from lightgbm (`KMP_DUPLICATE_LIB_OK` + a day-1
+   segfault smoke test); the **numpy linear-softmax** policy stays the always-available, CI-tested
+   default (CI remains torch-free + deterministic). JAX is the fallback if torch isolation is painful.
+   *(This supersedes locked-decision #4's blanket "no torch" — torch is now permitted ONLY in the
+   isolated RL trainer, never in the base import path / rerankers / graph.)*
+2. **Benchmark size — GROW TO ~100 Q, before A6.1** (helps both phases): new sub-phase **A6.0** —
+   graph-mined bridge pairs × templated question forms, **auto-verified** with the A5.3
+   span-isolation probe (present-in-target / absent-in-seed), mixed strata + types. Mostly $0.
+3. **A6.2 rollout realism — train on templated $0 rollouts; VALIDATE held-out with real
+   LLM-in-the-loop** (small paid eval, A5.3-style). Accepts the **sim-to-real gap** as a measured
+   quantity (the held-out LLM eval reports it) rather than a blocker.
+4. **Reward = weighted `nDCG` (single-shot ranking quality) + `coverage` (multi-hop union completeness)
+   − `λ_c`·cost, each metric active where its labels exist; faithfulness (citation/number guard) is a
+   HARD CONSTRAINT** — any guard-failing trajectory is floored to reward 0 (prevents reward-hacking by
+   construction; the guard already refuses ungrounded answers, so this just makes it explicit).
+5. **Offline-only learning** (logging + OPE + simulator; deploy a FROZEN policy). The telemetry log
+   (A6.1a) **keeps the door open** for future **batch** retrains on accumulated real feedback (like the
+   monthly model cadence) — but **no live, online-updating policy** in this track.
+
+**Tests (both phases, offline/deterministic):** log round-trip + off-is-noop; featurizer goldens;
+**IPS/SNIPS/DR hand-computed goldens**; bandit (ε-greedy/LinUCB) seeded determinism;
+env `reset/step` determinism + horizon/budget termination; reward-hacking sentinel; BC reduces loss on
+expert trajectories; **REINFORCE/PPO converge on a 2-arm / 2-step toy** with a known optimum (PPO via
+the isolated `[rl]` extra, skipped if torch absent — the numpy REINFORCE path always runs in CI);
+train/test query split disjoint. No live model/LLM/network in CI; real benchmark runs are local.
+
+**Risks.** (a) **Tiny data** — the dominant risk for A6.2; mitigated by the benchmark gate + the
+simulator + overfit reporting. (b) **Reward hacking** — composite reward + held-out + sentinel.
+(c) **Distribution shift** (logging `μ` ≠ target `π`) — DR + propensity logging + CQL pessimism.
+(d) **Over-engineering** — A6.1 ships independently; A6.2 starts linear and escalates only on evidence.
+(e) **Strong baseline** — the tuned hybrid/graph + ReAct loop may already be near-optimal → plan for a
+rigorous negative.
 
 ---
 
@@ -760,8 +921,9 @@ multi-step RL. Distribution shift (logged policy ≠ eval policy) → DR estimat
 ## Out of scope (V2+)
 
 Neo4j / a hosted graph DB; transcripts + investor decks in the graph; learned dense fine-tuning;
-multi-vector / ColBERT late-interaction; full multi-step deep RL; cross-encoder distillation;
-streaming/online index updates beyond the quarterly refresh.
+multi-vector / ColBERT late-interaction; cross-encoder distillation; streaming/online index updates
+beyond the quarterly refresh; **online (live-updating) RL policies** (A6 is offline-only — full
+multi-step RL is now IN scope as A6.2, but trained offline against the simulator, deployed frozen).
 
 ## Suggested `CLAUDE.md` additions (project working agreement)
 
@@ -776,7 +938,9 @@ Add an "Advanced RAG" subsection under the orientation/invariants:
   CI tests the harness deterministically, the real benchmark is a local run.
 - **Grounding is non-negotiable across steps:** rerank/hybrid don't touch chunks; agentic/graph cite
   via the union/edge-provenance; the citation guard + `NumberGrounding` run on every synthesis call.
-- **No torch:** rerankers/graph use onnx (fastembed) or APIs (Voyage); never `sentence-transformers`/torch.
+- **No torch in the base path:** rerankers/graph use onnx (fastembed) or APIs (Voyage); never
+  `sentence-transformers`/torch. **Exception (A6 only):** torch is permitted in the **isolated RL
+  trainer** (`[rl]` extra, lazy-imported, OpenMP-isolated from lightgbm); CI stays torch-free.
 
 ## Recommendation — what to build first
 
