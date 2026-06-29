@@ -73,6 +73,7 @@ from stock_agent.research.multistep_eval import (
     evaluate_multihop_set,
     format_multihop_markdown,
 )
+from stock_agent.research.multistep_gen import generate_multihop, split_multihop
 from stock_agent.research.synthesis import answer_question
 from stock_agent.schemas.documents import DocumentChunk, DocumentType
 from stock_agent.schemas.retrieval import ChunkFilter
@@ -1407,3 +1408,74 @@ def rag_eval_multistep(
             encoding="utf-8",
         )
         typer.echo(f"Wrote {len(reports)} report(s) to {report}")
+
+
+@rag_app.command("gen-multistep")
+def rag_gen_multistep(
+    universe: Annotated[
+        Path, typer.Option("--universe", help="Graph universe file (one ticker per line)")
+    ] = Path("configs/graph_universe.txt"),
+    out: Annotated[
+        Path, typer.Option("--out", "-o", help="Where to write the generated benchmark JSON")
+    ] = Path("configs/rag_eval_multistep_generated.json"),
+    target_count: Annotated[
+        int | None,
+        typer.Option("--target-count", help="Cap on emitted questions (a CAP, never a filler)"),
+    ] = None,
+    per_seed_relation_cap: Annotated[
+        int | None,
+        typer.Option("--per-seed-cap", help="Max questions per (seed, relation) — diversity guard"),
+    ] = None,
+    seed: Annotated[
+        int, typer.Option("--seed", help="RNG seed (target-sampling reproducibility)")
+    ] = 0,
+    supply_report: Annotated[
+        Path, typer.Option("--supply-report", help="Where to write the D1 supply report JSON")
+    ] = Path("outputs/rag_eval/multistep_supply.json"),
+    split_test_frac: Annotated[
+        float | None,
+        typer.Option("--split-test-frac", help="Also write group-wise train/test splits (D2)"),
+    ] = None,
+) -> None:
+    """Generate the A6.0 multi-hop benchmark from the A5 graph + ingested corpus (offline, $0).
+
+    Mines graph-verified bridge pairs × topics into stratified, corpus-checked `MultiHopQuery` rows
+    (the A6 episode catalog). Needs the graph (`documents extract-graph`) and the sparse corpus
+    ingested; no LLM, no network. Prints the **D1 supply report** (count is an output = clean
+    supply; `--target-count` caps, never dilutes). `--split-test-frac` also writes the **D2** group
+    train/test splits so a pair's variants never straddle the fold.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    if not universe.exists():
+        typer.echo(f"Universe file not found: {universe}")
+        raise typer.Exit(code=1)
+    graph = build_graph_store(settings)
+    sparse = build_sparse_store(settings)
+    queries, report = generate_multihop(
+        graph,
+        sparse,
+        load_alias_map(),
+        seeds=load_universe(universe),
+        seed=seed,
+        target_count=target_count,
+        per_seed_relation_cap=per_seed_relation_cap,
+    )
+    typer.echo(report.render())
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps([q.model_dump(mode="json") for q in queries], indent=2), encoding="utf-8"
+    )
+    supply_report.parent.mkdir(parents=True, exist_ok=True)
+    supply_report.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    typer.echo(f"\nWrote {len(queries)} questions to {out}; supply report to {supply_report}")
+
+    if split_test_frac is not None:
+        train, test = split_multihop(queries, test_frac=split_test_frac, seed=seed)
+        for name, rows in (("train", train), ("test", test)):
+            path = out.with_suffix(f".{name}.json")
+            path.write_text(
+                json.dumps([q.model_dump(mode="json") for q in rows], indent=2), encoding="utf-8"
+            )
+        typer.echo(f"Group-wise split (D2): {len(train)} train / {len(test)} test written.")

@@ -22,10 +22,10 @@ from __future__ import annotations
 import math
 import re
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import date as Date
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from stock_agent.schemas.documents import DocumentChunk
 from stock_agent.schemas.retrieval import ChunkFilter
@@ -68,6 +68,14 @@ class SparseStore(Protocol):
 
     def existing_ids(self, ids: Sequence[str]) -> set[str]:
         """Subset of ``ids`` already indexed (incremental refresh)."""
+        ...
+
+    def iter_chunks(self, where: ChunkFilter | None = None) -> Iterator[DocumentChunk]:
+        """Yield **every** stored chunk matching ``where`` (no ranking, no MATCH).
+
+        An exhaustive scan, used **offline only** (the A6.0 span-isolation probe needs every chunk
+        of a ticker to test absent-in-seed, not a ranked top-k). Not on the retrieval hot path.
+        """
         ...
 
     def count(self) -> int:
@@ -189,6 +197,23 @@ class Fts5SparseStore:
         ).fetchall()
         return [(str(cid), float(score)) for cid, score in rows]
 
+    @staticmethod
+    def _row_to_chunk(row: Sequence[Any]) -> DocumentChunk:
+        """Build a ``DocumentChunk`` from a ``(*_META_COLS, text)`` row (shared by fetch/iter)."""
+        md = dict(zip(_META_COLS, row[:-1], strict=True))
+        return DocumentChunk(
+            chunk_id=str(md["chunk_id"]),
+            document_id=str(md["document_id"]),
+            chunk_index=int(md["chunk_index"]),
+            text=str(row[-1]),
+            ticker=str(md["ticker"]),
+            document_type=str(md["document_type"]),
+            source=str(md["source"]),
+            source_url=str(md["source_url"]),
+            filing_date=Date.fromisoformat(str(md["filing_date"])),
+            section=str(md["section"]) if md["section"] is not None else None,
+        )
+
     def fetch(self, ids: Sequence[str]) -> dict[str, DocumentChunk]:
         if not ids:
             return {}
@@ -196,22 +221,17 @@ class Fts5SparseStore:
         rows = self._con.execute(
             f"SELECT {', '.join(_META_COLS)}, text FROM chunks WHERE chunk_id IN ({qs})", list(ids)
         ).fetchall()
-        out: dict[str, DocumentChunk] = {}
+        chunks = [self._row_to_chunk(row) for row in rows]
+        return {c.chunk_id: c for c in chunks}
+
+    def iter_chunks(self, where: ChunkFilter | None = None) -> Iterator[DocumentChunk]:
+        where_sql, params = self._where_sql(where)
+        # No MATCH: a plain filtered scan (WHERE 1=1 absorbs the " AND …" prefix from _where_sql).
+        rows = self._con.execute(
+            f"SELECT {', '.join(_META_COLS)}, text FROM chunks WHERE 1=1{where_sql}", params
+        ).fetchall()
         for row in rows:
-            md = dict(zip(_META_COLS, row[:-1], strict=True))
-            out[str(md["chunk_id"])] = DocumentChunk(
-                chunk_id=str(md["chunk_id"]),
-                document_id=str(md["document_id"]),
-                chunk_index=int(md["chunk_index"]),
-                text=str(row[-1]),
-                ticker=str(md["ticker"]),
-                document_type=str(md["document_type"]),
-                source=str(md["source"]),
-                source_url=str(md["source_url"]),
-                filing_date=Date.fromisoformat(str(md["filing_date"])),
-                section=str(md["section"]) if md["section"] is not None else None,
-            )
-        return out
+            yield self._row_to_chunk(row)
 
     def existing_ids(self, ids: Sequence[str]) -> set[str]:
         if not ids:
@@ -292,6 +312,11 @@ class InMemoryBM25Store:
 
     def fetch(self, ids: Sequence[str]) -> dict[str, DocumentChunk]:
         return {cid: self._chunks[cid] for cid in ids if cid in self._chunks}
+
+    def iter_chunks(self, where: ChunkFilter | None = None) -> Iterator[DocumentChunk]:
+        for chunk in self._chunks.values():
+            if _passes(chunk, where):
+                yield chunk
 
     def existing_ids(self, ids: Sequence[str]) -> set[str]:
         return {cid for cid in ids if cid in self._chunks}

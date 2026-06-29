@@ -1386,3 +1386,64 @@ fallback. **Caveat:** n=12, 2 seeds, loop non-determinism — the win is *direct
 never falling below B rather than a large margin; revisit with a grown benchmark (§A1) before any
 stronger claim. **Next:** A6 (retrieval RL) — the per-query selector that would *learn* this routing
 (EASY→hybrid, MED/HARD→graph) instead of the hand-set `graph_multistep_enabled` switch.
+
+## A6.0 — Grow the multi-hop benchmark (`research/multistep_templates.py`, `research/multistep_gen.py`, `rag gen-multistep`) ✅
+
+**Role.** Build the **episode catalog** for the A6 retrieval-RL phases: grow the 12-Q hand-written
+multi-hop set into a large, **stratified, corpus-verified** benchmark *mined from the A5 graph* — no
+LLM, no network, $0. Each row is one episode/task; the MDP state `s_0` is derived later (A6.1b
+featurizer), not here. The 20-ticker graph yields **212 clean questions (HARD 120 / MED 30 / CTRL 62)**.
+
+**Key files.**
+- `research/multistep_eval.py` — added `spans_present(texts, spans)` (the single normalized-substring
+  matcher) and refactored `_aspect_covered` to call it, so the generator's probe and the eval metric
+  are *literally the same function* (probe == metric). Extended `MultiHopQuery` with optional
+  `stratum`/`relation`/`qtype`/`seed`/`target`/`group_id`/`generated` (defaults → the hand-written set
+  still validates).
+- `research/multistep_templates.py` — pure `fill_bridge(...)` (2-aspect bridge Q) / `fill_control(...)`
+  (1-aspect single-entity Q) → `FilledQuestion`. Generic phrasing per relation (`depends_on` /
+  `competes_with`); no I/O.
+- `rag/sparse_store.py` — read-only `iter_chunks(where)` on the `SparseStore` Protocol + both backends
+  (Fts5 `SELECT … WHERE 1=1{where}`; InMemory filter). Exhaustive scan (no MATCH/top-k) — the
+  absent-in-seed probe needs *every* chunk of a ticker. Offline-only; factored a shared `_row_to_chunk`.
+- `research/multistep_gen.py` — `classify_stratum` (the span-isolation probe), `split_multihop` (D2),
+  `generate_multihop` + `SupplyReport` (D1).
+- `cli/app.py` `rag gen-multistep` + `make rag-gen-multistep`.
+
+**How generation works (step by step).**
+1. **Mine.** For each seed ticker: `graph.neighbors(seed, relations=[depends_on, competes_with])` →
+   bridge edges; for each target, `graph.neighbors(target, relations=[mentions_risk, exposed_to])` →
+   topic edges; `get_entity(topic).name` = the A2 span. Two `neighbors` calls per seed — **no new
+   graph-store method**.
+2. **Label from verified edges.** A1 spans = the target's surfaces (`get_entity(target).name` ∪
+   `alias_map[target]`); A2 span = the topic node name. Present-in-seed (A1) / present-in-target (A2)
+   are guaranteed by the A5.1 hallucinated-edge guard, so only absent-in-seed needs checking.
+3. **Probe (the lynchpin).** `classify_stratum` scans the seed's and target's chunks via `iter_chunks`
+   and `spans_present`: A2 absent-in-target → discard (unanswerable); absent-in-seed → **HARD**;
+   present-in-both → **MED**. CTRL questions are the seed's *own* topics (single-hop control), verified
+   present-in-seed.
+4. **Dedup / filter.** Key `(seed, relation, target, normalized-topic)`; a specificity stoplist drops
+   over-generic topics; `min_topic_chars` drops tiny ones.
+5. **D1 supply (count = output).** `SupplyReport.distinct` = clean supply per stratum *before* any cap
+   or target sampling; `--target-count` is a cap that **never dilutes** (caps at clean supply); a
+   `--per-seed-cap` diversity guard is available. The run reported `discarded: absent-in-target=3097,
+   duplicate=6792` (dedup working) and `distinct == emitted` (no cap requested → emit all clean).
+6. **D2 split.** `split_multihop` partitions **by `group_id`** (the bridge pair `frozenset{seed,target}`,
+   or the seed for CTRL), so a pair's near-duplicate variants never straddle train/test — anti-leakage /
+   anti-pseudo-replication. Verified: 149 train / 63 test, **0 group overlap**.
+
+**How A6.1/A6.2 use it.** The committed `configs/rag_eval_multistep_generated.json` is the context/episode
+source; `split_multihop` provides the group-wise train/test fold the bandit (A6.1f) and RL (A6.2) eval
+protocols must use (never a row-wise split). The reward oracle is the *same* `coverage`/`spans_present`
+the labels were built against.
+
+**Decisions.** (a) Generated set is a **new file**; the curated 12-Q `rag_eval_multistep.json` stays
+untouched (A4/A5.3 reproducibility). (b) `competes_with` dominates HARD (100/120) because the graph has
+more competitor than dependency edges — rebalance later with `--per-seed-cap` if A6.1/A6.2 want it.
+(c) Tests are CI-deterministic (fakes/temp stores, no graph DB/corpus/model); the real 212-Q generation
+is a **local** run (like the model backtests).
+
+**Tests.** `test_multistep_templates.py` (golden fills, schema back-compat, `spans_present`);
+`test_multistep_gen.py` (probe HARD/MED/discard, group split disjointness + determinism, generator
+strata/dedup/cap/target-sampling/determinism over a temp graph + InMemory corpus);
+`test_rag_sparse_store.py` (parametrized `iter_chunks` exhaustive + filtered).
