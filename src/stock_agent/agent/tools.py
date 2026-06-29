@@ -607,6 +607,7 @@ class ToolExecutor:
         *,
         registry: ProviderRegistry | None = None,
         llm: TextLLM | None = None,
+        retriever: RetrievalSystem | None = None,
     ) -> None:
         self._settings = settings
         self._registry = registry or build_default_registry(settings)
@@ -614,9 +615,14 @@ class ToolExecutor:
         # Per-session memoization of backtests so run_backtest + get_calibration on
         # the same (ticker, horizon, model) reuse one computation instead of two.
         self._backtest_cache: dict[tuple[str, int, str], BacktestResult] = {}
-        # Lazily-built, session-memoized RAG retriever (embedder + vector store) so
-        # repeated filing questions / the research summary don't reload the embedding
-        # model and re-open the store each call. Tests inject a fake by setting it.
+        # Explicit base-retriever override (tests / advanced wiring): when set, BOTH the single-shot
+        # and multi-hop paths reuse it directly — no embedder is loaded, no graph DB opened. This is
+        # DISTINCT from the lazy `_retriever` cache below: the override means "use exactly this",
+        # whereas a filled cache only means "single-shot already ran this session" and must NOT
+        # divert the multi-hop path off graph (the A5.3-promoted routing).
+        self._injected_base: RetrievalSystem | None = retriever
+        # Lazily-built, session-memoized single-shot RAG retriever (hybrid by default) so repeated
+        # filing questions / the research summary don't reload the embedder or re-open the store.
         self._retriever: RetrievalSystem | None = None
         # A5.3: session-memoized GraphRetriever for the multi-hop path (graph traversal ⊕ hybrid).
         self._graph_retriever: RetrievalSystem | None = None
@@ -627,6 +633,8 @@ class ToolExecutor:
         Default-OFF rerank: ``build_retrieval_system`` returns the plain dense ``Retriever`` unless
         ``settings.rerank_provider`` is set, in which case it wraps it in a ``RerankingRetriever``.
         """
+        if self._injected_base is not None:  # explicit override wins (tests / wiring)
+            return self._injected_base
         if self._retriever is None:
             store = build_vector_store(self._settings)
             self._retriever = build_retrieval_system(self._settings, store=store)
@@ -655,14 +663,19 @@ class ToolExecutor:
         plain hybrid retriever (single-shot graph regressed easy questions). Falls back to hybrid
         if ``graph_multistep_enabled`` is off, a base retriever was injected (tests), or
         graph wiring is unavailable — so graph is a safe enhancement, never a hard dependency.
+
+        Routing keys off ``_injected_base`` (the explicit override), **not** the lazy ``_retriever``
+        single-shot cache: a prior ``search_filings`` / ``research_summary`` in the same session
+        fills that cache, and reusing it here would silently divert multi-hop OFF graph (the A5.3
+        regression this method exists to avoid). So graph activation is now call-order-independent.
         """
+        # An explicit base override (tests / wiring) takes precedence — reuse it directly so unit/
+        # integration tests never load an embedder or open the graph DB. (The lazy single-shot cache
+        # is deliberately NOT consulted here.)
+        if self._injected_base is not None:
+            return self._injected_base
         if not self._settings.graph_multistep_enabled:
             return self._get_retriever()
-        # An explicitly-injected base retriever (tests) takes precedence over building a real graph
-        # stack: reuse it directly so unit/integration tests never load an embedder or open the
-        # graph DB. (Memoize so repeated multi-hop calls in one session reuse the same instance.)
-        if self._retriever is not None:
-            return self._retriever
         if self._graph_retriever is None:
             try:
                 self._graph_retriever = build_graph_system(self._settings)
