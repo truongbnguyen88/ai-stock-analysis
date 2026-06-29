@@ -1827,7 +1827,86 @@ benchmark tickers until the bridging benchmark is beaten.
 
 ---
 
-## 17. References
+## 17. Multi-hop benchmark construction — span-isolation, stratification, leakage-safe splits
+
+A6.0 (the first retrieval-RL slice) builds the labeled multi-hop benchmark *programmatically* from the
+A5 knowledge graph instead of by hand. The interesting content is **methodology**, not a single
+formula: how to manufacture a question whose label is trustworthy, and how to split such a dataset
+without fooling yourself. (Build log → [rag_implementation_notes.md](rag_implementation_notes.md) §A6.0.)
+
+### 17.1 Aspects and coverage (recap, the unit of truth)
+
+A multi-hop question is labeled by $K$ **aspects**, one per hop, each a set of answer-bearing **spans**
+(phrases the right passage must contain). An aspect is *covered* iff some retrieved chunk's text
+contains any of its spans; **coverage** $= \frac{1}{K}\sum_{j=1}^{K}\mathbb{1}[\text{aspect } j \text{ covered}]$.
+For a 2-hop bridge: $A_1$ = "the seed names the target", $A_2$ = "the target's own filing discloses the
+topic". Matching is *normalized substring* (lowercase + whitespace-collapsed), the exact `spans_present`
+primitive the eval metric uses.
+
+### 17.2 The span-isolation probe (present-in-target ∧ absent-in-seed)
+
+A bridge question is only a genuine *multi-hop* test if its second aspect **cannot be answered from the
+seed's own filing** — otherwise a single retrieval on the seed already covers it. Let $T(x)$ be the set
+of chunk texts for ticker $x$, $s$ the seed, $t$ the bridged target, and $\sigma$ the $A_2$ span. Define
+
+$$
+\text{stratum}(s,t,\sigma)=
+\begin{cases}
+\textbf{discard} & \neg\,\text{present}(T(t),\sigma) \quad\text{(unanswerable: not in the target either)}\\
+\textbf{HARD} & \text{present}(T(t),\sigma)\ \wedge\ \neg\,\text{present}(T(s),\sigma)\\
+\textbf{MED} & \text{present}(T(t),\sigma)\ \wedge\ \text{present}(T(s),\sigma)\quad\text{(co-disclosed)}
+\end{cases}
+$$
+
+where $\text{present}(\mathcal{T},\sigma)=\bigvee_{u\in\mathcal{T}}[\,\text{norm}(\sigma)\subseteq\text{norm}(u)\,]$
+is exactly `spans_present`. CTRL (single-entity control) questions skip the bridge: one aspect, the
+seed's *own* topic, verified present in the seed.
+
+**Probe == metric (the correctness invariant).** The probe and the coverage metric **must call the same
+matcher**. If they diverged, a row labeled HARD/absent-in-seed could be scored *covered* by the
+single-shot baseline at eval time — a silently corrupt reward label that would poison every RL update
+trained against it. Sharing one function ($\text{present}=$ `spans_present`) makes the label
+self-consistent with how it is later scored, regardless of whether the exact span is the *semantically*
+best phrasing. This is why $A_1$/$A_2$ are drawn from the A5.1-guard-verified edges (present-in-seed /
+present-in-target are then *guaranteed*, and the probe only adds the absent-in-seed test).
+
+### 17.3 Stratification and the "count is an output" rule
+
+The benchmark is stratified HARD / MED / CTRL because a *contextual* policy can only be learned if the
+optimal action varies with the query: an all-HARD set degenerates to "always bridge", and the learned
+policy would then over-retrieve on easy production queries. CTRL is the regression control (graph/agentic
+must not hurt single-hop questions).
+
+Because questions are mined from a **fixed graph**, the supply of genuinely distinct, probe-passing
+questions is bounded. The generator therefore reports **clean supply** (distinct, deduped,
+stoplist-filtered, probe-passing counts per stratum) and treats any requested target count as a **cap,
+never a filler**: if supply $<$ target, it emits fewer rather than relax the specificity filter or emit
+near-duplicates. The honest way to reach a higher count is to grow the graph universe (more tickers →
+more bridges), not to dilute. (Our 20-ticker graph supplied 212: HARD 120 / MED 30 / CTRL 62.)
+
+### 17.4 Group-wise (leakage-safe) splitting
+
+Templated generation produces *near-duplicate* rows — the same bridge pair $\{s,t\}$ with different
+topics. A naïve **row-wise** train/test split can place such variants on both sides, so the held-out set
+is near-copies of training rows: **pseudo-replication** (CIs look tighter than the information justifies)
+and **leakage** (the overfit check silently passes). The fix is to split by **group** $g$, where
+$g=\{s,t\}$ for a bridge (order-independent) or $g=s$ for CTRL, partitioning *groups* (not rows) into the
+folds:
+
+$$
+\text{Train}=\{q : g(q)\notin G_{\text{test}}\},\quad \text{Test}=\{q : g(q)\in G_{\text{test}}\},\quad |G_{\text{test}}|=\lfloor f\,|G|\rceil
+$$
+
+with $G_{\text{test}}$ a seeded random subset of the groups and $f$ the test fraction. This guarantees
+$\text{groups}(\text{Train})\cap\text{groups}(\text{Test})=\varnothing$, so no pair's variants straddle
+the fold. A6.1f (bandit OPE) and A6.2 (RL) eval protocols **must** use this `split_multihop`, never a
+row-wise split. (Verified on the committed set: 149 train / 63 test, 0 group overlap.) This is the
+direct analogue of *grouped cross-validation* (GroupKFold) in standard ML, with the bridge pair as the
+group key.
+
+---
+
+## 18. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).

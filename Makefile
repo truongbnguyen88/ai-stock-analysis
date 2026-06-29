@@ -50,6 +50,13 @@ rag-eval-multistep:  ## advanced-RAG A4: multi-hop union coverage vs single-shot
 	  --queries configs/rag_eval_multistep.json \
 	  --report outputs/rag_eval/multistep.json
 
+rag-gen-multistep:  ## advanced-RAG A6.0: mine the graph into the stratified multi-hop benchmark — local, $0 — NOT in `make check`
+	PYTHONPATH=src python -m stock_agent rag gen-multistep \
+	  --universe configs/graph_universe.txt \
+	  --out configs/rag_eval_multistep_generated.json \
+	  --supply-report outputs/rag_eval/multistep_supply.json \
+	  --split-test-frac 0.3
+
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

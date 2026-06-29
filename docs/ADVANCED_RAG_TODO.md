@@ -738,6 +738,112 @@ bandit** (pick the retrieval config per query); A6.2: a **finite-horizon MDP** (
 
 ---
 
+### A6.0 — Grow the multi-hop benchmark (graph-mined, corpus-verified, stratified) [clean ~100–200 Q] ✅
+
+> **Status: DONE (2026-06-29).** Shipped `research/multistep_templates.py` (pure bridge/control fills);
+> `research/multistep_gen.py` (`classify_stratum` span-isolation probe, `split_multihop` group-wise
+> split [D2], `generate_multihop` + `SupplyReport` [D1]); `spans_present` shared primitive +
+> `MultiHopQuery` metadata fields (`stratum`/`relation`/`qtype`/`seed`/`target`/`group_id`/`generated`,
+> back-compat) in `research/multistep_eval.py`; read-only `SparseStore.iter_chunks(where)` (Fts5 +
+> InMemory); CLI `rag gen-multistep` + `make rag-gen-multistep`. **Local run over the 20-ticker graph
+> yielded 212 clean questions (HARD 120 / MED 30 / CTRL 62)** — committed
+> `configs/rag_eval_multistep_generated.json` (+ group-wise `.train.json` [149] / `.test.json` [63],
+> 0 group overlap); supply report → `outputs/rag_eval/multistep_supply.json`. Builds the **episode
+> catalog** — the fixed `{question, aspects, metadata}` rows; the MDP state `s_0` is derived *later* by
+> the A6.1b featurizer at `env.reset()`, **not** here. Refines decision #2: the final count is an
+> **output (= clean supply), not a fixed input** (D1). Mechanism →
+> [rag_implementation_notes.md](rag_implementation_notes.md) §A6.0; methodology →
+> [rag_concepts.md](rag_concepts.md) §17. **Audit notes:** `competes_with` dominates HARD (100/120 —
+> the graph has more competitor than dependency edges; `--per-seed-cap` available to rebalance); A1
+> surfaces mix case (graph name ∪ lowercase aliases) — harmless under normalized matching. The curated
+> 12-Q `rag_eval_multistep.json` is left untouched (A4/A5.3 reproducibility); A6.1/A6.2 consume the
+> generated set (or the union).
+
+**Objective.** Grow `configs/rag_eval_multistep.json` from 12 → a clean, stratified ~100–200 multi-hop
+questions, **mined from the A5 graph** (not hand-written), every aspect span **auto-verified against the
+ingested corpus**. Mostly **$0** (graph traversal + grep; no LLM in the generator).
+
+**Key reuse insight — both aspects come from already-verified graph edges** (A5.1's hallucination guard
+guarantees each edge's provenance chunk contains both endpoints' surface names):
+- **A1** ("seed names target"): spans = `load_alias_map()[target]` surfaces (e.g. TSM → `["Taiwan
+  Semiconductor","TSMC"]`); **present-in-seed guaranteed** by the bridge edge's guard.
+- **A2** ("target's own risk"): spans = the risk/topic node `name` from a `(target, mentions_risk |
+  exposed_to, risk)` edge; **present-in-target guaranteed** by that edge's guard. The probe only
+  confirms **absent-in-seed**.
+
+Mining = two existing `GraphStore.neighbors(...)` calls per seed (bridges, then each target's risk
+edges) + `get_entity(edge.object).name` — **no new graph-store method**.
+
+**Correctness lynchpin.** The span-isolation probe **must reuse the exact matching used by the eval
+metric** (`research/multistep_eval._normalize` / `_aspect_covered`) — not a re-implementation. If probe
+and metric disagree, a row labeled "HARD / absent-in-seed" could be scored *covered* by single-shot at
+eval time → a corrupt reward label that silently poisons RL. Self-consistency (probe ≡ metric) is the
+requirement, not semantic truth.
+
+**Strata** (target shares; final counts floated to clean supply):
+
+| Stratum | Construction | absent-in-seed? | ~share |
+|---|---|---|---|
+| HARD | 2-hop bridge, A2 risk specific to target | yes (probe) | ~45–50% |
+| MED | bridge where A2 topic co-disclosed in the seed too | no | ~25–30% |
+| CTRL | single-entity, 1–2 same-entity aspects, no bridge | n/a | ~20–25% |
+
+Diversity guards: per-`(seed, relation)` cap; dedup by `(seed, relation, target, a2-span)`; a
+specificity stop-list drops over-generic A2 spans (`"competition"`, `"risk"`, …) that collapse to MED.
+
+**Schema change (back-compat — all optional/defaulted, so the existing 12-Q file still validates).**
+Extend `MultiHopQuery`: `stratum: Literal["HARD","MED","CTRL"] | None`, `relation: str | None`,
+`qtype: str | None`, `seed/target: str | None`, `group_id: str | None`, `generated: bool = False`.
+(Resolves the earlier open item: explicit `stratum` field vs A5.3's fragile index ranges.)
+
+**Explicit deliverables (the two folded in 2026-06-29):**
+- **D1 — Clean-supply report (count is an output).** The generator emits a per-stratum supply report —
+  **distinct, probe-passing, deduped, specificity-filtered** counts (HARD/MED/CTRL) *before* sampling
+  to any target. `--target-count` is a **cap, never a filler**: if clean supply < target, cap at clean
+  supply and **never dilute** (no relaxing the specificity filter, no near-duplicate rows). To reach a
+  higher count *legitimately*, grow `configs/graph_universe.txt` (more tickers → more bridges), not the
+  filters. Report printed to stdout + written to a sidecar `outputs/rag_eval/multistep_supply.json` and
+  summarized in the dataset file header/metadata.
+- **D2 — Group-wise split (anti-leakage / anti-pseudo-replication).** Every row carries a `group_id` =
+  the bridge pair `frozenset({seed,target})` (bridges) or the seed ticker (CTRL). Provide
+  `split_multihop(queries, *, test_frac, seed) -> (train, test)` that splits **by group**
+  (GroupShuffleSplit-style) so no bridge's near-duplicate variants straddle train/test. **A6.1f and
+  A6.2 eval protocols consume this splitter** (not a row-wise split) — made a hard rule so the held-out
+  set can never be near-copies of training rows.
+
+**New modules.** `research/multistep_templates.py` (relation→template-family + pure `fill(...) ->
+(question, aspects)`); `research/multistep_gen.py` (`generate_multihop(graph, sparse, alias_map, *,
+seeds, caps, rng) -> (queries, SupplyReport)`, `span_isolation(...)`, `split_multihop(...)`); one
+**read-only** `SparseStore.iter_chunks(where: ChunkFilter)` (Fts5 `SELECT … WHERE ticker=?`; InMemory
+filter) for the exhaustive absent-in-seed scan (offline-only; mirrors `fetch`/`existing_ids`). CLI `rag
+gen-multistep`; Makefile `rag-gen-multistep`.
+
+**Ordered build slices (each `make check` green before the next):**
+- **A6.0a** — schema fields + `multistep_templates.py`. Tests: golden fill reproduces a real config row;
+  existing JSON still validates (back-compat).
+- **A6.0b** — `iter_chunks` + `span_isolation` (+ `split_multihop`). Tests (InMemoryBM25Store, hand-built
+  chunks): present-in-target, absent-in-seed→HARD, co-disclosed→MED, **probe ≡ metric** agreement;
+  group split puts a bridge pair's variants on one side only.
+- **A6.0c** — `generate_multihop` over a **fake** graph+sparse. Tests: expected questions; **D1 supply
+  report counts**; dedup; per-`(seed,relation)` cap; determinism under fixed `rng`.
+- **A6.0d** — CLI + **local** run against the real graph (`data/graph/voyage-voyage-4.db`) + corpus →
+  emit the supply report, hand-audit a sample, commit the expanded `configs/rag_eval_multistep.json`.
+  Local meta-check: every committed span re-passes the probe. Docs per A-N rule: mark **A6.0 ✅** here +
+  append mechanism to `rag_implementation_notes.md`; light `rag_concepts.md` note on the
+  stratification/span-isolation methodology (the heavy RL math lands with A6.1/A6.2).
+
+**Tests: CI vs local** (per CLAUDE.md RAG rules). CI = A6.0a–c with fakes only (template goldens, probe
+logic, supply/dedup/determinism, group-split, schema back-compat) — **no graph DB, corpus, or model**.
+Local (like backtests) = the actual generation + span re-verification against the real corpus; the
+committed JSON is the artifact.
+
+**Risks/mitigations.** Bad labels poison RL → probe ≡ metric + both aspects from guard-verified edges +
+local meta-verification. NVDA-skew → per-`(seed,relation)` caps over all 20 universe tickers. Generic
+A2 → specificity stop-list. Non-ingested target → probe finds no chunks → auto-discard. Determinism →
+seeded sampler, seed logged in the dataset header.
+
+---
+
 ### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first)
 
 **Frame.** Single-step decision. **Context** `x` = featurized query (length; has-ticker; entity count;
@@ -855,10 +961,11 @@ return, coverage, **cost (steps + LLM calls)**, train-vs-held-out gap (overfit c
 (loop non-determinism), reward-hacking sentinel. OPE (A6.1d) for any logged-trajectory component.
 
 **A6.2 prerequisite GATE (met by A6.0).** Sequential RL needs state-distribution coverage the current
-**12-query** multi-hop benchmark cannot provide → **A6.0 grows `rag_eval_multistep.json` to ~100
-corpus-verified questions** first (before A6.1, since it helps both). Without this, A6.2 overfits and
-the honest result is "insufficient data for sequential RL" — a valid finding, but A6.0 makes the attempt
-meaningful.
+**12-query** multi-hop benchmark cannot provide → **A6.0 grows `rag_eval_multistep.json` to a clean,
+stratified ~100–200** (final count = clean supply, D1) corpus-verified questions first (before A6.1,
+since it helps both). Without this, A6.2 overfits and the honest result is "insufficient data for
+sequential RL" — a valid finding, but A6.0 makes the attempt meaningful. A6.2's held-out comparison
+**must use A6.0's group-wise `split_multihop` (D2)**, never a row-wise split.
 
 **A6.2 deliverable:** `rag/rl/{env,policy,train}.py`, a `rag rl-train` / `rag rl-eval` CLI, a held-out
 comparison table in `validations_results.md`, and a verdict: does a *learned* retrieval policy beat the

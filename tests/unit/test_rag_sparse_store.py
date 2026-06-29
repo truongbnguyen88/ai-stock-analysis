@@ -71,6 +71,21 @@ def test_search_empty_or_no_match_returns_empty(store: SparseStore) -> None:
     assert store.search("export", top_k=0) == []
 
 
+def test_iter_chunks_exhaustive_and_filtered(store: SparseStore) -> None:
+    """iter_chunks yields EVERY matching chunk (no MATCH, no top-k) — the A6.0 probe's scan."""
+    nvda = [_C0, _C1, _C2]
+    mu = [_chunk(0, "Micron warns about NAND oversupply.", ticker="MU")]
+    store.add([*nvda, *mu])
+    # unfiltered → all four, regardless of query terms (C2 shares none, but is still yielded)
+    assert {c.chunk_id for c in store.iter_chunks()} == {c.chunk_id for c in (*nvda, *mu)}
+    # ticker filter → only that ticker's chunks
+    nvda_ids = {c.chunk_id for c in store.iter_chunks(ChunkFilter(ticker="NVDA"))}
+    assert nvda_ids == {c.chunk_id for c in nvda}
+    assert all(c.ticker == "MU" for c in store.iter_chunks(ChunkFilter(ticker="MU")))
+    # no-match filter → empty
+    assert list(store.iter_chunks(ChunkFilter(ticker="ZZZZ"))) == []
+
+
 def test_metadata_filter_scopes_results(store: SparseStore) -> None:
     amd = _chunk(0, "Export controls also affect our China business.", ticker="AMD")
     store.add([_C0, _C1, amd])

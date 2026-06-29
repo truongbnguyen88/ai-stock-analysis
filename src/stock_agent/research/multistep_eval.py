@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -59,12 +60,30 @@ class Aspect(BaseModel):
     spans: list[str] = Field(min_length=1)
 
 
+Stratum = Literal["HARD", "MED", "CTRL"]
+
+
 class MultiHopQuery(BaseModel):
-    """A labeled multi-hop question: the prompt + the aspects the answer's evidence must cover."""
+    """A labeled multi-hop question: the prompt + the aspects the answer's evidence must cover.
+
+    The optional fields below are **A6.0 generation metadata** (graph-mined benchmark); they default
+    so the hand-written P-set / A4 examples (which omit them) still validate unchanged. ``stratum``
+    is the difficulty/role bucket (HARD bridge / MED co-disclosed / CTRL single-entity).
+    ``group_id`` is the leakage-safe split key (the bridge pair, so its variants never split folds).
+    """
 
     question: str
     aspects: list[Aspect] = Field(min_length=1)
     max_steps: int | None = None  # optional per-query cap (else the agentic_max_steps default)
+
+    # --- A6.0 metadata (optional; absent on the hand-written set) ---
+    stratum: Stratum | None = None
+    relation: str | None = None  # "depends_on" / "competes_with" / "single-entity"
+    qtype: str | None = None  # "bridging" / "risk" / "business" / "overview"
+    seed: str | None = None  # the subject ticker (the filing the question starts from)
+    target: str | None = None  # the bridged-to ticker (None for CTRL single-entity)
+    group_id: str | None = None  # leakage-safe split key (bridge pair, or seed for CTRL)
+    generated: bool = False  # True iff produced by research/multistep_gen (vs hand-written)
 
 
 class MultiHopReport(BaseModel):
@@ -95,10 +114,22 @@ class MultiHopSummary(BaseModel):
 
 
 # ---- pure metrics -------------------------------------------------------------
+def spans_present(texts: Sequence[str], spans: Sequence[str]) -> bool:
+    """True iff any of ``spans`` appears as a normalized substring of any of ``texts``.
+
+    The single span-matching primitive — **shared** by the coverage metric (``_aspect_covered``) and
+    the A6.0 span-isolation probe (``research/multistep_gen``). Sharing it is a correctness
+    requirement, not DRY convenience: if the generator's "present/absent" test and the eval's
+    "covered" test ever diverged, a row labeled HARD/absent-in-seed could be scored *covered* by the
+    single-shot baseline at eval time — a corrupt reward label. One function ⇒ probe == metric.
+    """
+    haystacks = [_normalize(t) for t in texts]
+    return any(_normalize(span) in hay for span in spans for hay in haystacks)
+
+
 def _aspect_covered(chunks: Sequence[RetrievedChunk], spans: Sequence[str]) -> bool:
     """True iff some chunk's text contains any of ``spans`` (case/whitespace-insensitive)."""
-    haystacks = [_normalize(rc.chunk.text) for rc in chunks]
-    return any(_normalize(span) in hay for span in spans for hay in haystacks)
+    return spans_present([rc.chunk.text for rc in chunks], spans)
 
 
 def coverage(
