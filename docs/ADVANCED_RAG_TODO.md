@@ -846,50 +846,155 @@ seeded sampler, seed logged in the dataset header.
 
 ### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first)
 
-**Frame.** Single-step decision. **Context** `x` = featurized query (length; has-ticker; entity count;
-question-type ∈ {risk, financial, business, overview, bridging} via a cheap keyword/router heuristic;
-`is_bridging`). **Action** `a` = a named retrieval config (the `LATTICE_SYSTEMS` ∪ {graph} arms; later
-extended with `top_k` / `section_filter` variants — keep ≤ ~8–10 arms). **Reward** `r` = composite from
-the oracle:
+> **Status: PLANNED (detailed, execution-ready). Not yet executed.** This subsection IS the build
+> blueprint — slices A6.1a–f with exact files/signatures/tests, the leakage rules, the pre-registered
+> verdict, and the config flags. **To execute in a fresh session:** open this section and say "execute
+> A6.1a", then b…f in order; each is a `make check`-green, default-OFF vertical slice. Conceptual
+> background → [rl_rag_pre_questions.md](rl_rag_pre_questions.md) (MDP/reward framing) and
+> [rag_concepts.md §17](rag_concepts.md) (the A6.0 benchmark this consumes). **Prereqs (merged):** A6.0
+> benchmark (`configs/rag_eval_multistep_generated.json`, PR #42) + the A5 agent graph-routing fix
+> (PR #43); A1–A5 shipped.
+
+**What A6.1 is.** Treat retrieval as a **one-shot decision**: a featurized query (context `x`) → a
+**policy** picks one of ~5 retrieval **configs** (arms `a`) → earns **reward** `r` = quality − cost.
+Learn the policy **offline** from logged data, evaluate **off-policy** (IPS/SNIPS/DR), **promote only
+if** it beats the best fixed config beyond a bootstrap CI on a group-wise held-out split. A rigorous
+**negative** is acceptable (the logging+OPE+bandit infra is the durable artifact).
+
+**Central hypothesis (why a bandit can win).** A5.3 measured that **single-shot graph regresses CTRL
+(easy) questions but helps HARD bridges** → the optimal arm is **context-dependent** (HARD→graph,
+CTRL→hybrid/dense), a genuine contextual optimum a fixed config can't capture. A6.1 tests whether a
+learned policy realizes that lift.
+
+**What already exists — build on these (verified file:line; do NOT rebuild):**
+
+| Need | Reuse | Location |
+|---|---|---|
+| **Action executor** | `build_named_system(name, settings)` over `LATTICE_SYSTEMS=(dense,reranked,hybrid,hybrid+rerank)`; `build_graph_system(settings)` | `rag/read_path.py:64-140` |
+| **Reward — single-shot nDCG** | `evaluate_query(system, LabeledQuery, *, top_k, corpus_chunks) -> QueryReport` (`.ndcg`) | `rag/eval.py:224` |
+| **Reward — multi-hop coverage** | `coverage(chunks, aspects)`; one `retrieve()` = the single-shot baseline | `research/multistep_eval.py` |
+| **Primary benchmark (contexts)** | `configs/rag_eval_multistep_generated.json` (212 Q; `stratum`/`group_id`) | A6.0 |
+| **Secondary benchmark** | `configs/rag_eval_queries.json` (25 single-shot `LabeledQuery`, ticker-scoped) | P9b |
+| **Group-wise split (D2)** | `split_multihop(queries, *, test_frac, seed)` | `research/multistep_gen.py` |
+| **Context features** | `research/bridge.is_bridging(q)`, `mentioned_tickers(text, alias_map)`, `load_alias_map()`; router cues | `research/bridge.py`, `agent/router.py` |
+| **Discipline to mirror** | walk-forward split, seed logging (`seed=42`), report dispersion | `backtesting/` |
+
+**Arms (MVP = 5):** `dense`, `reranked`, `hybrid`, `hybrid+rerank` + `graph`. Keep ≤ ~8–10; defer
+`top_k`/`section_filter` variants.
+
+**Context** `x = featurize(query)` (numpy) — **deploy-time signals ONLY** (see leakage rule 1):
+`n_tokens`; `has_ticker`; `n_entities` (via `mentioned_tickers`); `is_bridging`; question-type one-hot
+∈ {risk, financial, business, overview, bridging} (cheap keyword heuristic); **`in_graph_universe`**
+(0/1 — is the ticker in `configs/graph_universe.txt`; tells the policy whether the `graph` arm can
+actually traverse vs. degrade to hybrid+cost — the signal separating "graph helps" semis bridges from
+"graph = hybrid + cost" e.g. AAPL). **Recommended.**
+
+**Reward** `r(x,a)` — **retrieval-only, $0** (no synthesis in A6.1):
 
 $$r \;=\; \underbrace{\text{nDCG@}k}_{\text{quality}} \;-\; \lambda_{c}\,\big(\text{LLM calls}+\text{latency}\big) \;-\; \lambda_{f}\,\big(\text{citation-guard failures}\big)$$
 
-(coverage replaces `nDCG@k` for multi-hop queries). The cost/faithfulness penalties are the
-**reward-hacking** guard: a noisy high-recall arm that games quality but spends tokens or breaks
-grounding is penalized. `λ_c`, `λ_f` are config (start small; sensitivity-test).
+where in A6.1: `quality` = `nDCG@k` for a single-shot `LabeledQuery` **or single-shot `coverage`** for a
+`MultiHopQuery` (one `retrieve()` of arm `a`, scored by aspect coverage) — both ∈ [0,1], both $0;
+`cost(a)` = a **static per-arm** latency/compute proxy (e.g. `dense=0, hybrid=0.1, reranked=0.3,
+hybrid+rerank=0.4, graph=0.3`), `λ_c` small (start 0.05). **The `λ_f` faithfulness term is DEFERRED**
+(needs a synthesis call A6.1 does not run) — keep the field, default `λ_f=0`, so A6.2 / opt-in
+synth-in-loop can switch it on. The cost penalty is the **reward-hacking guard** (an arm must earn its
+cost in quality). `λ_c`, `λ_f` config; sensitivity-test.
 
-**Build steps (each a green vertical slice; default-OFF; deterministic tests):**
-- **A6.1a — Telemetry.** `schemas/retrieval_log.py` (`RetrievalLogEntry`: context features, chosen
-  action, **propensity** `μ(a|x)` if randomized, retrieved `chunk_id`s + scores, downstream answer +
-  guard outcomes, optional reward/feedback, seed, timestamp) + `rag/retrieval_log.py` (append-only
-  JSONL writer under `data/retrieval_logs/`, config-gated `settings.retrieval_logging=False`). The
-  read path logs **only when enabled**; byte-identical when off. *Tests:* round-trip; off → no file.
-- **A6.1b — Featurizer.** `rag/policy_features.py` — pure `query → ContextVector` (numpy). *Tests:*
-  golden vectors for a risk/financial/bridging/overview query; stable ordering.
-- **A6.1c — Reward oracle adapter.** `rag/reward.py` — wrap `evaluate_query` / `multistep_eval` into
-  `reward(x, a) -> float` (the composite above). Used both to *label logs offline* and to *train*. This
-  lets us synthesize a logged dataset by running each arm over the labeled benchmark (a uniform-random
-  logging policy `μ`, so propensities are known and OPE is exact). *Tests:* composite math; the
-  reward-hacking sentinel arm scores low.
-- **A6.1d — OPE.** `rag/ope.py` — **IPS**, **self-normalized IPS (SNIPS)**, **doubly-robust (DR)**
-  estimators with a ridge reward-model `q̂(x,a)` for the DR control variate, + bootstrap CIs. CLI
-  `rag policy-eval`. *Tests:* **hand-computed IPS/SNIPS/DR golden values** on a tiny 3-sample logged
-  set; DR = IPS when `q̂≡0`; SNIPS ∈ convex hull of rewards.
+**Logging policy `μ` (dataset synthesis).** Uniform-random over the 5 arms → `μ(a|x)=1/5`, known exactly
+⇒ OPE is exact. Because the oracle is **$0 and deterministic**, also evaluate **every arm on every
+context** (the full reward matrix `R[x,a]`) — giving (i) the **true** value of any policy
+(full-information ground truth to check OPE against) and (ii) the logged dataset as a seeded subsample of
+that matrix. Exploit both in tests.
 
-$$\hat V_{\text{IPS}}(\pi)=\frac1N\sum_i \frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}\,r_i,\qquad \hat V_{\text{DR}}(\pi)=\frac1N\sum_i\Big[\hat q(x_i,\pi)+\frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}\big(r_i-\hat q(x_i,a_i)\big)\Big]$$
+**Invariants / leakage rules (non-negotiable):**
+1. **Featurizer is label-free** — `x` uses only query text + alias map + `graph_universe.txt` + cheap
+   heuristics, **never** the gold `stratum`/`relation`/`qtype` (the answer key). Gold strata are for
+   **stratified reporting only**, never a feature (else the policy is un-deployable).
+2. **Group-wise split everywhere** — `split_multihop` (group = bridge pair); for the 25-Q set (no
+   `group_id`) group by `ticker`. Never row-wise (pseudo-replication, §17.4).
+3. **Reward ≡ A6.0 metric** — multi-hop reward reuses `coverage`/`spans_present` (no metric drift).
+4. **Default-OFF** — logging + adaptive retrieval config-gated; flags off ⇒ byte-identical pipeline.
+5. **Numpy only (no torch)** — LinUCB / ridge `q̂` are numpy normal-equations. Torch is A6.2-only.
 
-- **A6.1e — Policy.** `rag/policy.py` — a `Policy` Protocol (`act(x) -> (action, propensity)`) with
-  `FixedPolicy` (always the promoted system = the baseline to beat), **ε-greedy**, and **LinUCB**
-  (linear contextual bandit). Trained **offline** against A6.1c on a *train* split. *Tests:* fixed +
-  ε-greedy deterministic under seed; LinUCB UCB math on a 2-arm toy; train/test split disjoint.
-- **A6.1f — Gated integration + verdict.** A `PolicyRetriever` (or a read-path hook) that asks the
-  policy for a per-query named system, **default-OFF** (`settings.adaptive_retrieval=False`). **Promote
-  only if** OPE (DR, held-out queries) shows the bandit beats the best fixed pipeline beyond its
-  bootstrap CI. Record in `validations_results.md` (the A5.3 template) + `rag_implementation_notes.md`.
+**Build slices (each a green vertical slice; default-OFF; deterministic tests):**
+- **A6.1a — Telemetry.** `schemas/retrieval_log.py` (`RetrievalLogEntry`: timestamp, query, context
+  features / raw `ContextVector`, chosen `action`, **propensity** `μ(a|x)` (None if deterministic),
+  retrieved `chunk_id`s + scores, optional downstream answer + guard outcome, optional reward/feedback,
+  seed) + `rag/retrieval_log.py` (append-only **JSONL** under `data/retrieval_logs/`, config-gated
+  `settings.retrieval_logging=False`; `log_retrieval(entry)` no-ops when off). Wiring into the read
+  path lands in f. *Tests (CI):* round-trip; off → no file / no-op; append accumulates.
+- **A6.1b — Featurizer.** `rag/policy_features.py` — pure `featurize(query, *, ticker=None,
+  alias_map=None, graph_universe=None) -> ContextVector` (numpy + stable `FEATURE_NAMES`). *Tests (CI):*
+  golden vectors for risk/financial/bridging/overview/single-entity; flags (`has_ticker`/`is_bridging`/
+  `in_graph_universe`) correct; stable ordering; determinism. No model/network.
+- **A6.1c — Reward oracle adapter.** `rag/reward.py` — `reward(system, labeled, *, settings,
+  corpus_chunks=None, lambda_cost, arm_cost) -> float` dispatching on label type (`LabeledQuery` →
+  `evaluate_query(...).ndcg`; `MultiHopQuery` → `coverage(retrieve(q), aspects)`) minus
+  `lambda_cost*arm_cost[name]`; plus `reward_matrix(systems, queries, ...) -> np.ndarray
+  [n_queries × n_arms]` (the $0 full-information matrix; synthesizes logs + OPE ground truth). *Tests
+  (CI, FakeEmbedder/InMemory):* composite math; a **reward-hacking sentinel arm** (dumps many
+  low-relevance chunks) scores low; dispatch by label type; deterministic.
+- **A6.1d — OPE.** `rag/ope.py` — **IPS**, **SNIPS**, **doubly-robust (DR)** + bootstrap CIs + a ridge
+  reward-model `q̂(x,a)` (numpy normal equations) for the DR control variate. CLI `rag policy-eval`
+  (load/synthesize a logged dataset, evaluate a named policy, print value + CI, write
+  `outputs/rag_eval/policy_eval_<ts>.json`). *Tests (CI):* **hand-computed IPS/SNIPS/DR goldens** on a
+  3-sample set; `DR == IPS` when `q̂≡0`; `SNIPS ∈ [min r, max r]`; IPS unbiased vs the full-info matrix
+  on a toy where `μ` covers all arms.
 
-**A6.1 deliverable:** logging + OPE + bandit infra, a `rag policy-eval` number on held-out queries, and
-a promote/keep-opt-in verdict. Likely outcome to pre-register: the tuned hybrid(+graph for multi-hop)
-pipeline is strong, so a **modest win or a rigorous negative** — both ship the reusable infra.
+$$\hat V_{\text{IPS}}(\pi)=\frac1N\sum_i \frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}\,r_i,\quad \hat V_{\text{SNIPS}}(\pi)=\frac{\sum_i w_i r_i}{\sum_i w_i},\;\; w_i=\frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)},\quad \hat V_{\text{DR}}(\pi)=\frac1N\sum_i\Big[\hat q(x_i,\pi)+w_i\big(r_i-\hat q(x_i,a_i)\big)\Big]$$
+
+- **A6.1e — Policy.** `rag/policy.py` — `Policy` Protocol (`act(x) -> (action, propensity)` +
+  `prob(a, x) -> float` for OPE): `FixedPolicy(name)` (the baseline to beat = the promoted default;
+  multi-hop baseline = `graph`, single-shot = `hybrid`), **`EpsilonGreedy(q̂, ε, seed)`**, **`LinUCB(d,
+  n_arms, α, λ)`** (per-arm `A_a=λI+Σ x xᵀ`, `θ_a=A_a^{-1}b_a`, pick `argmax_a θ_aᵀx+α√(xᵀA_a^{-1}x)`),
+  trained **offline** on the train split. *Tests (CI):* fixed + ε-greedy deterministic under seed;
+  **LinUCB UCB arithmetic on a 2-arm toy** (hand-checked `A`,`θ`,UCB); split disjoint; `prob` sums to 1.
+- **A6.1f — Gated integration + verdict.** `rag/policy_retriever.py` — `PolicyRetriever(policy,
+  settings, *, build_arm=build_named_system)` satisfying `RetrievalSystem` (featurize → `policy.act` →
+  build arm → delegate; logs via A6.1a when on). **Default-OFF** (`settings.adaptive_retrieval=False`);
+  **forward-compatible with the PR-#43 fix** (injectable as the `ToolExecutor` `_injected_base`, or
+  selected in `build_retrieval_system` when adaptive on). **Verdict (local, $0 retrieval, needs the real
+  corpus/graph — like A1/A6.0):** synthesize the logged dataset over the group-wise held-out split,
+  train policies on train, `rag policy-eval` DR(bandit) vs DR(best `FixedPolicy`).
+
+**Pre-registered decision rule (write before looking at numbers):** promote (`adaptive_retrieval`
+default→True) **iff**, on the **group-wise held-out** split, `DR(π_bandit) − DR(π_fixed_best) > 0` and
+clears the **group-level bootstrap 95% CI**, **and** no per-stratum regression (must not lose to fixed on
+CTRL). Else keep default-OFF and **record the negative**. Report **per-stratum** (HARD/MED/CTRL) so a win
+isn't a pooled artifact. Write verdict → `docs/validations_results.md` (A5.3 template) +
+`rag_implementation_notes.md` §A6.1. Pre-registered likely outcome: tuned hybrid(+graph) is strong → a
+**modest win or a rigorous negative**; both ship the infra.
+
+**Config flags to add (`settings.py`, all default-OFF / inert):** `retrieval_logging=False`;
+`adaptive_retrieval=False`; `bandit_policy: Literal["fixed","epsilon_greedy","linucb"]="fixed"`;
+`reward_lambda_cost=0.05`; `reward_lambda_faithfulness=0.0` (deferred); `bandit_arm_costs` (the static
+`c(a)` vector); `retrieval_log_dir=data/retrieval_logs`.
+
+**Testing: CI vs local** (per CLAUDE.md). CI (offline, no model/graph/corpus): log round-trip + off-noop;
+featurizer goldens; reward composite + sentinel; **IPS/SNIPS/DR hand-goldens** + `DR=IPS@q̂≡0` +
+SNIPS-hull + IPS-unbiased-vs-matrix; policy seeded determinism + LinUCB toy + disjoint split;
+`PolicyRetriever` conformance with a `FakePolicy`. Local (like backtests): synthesize the real logged
+dataset over the 212-Q (+ optional 25-Q) benchmark ($0 retrieval), produce the verdict numbers.
+
+**Docs obligation on landing (A-N rule):** mark **A6.1 ✅** here (with verdict); mechanism →
+`rag_implementation_notes.md` §A6.1; theory → **`rag_concepts.md` §18** (contextual bandits; IPS/SNIPS/DR
++ variance; LinUCB ridge+UCB; reward-hacking penalty) — **NB: A6.0 made §17 = benchmark construction and
+bumped References to §18, so insert A6.1 as §18 and renumber References → §19**; chat explains the math;
+verdict → `validations_results.md`.
+
+**Risks/mitigations.** Label leakage via features → featurizer audited label-free (rule 1).
+Pseudo-replication / leaked folds → group-wise split + group-level bootstrap CIs. Reward hacking → `λ_c`
++ sentinel test (`λ_f` deferred but flagged). Tiny n / weak signal → 212 Q is modest; honest CIs,
+per-stratum; a negative is acceptable. Graph-arm degeneracy on non-semis tickers → `in_graph_universe`
+feature; graph degrades safely to hybrid. Over-engineering → MVP = 5 arms, numpy only, retrieval-only $0
+reward; defer top_k/section arms, synth-in-loop, the `λ_f` term.
+
+**Open decisions (sensible defaults pre-picked; confirm at execution start):** (1) **Primary benchmark =
+the 212-Q multi-hop set** (coverage reward; `group_id`+strata; A5.3 contextual optimum) — 25-Q
+single-shot set optional secondary (both rewards ∈ [0,1]). (2) **5 arms**; defer `top_k`/`section`. (3)
+Ridge backend = hand-rolled numpy normal equations (no sklearn dep). (4) `λ_c`=0.05; sensitivity-test
+0/0.05/0.1 in the verdict run. (5) Build order **a→b→c→d→e→f** (telemetry first so f can wire it in).
 
 ---
 
