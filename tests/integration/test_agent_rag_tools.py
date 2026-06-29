@@ -95,10 +95,8 @@ def _retriever(chunks: list[DocumentChunk]) -> Retriever:
 
 
 def _executor(*, llm: _FakeLLM | None, retriever: Retriever | None = None) -> ToolExecutor:
-    ex = ToolExecutor(Settings(_env_file=None), llm=llm)
-    if retriever is not None:
-        ex._retriever = retriever  # inject so _get_retriever never builds a real embedder
-    return ex
+    # Inject via the explicit `retriever=` override so no real embedder/graph is ever built.
+    return ToolExecutor(Settings(_env_file=None), llm=llm, retriever=retriever)
 
 
 def _final(text: str) -> ToolResponse:
@@ -270,6 +268,20 @@ def test_multistep_falls_back_to_hybrid_when_graph_unavailable(
     ex = ToolExecutor(Settings(_env_file=None), llm=None)  # _retriever is None
     monkeypatch.setattr(ex, "_get_retriever", lambda: hybrid)
     assert ex._get_multistep_retriever() is hybrid
+
+
+def test_multistep_routes_to_graph_even_after_single_shot_ran(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: a prior search_filings / research_summary fills the lazy single-shot cache
+    # (`_retriever`). The multi-hop path must STILL route to graph — the filled cache must not
+    # divert it to hybrid. (Before the fix, `_get_multistep_retriever` short-circuited on
+    # `_retriever`, so graph activation was silently order-dependent within a session.)
+    graph = _retriever([])
+    monkeypatch.setattr("stock_agent.agent.tools.build_graph_system", lambda s: graph)
+    ex = ToolExecutor(Settings(_env_file=None), llm=None)  # no injection; graph enabled by default
+    ex._retriever = _retriever([])  # simulate a single-shot tool having run earlier this session
+    assert ex._get_multistep_retriever() is graph  # graph, NOT the single-shot cache
 
 
 # ---- research_summary ---------------------------------------------------------
