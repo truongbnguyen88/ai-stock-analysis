@@ -646,16 +646,38 @@ def chat(
     # Show the active SEC corpus so it's clear which embeddings filing questions are answered from.
     typer.echo(f"RAG corpus: {corpus_status(settings).one_line}")
 
+    # Optional two-stage routing: a Haiku classifier picks a single deterministic capability for
+    # simple questions (Sonnet still does the synthesis) and escalates complex ones to the Sonnet
+    # agent. Off unless `use_llm_classifier` is set. When off, we call `run_agent` directly.
+    classify_router: Router | None = None
+    if settings.use_llm_classifier:
+        from stock_agent.agent.classifier import RouteClassifier
+
+        classifier = RouteClassifier(
+            AnthropicClient(settings, model=settings.classifier_model),
+            min_confidence=settings.classifier_min_confidence,
+        )
+        classify_router = Router(executor, tool_llm=agent_llm, classifier=classifier)
+        typer.echo(f"Routing: two-stage (classifier={settings.classifier_model} -> Sonnet)")
+
     def answer(question: str, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Run one turn; return the updated transcript to carry into the next turn.
 
         On error the prior history is preserved so the conversation can continue.
         """
         try:
+            if classify_router is not None:
+                rr = classify_router.run(question, route="classify", history=history)
+                typer.echo(rr.text)
+                for cite in (rr.structured or {}).get("citations", []):
+                    typer.echo(f"  [{cite.get('marker')}] {cite.get('label', '')}")
+                # Escalation carries the agent transcript (thread it); a deterministic turn is
+                # standalone and returns no messages, so keep the prior history unchanged.
+                return rr.messages or history
             result = run_agent(question, llm=agent_llm, executor=executor, history=history)
             typer.echo(result.text)
             return result.messages
-        except AgentError as exc:
+        except (AgentError, RouterError) as exc:
             typer.echo(f"[agent error] {exc}")
             return history
 
@@ -684,6 +706,38 @@ def chat(
             continue
         if question:
             history = answer(question, history)
+
+
+@app.command(name="eval-routing")
+def eval_routing(
+    dataset: Annotated[
+        Path | None,
+        typer.Option("--dataset", help="JSONL of {question, expected}; omit for the built-in set."),
+    ] = None,
+    min_confidence: Annotated[
+        float | None,
+        typer.Option("--min-confidence", help="Escalate below this confidence (default: config)."),
+    ] = None,
+) -> None:
+    """Measure the Haiku routing classifier on labeled examples (accuracy / misroute / escalation).
+
+    Live: makes one Haiku call per example. Haiku is used ONLY for routing here — never content.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    if not settings.anthropic_api_key:
+        typer.echo("ANTHROPIC_API_KEY is required to run the classifier.")
+        raise typer.Exit(code=1)
+    from stock_agent.agent.classifier import RouteClassifier
+    from stock_agent.agent.routing_eval import DEFAULT_EXAMPLES, evaluate_routing, load_examples
+
+    examples = load_examples(dataset) if dataset is not None else DEFAULT_EXAMPLES
+    conf = min_confidence if min_confidence is not None else settings.classifier_min_confidence
+    classifier = RouteClassifier(
+        AnthropicClient(settings, model=settings.classifier_model), min_confidence=conf
+    )
+    typer.echo(f"Classifier: {settings.classifier_model} (conf>={conf}) · n={len(examples)}")
+    typer.echo(evaluate_routing(classifier, examples).summary())
 
 
 # ---- documents (RAG corpus acquisition) --------------------------------------

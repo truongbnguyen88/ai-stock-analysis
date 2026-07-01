@@ -37,9 +37,14 @@ def _extract_text(response: Any) -> str:
 class AnthropicClient:
     """``TextLLM`` backed by the Anthropic Messages API."""
 
-    def __init__(self, settings: Settings, client: Any | None = None) -> None:
+    def __init__(
+        self, settings: Settings, client: Any | None = None, *, model: str | None = None
+    ) -> None:
         self._settings = settings
-        self._model = settings.llm_model
+        # `model` override lets a caller point this same JSON-completion plumbing (temperature 0,
+        # prompt caching) at a different model — e.g. the Haiku routing classifier — without
+        # affecting the default content model (`llm_model`, Sonnet).
+        self._model = model or settings.llm_model
         self._client = client  # injectable for tests; lazily created otherwise
 
     def _ensure_client(self) -> Any:

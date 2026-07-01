@@ -49,6 +49,21 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     llm_model: str = "claude-sonnet-4-6"
     llm_max_tokens: int = 4096
+    # Sampling temperature for the tool-use agent loop (Role B routing/synthesis). 0.0 =
+    # greedy decoding for reproducible tool selection + wording (the news/filings synthesizer
+    # already runs at 0). Not a hard determinism guarantee — tool-call ordering can still vary —
+    # but it removes the default ~1.0 sampling noise. Set to None to omit the parameter entirely
+    # for models that reject sampling params (Opus 4.8/4.7, Fable 5).
+    agent_temperature: float | None = 0.0
+    # Two-stage routing (prototype): a cheap Haiku classifier picks ONE deterministic capability
+    # for simple questions, or escalates compositional/complex ones to the full Sonnet agent. Haiku
+    # is used ONLY for the routing decision — never for content: all news/synthesis/RAG/agent work
+    # stays on `llm_model` (Sonnet). Off by default until the routing eval clears it.
+    use_llm_classifier: bool = False
+    classifier_model: str = "claude-haiku-4-5"
+    # Below this self-reported confidence the classifier escalates instead of dispatching a
+    # single route — "when unsure, let Sonnet handle it" (a misroute is worse than an escalation).
+    classifier_min_confidence: float = 0.6
     # Per-request timeout (s) and auto-retry count for the Anthropic clients. A
     # shorter timeout with several retries recovers better from transient stalls
     # (e.g. a dropped/slow connection) than one long hang — the SDK retries

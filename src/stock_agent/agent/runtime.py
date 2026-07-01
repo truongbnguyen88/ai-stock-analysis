@@ -100,6 +100,7 @@ class AnthropicToolClient:
     def __init__(self, settings: Settings, client: Any | None = None) -> None:
         self._settings = settings
         self._model = settings.llm_model
+        self._temperature = settings.agent_temperature  # None => omit (models that reject it)
         self._client = client
 
     def _ensure_client(self) -> Any:
@@ -123,6 +124,11 @@ class AnthropicToolClient:
         max_tokens: int,
     ) -> ToolResponse:
         client = self._ensure_client()
+        # Omit temperature when None so models that reject sampling params (Opus 4.8/4.7, Fable 5)
+        # don't 400; otherwise pin it (0.0 by default) for reproducible routing.
+        extra: dict[str, Any] = {}
+        if self._temperature is not None:
+            extra["temperature"] = self._temperature
         try:
             resp = client.messages.create(
                 model=self._model,
@@ -130,6 +136,7 @@ class AnthropicToolClient:
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                 tools=tools,
                 messages=messages,
+                **extra,
             )
         except Exception as exc:  # noqa: BLE001 - normalize SDK/network errors
             raise AgentError(f"agent LLM request failed: {exc}") from exc
