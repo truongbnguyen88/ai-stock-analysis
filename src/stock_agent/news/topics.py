@@ -12,6 +12,7 @@ resolved keywords back to the user.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -69,9 +70,30 @@ _ALIASES: dict[str, str] = {
 }
 
 
+# A theme is a short SUBJECT PHRASE ("AI memory", "robotics"), not a sentence. Anything longer than
+# this word count is almost certainly a full request pasted into the theme box, which would become a
+# useless literal-string query — callers reject it up front (see `looks_like_sentence_topic`).
+_MAX_TOPIC_WORDS = 6
+# Punctuation stripped during normalization so a stray "?"/"." on an otherwise-valid phrase
+# ("AI memory?") still resolves to its registry slug instead of falling through to free-form.
+_PUNCT = re.compile(r"[^\w\s-]")
+
+
 def _norm(name: str) -> str:
-    """Normalize a topic name for lookup (lower, trim, collapse spaces/underscores)."""
-    return "_".join(name.strip().lower().replace("-", " ").replace("_", " ").split())
+    """Normalize a topic name for lookup (lower, trim, drop punctuation, collapse spaces/dashes)."""
+    cleaned = _PUNCT.sub(" ", name)
+    return "_".join(cleaned.strip().lower().replace("-", " ").replace("_", " ").split())
+
+
+def looks_like_sentence_topic(name: str) -> bool:
+    """True if a topic phrase looks like a sentence/question rather than a theme subject.
+
+    Heuristic guard for the theme route: a phrase exceeding ``_MAX_TOPIC_WORDS`` words is a pasted
+    request, whose literal-string query matches nothing. Callers apply this only to UNKNOWN topics
+    (``resolve_topic(name).known is False``) — curated registry themes always resolve regardless of
+    length. Word count uses the raw whitespace split (punctuation-independent).
+    """
+    return len(name.split()) > _MAX_TOPIC_WORDS
 
 
 def list_topics() -> tuple[str, ...]:

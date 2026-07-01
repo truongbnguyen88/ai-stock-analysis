@@ -6,6 +6,7 @@ from stock_agent.news.topics import (
     TOPIC_REGISTRY,
     gdelt_query_expression,
     list_topics,
+    looks_like_sentence_topic,
     resolve_topic,
 )
 
@@ -55,3 +56,22 @@ def test_single_keyword_expression_has_no_parens() -> None:
 def test_list_topics_nonempty_and_curated() -> None:
     topics = list_topics()
     assert {"robotics", "ev", "ai_memory", "semiconductors"} <= set(topics)
+
+
+def test_trailing_punctuation_still_resolves_known_theme() -> None:
+    # A stray "?"/"." on an otherwise-valid phrase must not knock it into free-form.
+    assert resolve_topic("AI memory?").topic == "ai_memory"
+    assert resolve_topic("AI memory?").known is True
+    assert resolve_topic("robotics.").topic == "robotics"
+
+
+def test_looks_like_sentence_topic_flags_pasted_questions() -> None:
+    sentence = (
+        "Pull recent news related to AI memory domain and analyze the news. "
+        "Tell me which news mostly affect the AI memory stocks and how?"
+    )
+    assert looks_like_sentence_topic(sentence) is True
+    # Short subject phrases (the intended input) pass.
+    assert looks_like_sentence_topic("AI memory") is False
+    assert looks_like_sentence_topic("high bandwidth memory") is False
+    assert looks_like_sentence_topic("robotics") is False

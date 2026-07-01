@@ -141,3 +141,33 @@ def test_analyze_topic_news_empty_bundle_errors_gracefully() -> None:
     )
     assert r["error"] == "no news found for this theme in the window"
     assert r["known_topic"] is True  # transparency block still present
+
+
+# ---- sentence-topic guard (deterministic theme route fed a full question) ---------------------
+_PASTED_QUESTION = (
+    "Pull recent news related to AI memory domain and analyze the news. "
+    "Tell me which news mostly affect the AI memory stocks and how?"
+)
+
+
+def test_analyze_topic_news_rejects_pasted_question() -> None:
+    # A full question in the theme box must fail loudly (not silently return zero articles) and
+    # must NOT invoke the LLM (guard fires before synthesis).
+    llm = FakeLLM(_summary_payload())
+    r = _executor(llm=llm).execute("analyze_topic_news", {"topic": _PASTED_QUESTION})
+    assert "error" in r and "full question" in r["error"]
+    assert "Auto" in r["error"]  # points the user to LLM routing
+    assert set(r["known_themes"]) >= {"ai_memory", "robotics"}
+    assert llm.calls == 0  # rejected before any paid synthesis call
+
+
+def test_get_topic_news_rejects_pasted_question() -> None:
+    r = _executor().execute("get_topic_news", {"topic": _PASTED_QUESTION})
+    assert "error" in r and "full question" in r["error"]
+
+
+def test_topic_guard_allows_known_theme_even_if_wordy_alias() -> None:
+    # Guard is exempt for curated themes: a short subject phrase still runs normally.
+    r = _executor().execute("get_topic_news", {"topic": "AI memory"})
+    assert "error" not in r
+    assert r["known_topic"] is True

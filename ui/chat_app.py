@@ -419,10 +419,11 @@ for idx, msg in enumerate(st.session_state.messages):
             _render_export(msg["content"], msg.get("charts", []), idx)
 
 # ---- handle quick-starter injection ----
-if "pending_prompt" in st.session_state:
-    pending = st.session_state.pop("pending_prompt")
-else:
-    pending = None
+pending = st.session_state.pop("pending_prompt", None)
+# When a deterministic route can't handle the input (e.g. a full question typed into the theme
+# box), the user can bounce the SAME text to the LLM router via an inline button. That sets
+# `force_auto_prompt`, which overrides the sidebar routing mode for this one turn only.
+force_auto_prompt = st.session_state.pop("force_auto_prompt", None)
 
 # ---- input bar ----
 if not settings.anthropic_api_key:
@@ -439,9 +440,16 @@ elif selected_domain is not None:
 else:
     _placeholder = "Ask anything about a stock…"
 
-prompt = st.chat_input(_placeholder) or pending
+prompt = st.chat_input(_placeholder) or pending or force_auto_prompt
+# A forced-Auto retry runs the LLM router regardless of the sidebar mode; otherwise the sidebar
+# mode (Auto vs. a named domain) decides.
+run_auto = selected_domain is None or (
+    force_auto_prompt is not None and prompt == force_auto_prompt
+)
 
 if prompt:
+    # Starting a fresh turn clears any pending bounce-to-Auto offer from a previous failed turn.
+    st.session_state.pop("fallback_prompt", None)
     # Show user message immediately.
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
@@ -452,10 +460,12 @@ if prompt:
         charts: list[ChartSpec] = []
         sources: list[dict] = []  # type: ignore[type-arg]
         spinner_msg = (
-            f"Running {selected_domain}…" if selected_domain else "Working on your request…"
+            "Working on your request…"
+            if run_auto
+            else f"Running {selected_domain}…"
         )
         with st.spinner(spinner_msg):
-            if selected_domain is None:
+            if run_auto:
                 # ---- Auto: the LLM agent loop picks + composes tools (unchanged). ----
                 try:
                     result = run_agent(
@@ -507,6 +517,8 @@ if prompt:
                     sources = _sources_from_tool_results(invs)
                     if "error" in structured:
                         response = f"⚠️ {structured['error']}"
+                        # LLM router may handle what this single route couldn't — offer the bounce.
+                        st.session_state["fallback_prompt"] = prompt
                     elif "answer" in structured:
                         response = rr.text  # synthesis tools carry a cited prose answer
                     else:
@@ -518,6 +530,8 @@ if prompt:
                     st.caption(f"🎯 Deterministic route: {tool_name} (no LLM routing call)")
                 except RouterError as exc:
                     response = f"⚠️ {exc}"
+                    # e.g. a missing ticker/param the LLM router can infer from the text.
+                    st.session_state["fallback_prompt"] = prompt
         st.markdown(response)
         for spec in charts:
             _render_chart(spec)
@@ -531,3 +545,19 @@ if prompt:
     )
     # Save the thread to disk so it survives restarts and shows in the sidebar.
     _save_current_thread()
+
+# ---- bounce-to-Auto affordance (rendered OUTSIDE the turn block so the click is captured) ----
+# A Streamlit button must be re-instantiated on the run that handles its click; a button defined
+# only inside `if prompt:` would be gone on the click rerun (prompt is empty then), so its click
+# would be lost. We persist the failed text in `fallback_prompt` and render the button here every
+# run until the user acts. Explicit (not automatic): a deterministic turn never silently spends a
+# routing LLM call the user opted out of by choosing a domain.
+_fallback = st.session_state.get("fallback_prompt")
+if _fallback and st.button(
+    "🤖 Ask this in Auto (LLM) mode instead",
+    key="auto_fallback_btn",
+    help="Re-run this exact question through the LLM router, which can compose multiple tools.",
+):
+    st.session_state["force_auto_prompt"] = _fallback
+    st.session_state.pop("fallback_prompt", None)
+    st.rerun()

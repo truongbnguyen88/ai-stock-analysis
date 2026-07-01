@@ -28,7 +28,13 @@ from stock_agent.llm.client import LLMError, TextLLM
 from stock_agent.llm.news_summarizer import summarize_news
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher, TopicNewsFetcher
-from stock_agent.news.topics import ResolvedTopic, gdelt_query_expression, list_topics
+from stock_agent.news.topics import (
+    ResolvedTopic,
+    gdelt_query_expression,
+    list_topics,
+    looks_like_sentence_topic,
+    resolve_topic,
+)
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
 from stock_agent.pipelines.research import ResearchPipelineError, run_research
 from stock_agent.providers.base import ProviderError
@@ -970,6 +976,27 @@ class ToolExecutor:
         }
 
     @staticmethod
+    def _reject_sentence_topic(topic: str) -> dict[str, Any] | None:
+        """Guard the theme route: reject a pasted sentence/question, else return None.
+
+        The theme tools take a SUBJECT PHRASE ("AI memory"), but the deterministic route feeds them
+        the raw chat text — so a full question would become a literal-string query that silently
+        matches nothing. When an UNKNOWN topic looks like a sentence, fail loudly with guidance
+        instead (curated registry themes are exempt: they resolve regardless of length).
+        """
+        if resolve_topic(topic).known or not looks_like_sentence_topic(topic):
+            return None
+        return {
+            "error": (
+                "That looks like a full question, not a theme. The theme route needs a short "
+                "subject phrase (e.g. 'AI memory', 'robotics', 'semiconductors') — type just the "
+                "theme here, or switch to Auto (LLM) mode to ask a full question."
+            ),
+            "topic": topic,
+            "known_themes": list(list_topics()),
+        }
+
+    @staticmethod
     def _topic_sentiment(articles: list[Any]) -> dict[str, Any] | None:
         """Average article tone over the articles that carry a score (None if none do).
 
@@ -987,6 +1014,8 @@ class ToolExecutor:
 
     def _tool_get_topic_news(self, args: dict[str, Any]) -> dict[str, Any]:
         topic = str(args["topic"])
+        if (rejected := self._reject_sentence_topic(topic)) is not None:
+            return rejected
         days = int(args.get("days", 14))
         resolved, bundle = TopicNewsFetcher(self._registry).fetch(
             topic,
@@ -1012,6 +1041,8 @@ class ToolExecutor:
         if self._llm is None:
             return {"error": "topic-news analysis unavailable (no LLM configured)"}
         topic = str(args["topic"])
+        if (rejected := self._reject_sentence_topic(topic)) is not None:
+            return rejected
         days = int(args.get("days", 14))
         resolved, bundle = TopicNewsFetcher(self._registry).fetch(
             topic,

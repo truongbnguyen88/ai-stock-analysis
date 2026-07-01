@@ -231,8 +231,13 @@ def run_agent(
                     "role": "user",
                     "content": (
                         "These figures are not supported by any tool result: "
-                        f"{', '.join(violations)}. Restate using only values returned by tools "
-                        "(call a tool if you need a number), or remove them."
+                        f"{', '.join(violations)}. They will be rejected. Rewrite the answer so "
+                        "EVERY percentage or decimal is one that a tool actually returned. For any "
+                        "figure not in the tool outputs (e.g. a market-share or growth statistic "
+                        "from general knowledge), do NOT guess a number — either call a tool that "
+                        "produces it, or describe the effect QUALITATIVELY and directionally "
+                        "(larger/smaller, tailwind/headwind, more/less concentrated) with no "
+                        "invented figure. Keep all correctly-sourced numbers as they are."
                     ),
                 }
             )
