@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     # (curated registry themes are left untouched). Improves recall on ad-hoc
     # themes; best-effort, so it never blocks a search. Off => exact phrase only.
     news_topic_expansion: bool = True
+    # GDELT DOC enforces ~1 request / 5s and temporarily IP-bans burst callers (persistent HTTP
+    # 429s). The provider self-throttles to at most one request per this interval (process-wide) so
+    # a UI that fires several theme calls in quick succession never trips the ban. 0 disables.
+    gdelt_min_interval_seconds: float = 5.0
 
     # ---- Provider behavior ----
     cache_dir: Path = Path(".cache")
