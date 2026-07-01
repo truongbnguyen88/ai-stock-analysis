@@ -24,7 +24,7 @@ or a schema enforces it.** We never rely on the prompt alone for correctness.
 
 | # | Tool (your name for it) | Role | Version tag | Source |
 |---|---|---|---|---|
-| 1 | News analysis for a ticker | Role A — summarizer | `news_summary.v3` | [llm/prompts/news_summary.py](../src/stock_agent/llm/prompts/news_summary.py) |
+| 1 | News analysis for a ticker | Role A — summarizer | `news_summary.v4` | [llm/prompts/news_summary.py](../src/stock_agent/llm/prompts/news_summary.py) |
 | 2 | News + model synthesis | Role C — reconciler | `synthesis.v1` | [llm/prompts/synthesis.py](../src/stock_agent/llm/prompts/synthesis.py) |
 | 3 | LLM as orchestrator (chat) | Role B — router | `agent.v16` | [agent/prompts/agent.py](../src/stock_agent/agent/prompts/agent.py) |
 | 4 | SEC filings Q&A (single-hop) | grounded QA | `research.v1` | [research/prompts.py](../src/stock_agent/research/prompts.py) |
@@ -87,7 +87,7 @@ the cheapest part.
 
 ---
 
-## 2. Tool #1 — News analysis (Role A summarizer, `news_summary.v3`)
+## 2. Tool #1 — News analysis (Role A summarizer, `news_summary.v4`)
 
 **Job:** turn a ranked list of news articles for one ticker into a structured qualitative synthesis
 (overview, themes, bullish/bearish/risks/catalysts), each point cited to article URLs.
@@ -108,6 +108,9 @@ STRICT RULES:
 
 OUTPUT: Return ONLY a single JSON object … { "overview", "key_themes", "bullish":[{point,sources}],
 "bearish":[…], "risks":[…], "catalysts":[…] }
+Provide 5-8 key_themes when the articles support that many distinct, material themes; ORDER them
+most important/material first (recency breaks ties); never pad, duplicate, or split a theme to hit
+the count.
 Each "sources" entry must be one of the provided article URLs. Use [] when no specific article
 supports a point.
 ```
@@ -130,10 +133,17 @@ supports a point.
   output.
 - **JSON shape with `sources` per point** — forces *point-level* attribution, not a bibliography
   dump. Each claim carries its evidence.
+- **The `key_themes` count + ordering (the v3 → v4 change).** The model, left to its own judgment,
+  produced only ~3-5 themes. v4 asks for **5-8** distinct material themes *when the articles support
+  them*, **ordered most-important-first** (recency breaks ties). The teaching point is the *shape* of
+  the instruction, not the number: it pairs a target range with a hard **anti-padding** clause
+  ("never pad, duplicate, or split a theme to hit the count") so a thin news window still yields
+  fewer — honestly — rather than inflating. A count target without the anti-padding guard would
+  reintroduce reflection's inflation failure mode (§2 reflection pass, §9.6).
 
 ### The reflection (self-review) pass — a technique worth stealing
 
-`news_summary.v3` runs the model **twice** with the *same* `SYSTEM` (so caching still hits):
+`news_summary.v4` runs the model **twice** with the *same* `SYSTEM` (so caching still hits):
 
 1. **Draft** — `build_user(ticker, articles)` → first JSON.
 2. **Reflect** — `build_reflection(ticker, articles, draft_json)` re-sends the articles **+ the draft
