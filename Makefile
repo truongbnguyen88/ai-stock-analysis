@@ -1,9 +1,9 @@
-.PHONY: install check test lint typecheck format clean ui pull-models verify-models refresh-filings rag-eval
+.PHONY: install check test lint typecheck check-math format clean ui pull-models verify-models refresh-filings rag-eval
 
 install:  ## editable install with dev tooling
 	pip install -e ".[dev]"
 
-check: lint typecheck test  ## run the full gate (must be green to advance a phase)
+check: lint typecheck check-math test  ## run the full gate (must be green to advance a phase)
 
 test:
 	pytest
@@ -13,6 +13,9 @@ lint:
 
 typecheck:
 	mypy
+
+check-math:  ## flag GitHub-MathJax render hazards in docs/ (see the github-math skill)
+	python scripts/check_github_math.py docs/*.md
 
 format:  ## auto-format and apply safe lint fixes
 	ruff format src tests
