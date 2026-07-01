@@ -9,6 +9,7 @@ import pytest
 
 from stock_agent.agent.runtime import (
     AgentGroundingError,
+    AnthropicToolClient,
     ToolResponse,
     ToolUse,
     run_agent,
@@ -174,6 +175,56 @@ def test_persistent_fabrication_raises() -> None:
     script = [_final("A 92.5% chance."), _final("Still 92.5% likely.")]
     with pytest.raises(AgentGroundingError):
         run_agent("will it go up?", llm=FakeToolLLM(script), executor=_executor())
+
+
+class _RecordingAnthropic:
+    """Minimal fake Anthropic client: records the kwargs of the last messages.create call."""
+
+    class _Resp:
+        content: list[Any] = []
+        stop_reason = "end_turn"
+
+    class _Messages:
+        def __init__(self) -> None:
+            self.kwargs: dict[str, Any] = {}
+
+        def create(self, **kwargs: Any) -> Any:
+            self.kwargs = kwargs
+            return _RecordingAnthropic._Resp()
+
+    def __init__(self) -> None:
+        self.messages = _RecordingAnthropic._Messages()
+
+
+def test_agent_client_pins_temperature_zero_by_default() -> None:
+    """The agent loop decodes greedily (temperature 0) for reproducible routing by default."""
+    fake = _RecordingAnthropic()
+    client = AnthropicToolClient(Settings(_env_file=None), client=fake)
+    client.create(system="s", messages=[{"role": "user", "content": "hi"}], tools=[], max_tokens=16)
+    assert fake.messages.kwargs["temperature"] == 0.0
+
+
+def test_agent_client_omits_temperature_when_none() -> None:
+    """agent_temperature=None omits the param so models that reject sampling params don't 400."""
+    fake = _RecordingAnthropic()
+    client = AnthropicToolClient(Settings(_env_file=None, agent_temperature=None), client=fake)
+    client.create(system="s", messages=[{"role": "user", "content": "hi"}], tools=[], max_tokens=16)
+    assert "temperature" not in fake.messages.kwargs
+
+
+def test_execute_never_raises_on_unexpected_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """execute() honors its 'never raises' contract even for error types OUTSIDE the known tuple
+    (IndexError/RuntimeError/etc.), returning an error dict so the agent loop and the deterministic
+    UI path survive instead of crashing the whole turn."""
+    ex = _executor()
+
+    def boom(_args: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("unexpected explosion")  # not a ProviderError/ValueError/KeyError
+
+    monkeypatch.setattr(ex, "_tool_get_price_summary", boom)
+    result = ex.execute("get_price_summary", {"ticker": "NVDA"})
+    assert "error" in result
+    assert "RuntimeError" in result["error"]
 
 
 def test_run_forecast_tool_routes_model_selection() -> None:

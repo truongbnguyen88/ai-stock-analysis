@@ -23,15 +23,19 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from stock_agent.agent.runtime import ToolLLM, run_agent
 from stock_agent.agent.tools import ToolExecutor
 from stock_agent.logging_config import get_logger
 
+if TYPE_CHECKING:  # avoid a runtime import cycle (classifier imports router for ROUTES)
+    from stock_agent.agent.classifier import RouteClassifier
+
 log = get_logger(__name__)
 
 AUTO = "auto"  # sentinel route name meaning "let the LLM decide" (equivalent to route=None)
+CLASSIFY = "classify"  # sentinel: run the Haiku classifier, then dispatch or escalate
 
 
 class RouterError(ValueError):
@@ -230,9 +234,16 @@ class RouterResult:
 class Router:
     """Hybrid-routing front door: deterministic dispatch, or delegate to the LLM agent loop."""
 
-    def __init__(self, executor: ToolExecutor, *, tool_llm: ToolLLM | None = None) -> None:
+    def __init__(
+        self,
+        executor: ToolExecutor,
+        *,
+        tool_llm: ToolLLM | None = None,
+        classifier: RouteClassifier | None = None,
+    ) -> None:
         self._executor = executor
         self._tool_llm = tool_llm  # required only for the LLM-routing path
+        self._classifier = classifier  # required only for the two-stage CLASSIFY path
 
     def run(
         self,
@@ -254,12 +265,44 @@ class Router:
         """
         if route is None or route == AUTO:
             return self._run_llm(request, history=history)
+        if route == CLASSIFY:
+            return self._run_classified(request, history=history)
         inp = RouteInput(
             request=request,
             ticker=_normalize_ticker(ticker),
             horizon=horizon,
             days=days,
             model=model,
+        )
+        return self._run_deterministic(route, inp)
+
+    def _run_classified(
+        self, request: str, *, history: list[dict[str, Any]] | None
+    ) -> RouterResult:
+        """Two-stage route: cheap classifier -> one deterministic route, or escalate to the agent.
+
+        The classifier only chooses the capability + extracts params (never content/numbers). A
+        confident single-capability match dispatches deterministically (its own Sonnet synthesis, or
+        a $0 numeric route); anything compositional / low-confidence escalates to the full agent.
+        """
+        if self._classifier is None:
+            raise RouterError("classify routing requires a classifier (none configured)")
+        decision = self._classifier.classify(request)
+        route = decision.route
+        if route is None:  # escalated (equivalently decision.escalated) — defer to the Sonnet agent
+            log.info("router.classify_escalate", reason=decision.reason, conf=decision.confidence)
+            return self._run_llm(request, history=history)
+        log.info("router.classify_dispatch", route=route, conf=decision.confidence)
+        # For a topic route the extracted topic (not the whole question) is the query text; other
+        # routes that need free text (filings) use the full question. `_normalize_ticker` is a no-op
+        # here (the classifier already validated/upper-cased the symbol) but keeps args canonical.
+        spec = ROUTES[route]
+        req_text = decision.topic if ("topic" in spec.needs and decision.topic) else request
+        inp = RouteInput(
+            request=req_text,
+            ticker=_normalize_ticker(decision.ticker),
+            horizon=decision.horizon,
+            days=decision.days,
         )
         return self._run_deterministic(route, inp)
 
