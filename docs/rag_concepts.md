@@ -951,7 +951,7 @@ The two knobs trade quality for latency:
 
 **Added cost** is one cross-encoder forward pass per candidate, i.e. ≈ `fetch_k` passes per query —
 tens of milliseconds for a small local MiniLM-class model, zero extra **paid** tokens (the local
-reranker is onnx/$0; the Voyage reranker is the opt-in paid alternative). Retrieval stays $0/local.
+reranker is onnx/\$0; the Voyage reranker is the opt-in paid alternative). Retrieval stays \$0/local.
 
 ### 12.3 Worked intuition
 

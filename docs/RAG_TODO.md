@@ -332,8 +332,8 @@ summary) intact rather than handing raw chunks to the agent and hoping it cites 
 ## Cost (full 141-ticker universe)
 | Setup | Ingestion embed | Retrieval | Per memo | Notes |
 |---|---|---|---|---|
-| **Local (chosen)** | **$0** (M2, minutes) | $0 | ~$0.02–0.05 | only the Claude synthesis call is paid |
-| OpenAI embed (opt) | ~$0.7–2 one-time, **re-paid on each re-embed** | ~$0 | ~$0.02–0.05 | flip `embedding_provider=openai` |
+| **Local (chosen)** | **\$0** (M2, minutes) | \$0 | ~\$0.02–0.05 | only the Claude synthesis call is paid |
+| OpenAI embed (opt) | ~\$0.7–2 one-time, **re-paid on each re-embed** | ~\$0 | ~\$0.02–0.05 | flip `embedding_provider=openai` |
 
 ## Effort (MVP, incremental + gated): ~7–9 focused days
 P1 ~1.5d · P2 ~1d · P3 ~0.5d · P4 ~0.75d · P5 ~0.5d · P6 ~0.75d · P7 ~1d · P8 ~1.5d.

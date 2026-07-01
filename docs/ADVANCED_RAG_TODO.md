@@ -692,7 +692,7 @@ the graph) — a small follow-up slice with a test; **if not:** record the negat
 
 **Cost (local, paid — like the model backtests, NOT CI):** only the agentic loop spends (≤4 Sonnet
 calls/question: ≤3 cheap decisions + 1 ~18K-token terminal synthesis; the single-shot baseline is
-retrieval-only/$0). One full 2-run sweep over ~12 Q ≈ **$2–3**; budget **$5–8** total for 2–3
+retrieval-only/\$0). One full 2-run sweep over ~12 Q ≈ **\$2–3**; budget **\$5–8** total for 2–3
 iterations (label tuning + a couple of seeds, since the loop's LLM-generated queries make coverage
 non-deterministic — report it as directional, optionally average 2–3 seeds). Query embeddings are
 Voyage but negligible. CI stays free (harness-mechanics tests only).
