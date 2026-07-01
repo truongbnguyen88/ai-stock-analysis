@@ -18,19 +18,22 @@ supplies it) — never inferred here, per the numbers-vs-narrative invariant.
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+import threading
+import time
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from datetime import date as Date
 from typing import Any
 
 from stock_agent.providers._cache import DiskCache, cached_model, make_key
 from stock_agent.providers._http import HttpJson
-from stock_agent.providers.base import ProviderUnavailable
+from stock_agent.providers.base import ProviderRateLimit, ProviderUnavailable
 from stock_agent.schemas.news import Article, NewsBundle
 
 _NAME = "gdelt_doc"
 _URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 _MAX_RECORDS_CAP = 250  # GDELT DOC hard limit
+_DEFAULT_MIN_INTERVAL = 5.0  # GDELT DOC's documented floor: ~1 request / 5s
 
 
 def _build_query(keywords: Sequence[str]) -> str:
@@ -131,9 +134,21 @@ def _tone_from_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 class GdeltDocProvider:
-    """``TopicNewsProvider`` backed by the GDELT DOC 2.0 API (keyless)."""
+    """``TopicNewsProvider`` backed by the GDELT DOC 2.0 API (keyless).
+
+    Self-throttling: GDELT DOC caps at ~1 request / 5s and temporarily IP-bans burst callers
+    (persistent HTTP 429). All DOC requests are serialized process-wide (class-level lock +
+    last-request stamp) and spaced by ``min_interval`` seconds, so a UI firing several theme
+    queries in quick succession never trips the ban. A 429 that still slips through gets one
+    interval-length backoff-retry; a persistent 429 propagates so the registry fails over.
+    """
 
     name = _NAME
+
+    # Process-wide throttle state (shared across instances — the rate limit is per source IP, not
+    # per object). Tests reset ``_last_request_at`` to ``None`` for isolation.
+    _throttle_lock = threading.Lock()
+    _last_request_at: float | None = None
 
     def __init__(
         self,
@@ -142,19 +157,58 @@ class GdeltDocProvider:
         http: HttpJson | None = None,
         *,
         language: str = "english",
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings
         self._cache = cache
         self._http = http or HttpJson(_NAME)
         self._language = language
+        # Injectable clock/sleep keep the throttle deterministic and instant under test.
+        self._sleep = sleep
+        self._clock = clock
+        self._min_interval = float(
+            getattr(settings, "gdelt_min_interval_seconds", _DEFAULT_MIN_INTERVAL)
+        )
+
+    def _wait_for_slot(self) -> None:
+        """Sleep until ``min_interval`` has elapsed since the last DOC request (call under lock)."""
+        if self._min_interval <= 0:
+            return
+        last = GdeltDocProvider._last_request_at
+        if last is None:
+            return
+        remaining = self._min_interval - (self._clock() - last)
+        if remaining > 0:
+            self._sleep(remaining)
+
+    def _throttled_get(self, params: dict[str, Any]) -> Any:
+        """GET the DOC endpoint under the process-wide rate limit, with one 429 backoff-retry.
+
+        Serializes on the class lock so concurrent callers can't burst; stamps the send time so
+        the next caller waits out the interval. On a 429 (ban slipped through) it backs off one
+        interval and retries once; a second 429 propagates to the registry (which fails over).
+        """
+        attempts = 2  # initial + one retry on 429
+        for attempt in range(attempts):
+            with GdeltDocProvider._throttle_lock:
+                self._wait_for_slot()
+                GdeltDocProvider._last_request_at = self._clock()
+                try:
+                    return self._http.get(_URL, params=params)
+                except ProviderRateLimit:
+                    if attempt + 1 >= attempts:
+                        raise
+            # Lock released before the backoff sleep so we don't hold it idle.
+            self._sleep(self._min_interval)
+        raise AssertionError("unreachable: loop returns or raises")
 
     def available(self) -> bool:
         return True  # no API key required
 
     def _fetch(self, query: str, start: Date, end: Date, top_n: int) -> NewsBundle:
-        payload = self._http.get(
-            _URL,
-            params={
+        payload = self._throttled_get(
+            {
                 "query": query,
                 "mode": "ArtList",
                 "sort": "DateDesc",
@@ -162,7 +216,7 @@ class GdeltDocProvider:
                 "startdatetime": f"{start.strftime('%Y%m%d')}000000",
                 "enddatetime": f"{end.strftime('%Y%m%d')}235959",
                 "maxrecords": min(max(top_n, 1), _MAX_RECORDS_CAP),
-            },
+            }
         )
         if not isinstance(payload, dict):
             # GDELT returns text (not JSON) on a malformed query → treat as unavailable
@@ -186,15 +240,14 @@ class GdeltDocProvider:
         )
 
     def _fetch_tone(self, query: str, start: Date, end: Date) -> dict[str, Any] | None:
-        payload = self._http.get(
-            _URL,
-            params={
+        payload = self._throttled_get(
+            {
                 "query": query,
                 "mode": "ToneChart",
                 "format": "json",
                 "startdatetime": f"{start.strftime('%Y%m%d')}000000",
                 "enddatetime": f"{end.strftime('%Y%m%d')}235959",
-            },
+            }
         )
         if not isinstance(payload, dict):
             return None
