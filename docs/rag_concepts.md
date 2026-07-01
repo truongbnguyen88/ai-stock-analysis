@@ -256,8 +256,8 @@ $$
 H\big(Y \mid x, z\big) \le H\big(Y \mid x\big)
 $$
 
-drops because the evidence rules out continuations inconsistent with it (conditioning
-never increases uncertainty in expectation — $H(Y\mid X,Z)\le H(Y\mid X)$). Probability
+drops because the evidence rules out continuations inconsistent with it — conditioning
+never increases uncertainty in expectation, $H(Y \mid X, Z) \le H(Y \mid X)$. Probability
 mass moves from "plausible" onto "supported." It is **not** a proof of truthfulness — a
 bad retrieval or an unfaithful generator still errs — which is why RAG systems add a
 **citation/grounding guard** (every claim must trace to a retrieved chunk) as a separate
