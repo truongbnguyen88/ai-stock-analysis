@@ -708,6 +708,18 @@ class ToolExecutor:
         except (ProviderError, ValueError, KeyError) as exc:
             log.warning("agent.tool_failed", tool=name, error=str(exc))
             return {"error": f"{type(exc).__name__}: {exc}"}
+        except Exception as exc:  # noqa: BLE001 — contract: execute NEVER raises (see docstring)
+            # Final safety net for unexpected error types (IndexError on an empty series, an
+            # unwrapped network/timeout error, etc.). Returning an error dict keeps the agent loop
+            # and the deterministic UI path alive instead of crashing the turn; logged at error so
+            # the underlying bug is still visible in observability.
+            log.error(
+                "agent.tool_crashed",
+                tool=name,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return {"error": f"{type(exc).__name__}: {exc}"}
 
     def _tool_get_price_summary(self, args: dict[str, Any]) -> dict[str, Any]:
         ticker = str(args["ticker"]).upper()

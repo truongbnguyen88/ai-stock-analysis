@@ -277,11 +277,23 @@ def _save_current_thread() -> None:
     )
 
 
+def _clear_transient_ui_state() -> None:
+    """Drop per-turn UI offers that must not survive a thread switch.
+
+    ``fallback_prompt`` (the bounce-to-Auto offer) belongs to the turn that produced it; leaving it
+    set across a New chat / open / delete would render the button in a DIFFERENT thread and re-run
+    the wrong question. ``force_auto_prompt`` is popped every run, but clear it too for safety.
+    """
+    st.session_state.pop("fallback_prompt", None)
+    st.session_state.pop("force_auto_prompt", None)
+
+
 def _start_new_thread() -> None:
     st.session_state.thread_id = new_thread_id()
     st.session_state.thread_created_at = now_iso()
     st.session_state.messages = []
     st.session_state.agent_history = []
+    _clear_transient_ui_state()
 
 
 def _open_thread(thread_id: str) -> None:
@@ -290,6 +302,7 @@ def _open_thread(thread_id: str) -> None:
     st.session_state.thread_created_at = t.created_at
     st.session_state.messages = _deserialize_messages(t.display_messages)
     st.session_state.agent_history = t.agent_history
+    _clear_transient_ui_state()
 
 
 # ---- chat state (init before the sidebar, which lists threads) ----
