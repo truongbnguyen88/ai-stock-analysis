@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from stock_agent.schemas.news import Article
 
-VERSION = "news_summary.v3"
+VERSION = "news_summary.v4"
 
 # Static instructions — cached. Encodes the numbers-vs-narrative invariant and
 # the exact JSON contract (mirrors stock_agent.llm.guards.NewsSummary).
@@ -40,6 +40,10 @@ OUTPUT: Return ONLY a single JSON object (no prose, no markdown) with this shape
   "risks": [{"point": "<risk factor>", "sources": ["<url>", ...]}, ...],
   "catalysts": [{"point": "<upcoming catalyst/event>", "sources": ["<url>", ...]}, ...]
 }
+Provide 5-8 key_themes when the articles support that many distinct, material themes \
+(fewer only if the news genuinely doesn't cover more — never pad, duplicate, or split one \
+theme to reach the count). ORDER key_themes from MOST important/material to least; where two \
+are comparably important, put the more recent development first.
 Each "sources" entry must be one of the provided article URLs. Use [] when no \
 specific article supports a point. Keep points concise and grounded."""
 
@@ -64,7 +68,9 @@ def build_user(ticker: str, articles: list[Article]) -> str:
 _REFLECTION_RUBRIC = """\
 This is a SELF-REVIEW pass. Below are the same articles and your own DRAFT summary. \
 Critique the draft and return an IMPROVED JSON object in the identical shape. Check:
-- Completeness: did you miss a material theme, driver, risk, or catalyst the articles support?
+- Completeness: did you miss a material theme, driver, risk, or catalyst the articles support? \
+Aim for 5-8 key_themes when the news supports that many, ordered most important first (recency \
+breaks ties) — but never pad, duplicate, or split a theme just to hit the count.
 - Balance: are bullish AND bearish AND risks represented WHEN the articles support them \
 (do not force a side that the news does not back)?
 - Evidence: does every point cite at least one of the provided URLs? Drop or merge any \

@@ -107,7 +107,7 @@ def build_memo(
     news_themes: list[str] = []
     if news_summary is not None:
         grounding.add_from(news_summary.model_dump())
-        news_themes = list(news_summary.key_themes[:6])
+        news_themes = list(news_summary.key_themes[:8])  # up to 5-8 (importance-ordered)
     # Seed the grounding set from every quotable input. KNOWN LIMITATION: with ~10 full SEC
     # chunks the grounded number set is large, so this guard is recall-favoring — it reliably
     # blocks a figure absent from *all* inputs, but won't catch a fabricated number that happens

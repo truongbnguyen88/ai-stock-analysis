@@ -88,7 +88,7 @@ def _build_signals(
     if news_summary is not None:
         grounding.add_from(news_summary.model_dump())
         if news_summary.key_themes:
-            lines.append(f"- News themes: {'; '.join(news_summary.key_themes[:5])}")
+            lines.append(f"- News themes: {'; '.join(news_summary.key_themes[:8])}")
         if news_summary.bullish:
             lines.append(f"- News bullish: {'; '.join(p.point for p in news_summary.bullish[:3])}")
         if news_summary.bearish:
