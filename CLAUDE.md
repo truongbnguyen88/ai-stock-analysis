@@ -49,14 +49,19 @@ Operational guide for executing the roadmap. Global standards live in `~/.claude
 ## Docs: math & Mermaid (rendered on GitHub)
 **Explanation style (chat *and* docs).** Whenever explaining a mathematical concept, be specific and explain every quantity in **plain English** — for each symbol/term say what it *means* and, where useful, its units/range — not just the formula. Build up compound metrics from their parts (e.g. CG → DCG → IDCG → nDCG), and **include a small worked numeric example** when it aids understanding (reuse the exact values the tests assert, so the doc and the code agree). Prefer a quantity-by-quantity breakdown or a short table over a bare equation.
 
-Markdown docs render on the GitHub website via **MathJax** (`$…$` inline, `$$…$$` block). GitHub **unescapes backslash-escapes of markdown-significant punctuation — `#`, `_`, `*`, `` ` ``, `[`, `]` — even inside math**, so the bare char reaches MathJax and errors. Rules for any doc with equations:
+GitHub renders math (`$…$` inline, `$$…$$` block) via a **MathJax *subset*, not full LaTeX** — equations that compile under real LaTeX can still render wrong here. Two independent failure modes:
+
+**(A) GitHub unescapes backslash-escaped ASCII punctuation *before* MathJax sees it** (even inside math), so the bare char reaches MathJax:
 - **Never write `\#`, `\_`, `\*` (or `` \` ``, `\[`, `\]`) inside `$…$`/`$$…$$`.** They throw *"macro parameter character #"* / *"'_' allowed only in math mode"* on GitHub even though they're valid LaTeX locally.
-  - Count/cardinality → use an indicator sum `\frac{1}{N}\sum_t \mathbb{1}[\,\cdot\,]` or `\lvert\{\cdots\}\rvert`, **not** `\#`.
-  - Literal star → `{*}` or `\ast`, **not** `\*`.
-- **Code/config identifiers with underscores** (`as_of`, `days_to_next_earnings`, `hist_vol_20`) go in **markdown code spans** (backticks) *outside* math, or use a clean math symbol (`d_{\text{earn}}`, `t_0`). Never put a `_`-bearing name inside `\text{}`/`\texttt{}`.
-- **Safe to keep:** `\%`, `\{`, `\}`, `\!`, and all backslash+letter macros (`\frac`, `\sigma`, `\le`, `\mathbb`, `\text{…}` with no underscore). Only the six markdown-significant escapes above are the hazard.
+  - Count/cardinality → indicator sum `\frac{1}{N}\sum_t \mathbb{1}[\cdot]` or `\lvert\{\cdots\}\rvert`, **not** `\#`. Literal star → `{*}` or `\ast`, **not** `\*`.
+- **Spacing macros render as literal punctuation:** `\;`→`;`, `\,`→`,`, `\!`→`!`, `\:`→`:`. Do **not** use them (this repo hit exactly `p(y \mid x) \;=\;` → `p(y|x); = ;` and `H\!(…)` → `H!(…)`).
+- **Code/config identifiers with underscores** (`as_of`, `days_to_next_earnings`, `hist_vol_20`) go in **markdown code spans** (backticks) *outside* math, or use a clean symbol (`d_{\text{earn}}`, `t_0`). Never put a `_`-bearing name inside `\text{}`/`\texttt{}`.
+
+**(B) GitHub's MathJax lacks many fringe macros** — unknown ones print *literally*. So the letter-macro "fix" for (A)'s spacing does **not** work: `\thickspace`, `\thinspace`, `\medspace`, `\negthinspace` all show as raw text.
+- **Spacing (fixes both A and B): just DROP `\;`/`\,`/`\!`** — MathJax auto-spaces relations (`=`, `\le`, `\approx`) and operators. For a deliberate gap use `\quad`/`\qquad` (core, supported).
+- **Known-good** (render correctly): core backslash+letter macros — `\frac \sqrt \sum \prod \mid \le \ge \approx \in \mathbb \mathcal \mathrm \text \big \left \right \quad \lvert \rvert`, plus `\{`, `\}`, `\%`. Prefer these; do not reach for an exotic macro without confirming it renders on GitHub.
 - **Mermaid:** use fenced ```` ```mermaid ```` blocks; quote any node label containing punctuation (`["P(r) ratio"]`); `<br/>` for line breaks; avoid raw `<`/`>` in labels (use words) — the `-->` arrows are fine.
-- **Before committing a math/diagram doc**, grep the math spans for the hazards: no `\#`, `\_`, `\*` inside `$…$`, and no bare `_` inside `\text{}`/`\texttt{}`.
+- **Before committing a math/diagram doc**, grep the math spans for the hazards: no `\#` `\_` `\*` **`\;` `\,` `\!` `\:`** inside `$…$`/`$$…$$`, no bare `_` inside `\text{}`/`\texttt{}`, and no `\thickspace`/`\thinspace`/`\medspace`/`\negthinspace` anywhere. A doc that renders locally (VS Code, real LaTeX) is **not** proof it renders on GitHub — the GitHub web/app UI is the target.
 
 ## Testing requirements (per module type)
 - **Indicators / features:** golden-file tests with hand-verified expected values; edge cases (short series, NaNs, flat prices). Leakage assertions for features.
