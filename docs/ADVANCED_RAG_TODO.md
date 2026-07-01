@@ -891,7 +891,7 @@ actually traverse vs. degrade to hybrid+cost — the signal separating "graph he
 
 **Reward** `r(x,a)` — **retrieval-only, $0** (no synthesis in A6.1):
 
-$$r \thickspace{}=\thickspace{} \underbrace{\text{nDCG@}k}_{\text{quality}} \thickspace{}-\thickspace{} \lambda_{c}\thinspace{}\big(\text{LLM calls}+\text{latency}\big) \thickspace{}-\thickspace{} \lambda_{f}\thinspace{}\big(\text{citation-guard failures}\big)$$
+$$r = \underbrace{\text{nDCG@}k}_{\text{quality}} - \lambda_{c}\big(\text{LLM calls}+\text{latency}\big) - \lambda_{f}\big(\text{citation-guard failures}\big)$$
 
 where in A6.1: `quality` = `nDCG@k` for a single-shot `LabeledQuery` **or single-shot `coverage`** for a
 `MultiHopQuery` (one `retrieve()` of arm `a`, scored by aspect coverage) — both ∈ [0,1], both $0;
@@ -942,7 +942,7 @@ that matrix. Exploit both in tests.
   3-sample set; `DR == IPS` when `q̂≡0`; `SNIPS ∈ [min r, max r]`; IPS unbiased vs the full-info matrix
   on a toy where `μ` covers all arms.
 
-$$\hat V_{\text{IPS}}(\pi)=\frac1N\sum_i \frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}\thinspace{}r_i,\quad \hat V_{\text{SNIPS}}(\pi)=\frac{\sum_i w_i r_i}{\sum_i w_i},\thickspace{}\thickspace{} w_i=\frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)},\quad \hat V_{\text{DR}}(\pi)=\frac1N\sum_i\Big[\hat q(x_i,\pi)+w_i\big(r_i-\hat q(x_i,a_i)\big)\Big]$$
+$$\hat V_{\text{IPS}}(\pi)=\frac1N\sum_i \frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)}r_i,\quad \hat V_{\text{SNIPS}}(\pi)=\frac{\sum_i w_i r_i}{\sum_i w_i}, w_i=\frac{\pi(a_i\mid x_i)}{\mu(a_i\mid x_i)},\quad \hat V_{\text{DR}}(\pi)=\frac1N\sum_i\Big[\hat q(x_i,\pi)+w_i\big(r_i-\hat q(x_i,a_i)\big)\Big]$$
 
 - **A6.1e — Policy.** `rag/policy.py` — `Policy` Protocol (`act(x) -> (action, propensity)` +
   `prob(a, x) -> float` for OPE): `FixedPolicy(name)` (the baseline to beat = the promoted default;
@@ -1019,7 +1019,7 @@ generalizing the A4 ReAct loop (whose policy is currently a fixed LLM prompt) an
   optional **potential-based shaping** `r_t = γ·Φ(s_{t+1}) − Φ(s_t)` with `Φ` = current union coverage
   (Ng-Harada — preserves the optimal policy, densifies the signal). Objective:
 
-$$\max_\theta\thickspace{} \mathbb{E}_{\tau\sim\pi_\theta}\Big[\textstyle\sum_{t=0}^{T}\gamma^{t} r_t\Big]$$
+$$\max_\theta \mathbb{E}_{\tau\sim\pi_\theta}\Big[\textstyle\sum_{t=0}^{T}\gamma^{t} r_t\Big]$$
 
 - **Environment** `rag/rl/env.py` — a Gym-style `reset()/step(a)` RAG-retrieval MDP over the labeled
   multi-hop benchmark, using A6.1c as the reward. **This simulator is the key enabler**: it yields
@@ -1037,14 +1037,14 @@ each rung de-risks the next:
    always-available, **CI-tested default** and a correctness sanity-check for the PG machinery (PPO is a
    stabilized REINFORCE, so this de-risks the PPO impl). Advantage `G_t − b(s_t)`:
 
-$$\nabla_\theta J(\theta)=\mathbb{E}_{\tau\sim\pi_\theta}\Big[\textstyle\sum_t \nabla_\theta\log\pi_\theta(a_t\mid s_t)\thinspace{}\big(G_t-b(s_t)\big)\Big]$$
+$$\nabla_\theta J(\theta)=\mathbb{E}_{\tau\sim\pi_\theta}\Big[\textstyle\sum_t \nabla_\theta\log\pi_\theta(a_t\mid s_t)\big(G_t-b(s_t)\big)\Big]$$
 
 3. **PPO (the main learner)** — actor-critic policy gradient with the **clipped surrogate** objective
    (prevents destructively large updates; the RLHF/agent-RL workhorse). MLP policy + value head on the
    `s_t` features, trained on-policy over the $0 simulator. Backend = **torch** (isolated `[rl]` extra,
    lazy-imported, OpenMP-isolated from lightgbm + a day-1 smoke test) or **JAX** if the isolation chafes:
 
-$$L^{\text{CLIP}}(\theta)=\mathbb{E}_t\Big[\min\big(\rho_t(\theta)\thinspace{}\hat A_t,\thickspace{}\operatorname{clip}(\rho_t(\theta),1-\epsilon,1+\epsilon)\thinspace{}\hat A_t\big)\Big],\quad \rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}$$
+$$L^{\text{CLIP}}(\theta)=\mathbb{E}_t\Big[\min\big(\rho_t(\theta)\hat A_t,\operatorname{clip}(\rho_t(\theta),1-\epsilon,1+\epsilon)\hat A_t\big)\Big],\quad \rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)}$$
 
 4. **(Optional) GRPO-style** group-relative advantage — sample `G` trajectories per query, center the
    reward by the per-query group mean (no learned critic); fits a tiny-data regime, a clean tie to

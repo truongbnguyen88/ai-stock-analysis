@@ -79,9 +79,9 @@ retrieval decisions*.
 That last feature is the whole game: it is the encoded form of *"NVDA's filing just told me Micron
 matters, but I haven't pulled Micron's filing yet."*
 
-**Action $a_t \in \lbrace{}\text{STOP}\rbrace{} \cup \lbrace{}(\text{config } c,\ \text{scope } \sigma)\rbrace{}$:**
-- $c \in \lbrace{}\text{dense, reranked, hybrid, hybrid+rerank, graph}\rbrace{}$ — *which retriever* (the A6.1 action space, = `LATTICE_SYSTEMS` ∪ {graph}).
-- $\sigma \in \lbrace{}\text{self-ticker},\ \text{discovered-entity}_j,\ \text{none}\rbrace{}$ — *where to point it* (the bridge decision; in A4 this is the brittle alias-bridge heuristic, here it is **learned**).
+**Action $a_t \in \{\text{STOP}\} \cup \{(\text{config } c,\ \text{scope } \sigma)\}$:**
+- $c \in \{\text{dense, reranked, hybrid, hybrid+rerank, graph}\}$ — *which retriever* (the A6.1 action space, = `LATTICE_SYSTEMS` ∪ {graph}).
+- $\sigma \in \{\text{self-ticker},\ \text{discovered-entity}_j,\ \text{none}\}$ — *where to point it* (the bridge decision; in A4 this is the brittle alias-bridge heuristic, here it is **learned**).
 - `STOP` — *when to stop* (in A4 the LLM's "reflective stop," here **learned**).
 
 One action jointly answers **which / where / whether-to-stop**. This strictly contains both A6.1
@@ -98,7 +98,7 @@ unlimited, $0, reproducible rollouts possible** — the key enabler for on-polic
 $$R = \text{coverage(final union)} - \lambda_c\cdot(\text{steps}+\text{LLM calls}) - \lambda_f\cdot(\text{guard failures})$$
 
 with faithfulness (citation/number guard) as a **hard constraint** — any guard-failing trajectory is
-floored to reward 0. Optional **potential-based shaping** $r_t = \gamma\thinspace{}\Phi(s_{t+1}) - \Phi(s_t)$
+floored to reward 0. Optional **potential-based shaping** $r_t = \gamma\Phi(s_{t+1}) - \Phi(s_t)$
 with $\Phi(s) =$ current union coverage. Shaping telescopes to the same return (Ng–Harada → optimal
 policy unchanged) but **densifies credit**: the agent is rewarded the step it adds coverage, not only
 at the end — essential when the horizon is short and the terminal signal is a single scalar.
@@ -407,14 +407,14 @@ $$
 G(\tau)=
 \begin{cases}
 0 & \text{if any guard fails (faithfulness — hard constraint)}\\[4pt]
-\underbrace{\text{quality(final union)}}_{\text{coverage or nDCG@}k}\thickspace{}-\thickspace{}\lambda_c\sum_t \text{cost}(a_t) & \text{otherwise}
+\underbrace{\text{quality(final union)}}_{\text{coverage or nDCG@}k}-\lambda_c\sum_t \text{cost}(a_t) & \text{otherwise}
 \end{cases}
 $$
 
 ### Dense per-step form (potential-based shaping, $\Phi=$ union coverage)
 
 $$
-r_t=\underbrace{\gamma\thinspace{}\Phi(s_{t+1})-\Phi(s_t)}_{\text{coverage shaping}}\thickspace{}-\thickspace{}\lambda_c\thinspace{}\text{cost}(a_t),\qquad \Phi(s_0)=0
+r_t=\underbrace{\gamma\Phi(s_{t+1})-\Phi(s_t)}_{\text{coverage shaping}}-\lambda_c\text{cost}(a_t),\qquad \Phi(s_0)=0
 $$
 
 The two coincide because the shaping **telescopes**:
@@ -434,7 +434,7 @@ $\gamma$ the discount; $\lambda_c$ the cost price; $k$ the cutoff for nDCG.)
   "always retrieve to the budget, never stop" — no stop incentive, and a noisy high-recall arm looks
   free. That degeneracy is exactly why Terms 2–3 exist.
 
-### Term 2 — cost penalty $-\lambda_c\thinspace{}\text{cost}(a_t)$: the **stop / efficiency pressure**
+### Term 2 — cost penalty $-\lambda_c\text{cost}(a_t)$: the **stop / efficiency pressure**
 
 - **What.** `cost = steps + LLM calls`. In the $0 simulator the per-step LLM cost is ~0 (templated
   queries) so cost ≈ step count + the one terminal synthesis; in the **real held-out eval** the decision
@@ -443,7 +443,7 @@ $\gamma$ the discount; $\lambda_c$ the cost price; $k$ the cutoff for nDCG.)
   taking iff its *marginal* coverage exceeds its marginal cost:
 
 $$
-r_t\approx \underbrace{\Delta\text{coverage}(a_t)}_{\text{newly-covered aspects}}-\lambda_c\thinspace{}\text{cost}(a_t)\quad(\gamma\to1)\thickspace{}\thickspace{}\Rightarrow\thickspace{}\thickspace{} \text{STOP when expected }\Delta\text{coverage}<\lambda_c .
+r_t\approx \underbrace{\Delta\text{coverage}(a_t)}_{\text{newly-covered aspects}}-\lambda_c\text{cost}(a_t)\quad(\gamma\to1)\Rightarrow \text{STOP when expected }\Delta\text{coverage}<\lambda_c .
 $$
 
 - **Sensitivity.** `λ_c` too **large** → under-retrieval (stops before bridging, misses the A2-type
@@ -473,7 +473,7 @@ $$
 
 ### The marginal-coverage reading (why the policy stops)
 
-With $\gamma\to1$, $r_t \approx \Delta\text{coverage}(a_t)-\lambda_c\thinspace{}\text{cost}(a_t)$. So the learned
+With $\gamma\to1$, $r_t \approx \Delta\text{coverage}(a_t)-\lambda_c\text{cost}(a_t)$. So the learned
 behavior is: **keep retrieving while a hop's expected new-aspect coverage exceeds $\lambda_c$; otherwise
 STOP.** On the worked NVDA→TSM episode: $a_0$ (self-ticker) buys +0.5 coverage ≫ cost → take it; $a_1$
 (bridge to TSM) buys the final +0.5 → take it; at $s_2$ every aspect is covered so the next hop's

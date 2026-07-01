@@ -36,7 +36,7 @@ A large language model stores everything it "knows" in its weights $\theta$ — 
 **parametric memory**. Decoding produces text from the conditional distribution
 
 $$
-p_\theta(y \mid x) = \prod_{i=1}^{N} p_\theta\negthinspace{}\left(y_i \mid x,\thinspace{} y_{1:i-1}\right),
+p_\theta(y \mid x) = \prod_{i=1}^{N} p_\theta\left(y_i \mid x, y_{1:i-1}\right),
 $$
 
 where $x$ is the prompt and $y = (y_1,\dots,y_N)$ the generated tokens. Parametric
@@ -164,8 +164,8 @@ Treat the retrieved document $z$ as a **latent variable** drawn from a corpus
 $\mathcal{Z}$. The quantity we want, $p(y \mid x)$, marginalizes over which document was used:
 
 $$
-p(y \mid x) \thickspace{}=\thickspace{} \sum_{z \in \mathcal{Z}} p(y, z \mid x)
-\thickspace{}=\thickspace{} \sum_{z \in \mathcal{Z}} \underbrace{p_\eta(z \mid x)}_{\text{retriever}}\thickspace{}
+p(y \mid x) = \sum_{z \in \mathcal{Z}} p(y, z \mid x)
+= \sum_{z \in \mathcal{Z}} \underbrace{p_\eta(z \mid x)}_{\text{retriever}}
 \underbrace{p_\theta(y \mid x, z)}_{\text{generator}} .
 $$
 
@@ -173,7 +173,7 @@ The corpus has millions of chunks, so the exact sum is intractable. We approxima
 the **top-$k$** documents the retriever scores highest:
 
 $$
-p(y \mid x) \thickspace{}\approx\thickspace{} \sum_{z \in \mathrm{TopK}(x)} p_\eta(z \mid x)\thinspace{} p_\theta(y \mid x, z).
+p(y \mid x) \approx \sum_{z \in \mathrm{TopK}(x)} p_\eta(z \mid x) p_\theta(y \mid x, z).
 $$
 
 This is the core RAG identity (Lewis et al., 2020): a **mixture** over retrieved
@@ -195,16 +195,16 @@ the query *and* on the retrieved evidence.
 applications and this repo approximate):
 
 $$
-p_{\text{seq}}(y \mid x) \thickspace{}=\thickspace{} \sum_{z \in \mathrm{TopK}(x)} p_\eta(z \mid x)
-\prod_{i=1}^{N} p_\theta\negthinspace{}\left(y_i \mid x, z, y_{1:i-1}\right).
+p_{\text{seq}}(y \mid x) = \sum_{z \in \mathrm{TopK}(x)} p_\eta(z \mid x)
+\prod_{i=1}^{N} p_\theta\left(y_i \mid x, z, y_{1:i-1}\right).
 $$
 
 **RAG-Token** lets *each token* attend to a (possibly different) $z$ — strictly more
 expressive, used when different facts must be stitched mid-sentence:
 
 $$
-p_{\text{tok}}(y \mid x) \thickspace{}=\thickspace{} \prod_{i=1}^{N} \thickspace{}\sum_{z \in \mathrm{TopK}(x)}
-p_\eta(z \mid x)\thinspace{} p_\theta\negthinspace{}\left(y_i \mid x, z, y_{1:i-1}\right).
+p_{\text{tok}}(y \mid x) = \prod_{i=1}^{N} \sum_{z \in \mathrm{TopK}(x)}
+p_\eta(z \mid x) p_\theta\left(y_i \mid x, z, y_{1:i-1}\right).
 $$
 
 The difference is where the sum sits: **outside** the product (one document per answer)
@@ -216,14 +216,14 @@ A **bi-encoder** (dense passage retrieval, DPR) maps query and document into a s
 $\mathbb{R}^d$ space with encoders $E_q, E_d$ and scores them by inner product:
 
 $$
-s(x, z) \thickspace{}=\thickspace{} E_q(x)^{\top} E_d(z).
+s(x, z) = E_q(x)^{\top} E_d(z).
 $$
 
 The retriever turns scores into a distribution with a softmax over the retrieved set:
 
 $$
-p_\eta(z \mid x) \thickspace{}=\thickspace{} \frac{\exp\negthinspace{}\big(s(x, z)\big)}
-{\sum_{z' \in \mathrm{TopK}(x)} \exp\negthinspace{}\big(s(x, z')\big)} .
+p_\eta(z \mid x) = \frac{\exp\big(s(x, z)\big)}
+{\sum_{z' \in \mathrm{TopK}(x)} \exp\big(s(x, z')\big)} .
 $$
 
 Two encoders (one for the query, one for documents) is what makes retrieval cheap: every
@@ -238,8 +238,8 @@ Modern applications rarely jointly train retriever and generator. Instead both a
 top-$k$ set and condition the generator on it directly,
 
 $$
-p(y \mid x) \thickspace{}\approx\thickspace{} p_\theta\negthinspace{}\big(y \mid x,\thinspace{} z_{1:k}\big),
-\qquad z_{1:k} = \mathrm{TopK}_{z \in \mathcal{Z}}\thickspace{} s(x, z),
+p(y \mid x) \approx p_\theta\big(y \mid x, z_{1:k}\big),
+\qquad z_{1:k} = \mathrm{TopK}_{z \in \mathcal{Z}} s(x, z),
 $$
 
 i.e. "retrieve the best $k$ chunks, paste them into context, generate." You lose the
@@ -253,7 +253,7 @@ Generation is sampling from $p_\theta(\cdot \mid x, z)$. Conditioning on relevan
 $z$ **concentrates** that distribution: the entropy
 
 $$
-H\negthinspace{}\big(Y \mid x, z\big) \thickspace{}\le\thickspace{} H\negthinspace{}\big(Y \mid x\big)
+H\big(Y \mid x, z\big) \le H\big(Y \mid x\big)
 $$
 
 drops because the evidence rules out continuations inconsistent with it (conditioning
@@ -275,9 +275,9 @@ stream. RAG builds that stream by concatenating three parts into the **context**
 $c$:
 
 $$
-c \thickspace{}=\thickspace{} \big[\thickspace{} \underbrace{\text{sys}}_{\text{instructions}} \thickspace{};\thickspace{}
-\underbrace{z_{1:k}}_{\text{retrieved evidence}} \thickspace{};\thickspace{}
-\underbrace{x}_{\text{user question}} \thickspace{}\big],
+c = \big[ \underbrace{\text{sys}}_{\text{instructions}} ;
+\underbrace{z_{1:k}}_{\text{retrieved evidence}} ;
+\underbrace{x}_{\text{user question}} \big],
 $$
 
 where `sys` is a system instruction ("answer only from the evidence; cite each claim; if
@@ -303,7 +303,7 @@ What AI growth drivers did NVDA management highlight?
 time from
 
 $$
-p_\theta\negthinspace{}\big(y_i \mid c,\thinspace{} y_{1:i-1}\big),
+p_\theta\big(y_i \mid c, y_{1:i-1}\big),
 $$
 
 so every generated token sees the *entire* assembled context — including the evidence — as
@@ -314,10 +314,10 @@ position $i$ forms an attention query $\mathbf{a}_i$ and attends over the keys
 $\mathbf{m}_j$ of *all* prior positions $j$ — which include the evidence tokens — with weights
 
 $$
-\alpha_{ij} \thickspace{}=\thickspace{} \frac{\exp\negthinspace{}\big(\mathbf{a}_i^{\top}\mathbf{m}_j / \sqrt{d_h}\big)}
-{\sum_{j'} \exp\negthinspace{}\big(\mathbf{a}_i^{\top}\mathbf{m}_{j'} / \sqrt{d_h}\big)},
+\alpha_{ij} = \frac{\exp\big(\mathbf{a}_i^{\top}\mathbf{m}_j / \sqrt{d_h}\big)}
+{\sum_{j'} \exp\big(\mathbf{a}_i^{\top}\mathbf{m}_{j'} / \sqrt{d_h}\big)},
 \qquad
-\mathbf{o}_i \thickspace{}=\thickspace{} \sum_{j} \alpha_{ij}\thinspace{}\mathbf{v}_j .
+\mathbf{o}_i = \sum_{j} \alpha_{ij}\mathbf{v}_j .
 $$
 
 (Here $\mathbf{a}, \mathbf{m}, \mathbf{v}$ are the attention query / key / value vectors and
@@ -377,40 +377,40 @@ once text is a vector, "relevance" becomes "closeness."
 
 Given query vector $\mathbf{q}=E(x)$ and document vector $\mathbf{d}=E(z)$:
 
-- **Dot product:** $\thickspace{}\mathbf{q}^{\top}\mathbf{d} = \sum_{i=1}^{d} q_i d_i.$
+- **Dot product:** $\mathbf{q}^{\top}\mathbf{d} = \sum_{i=1}^{d} q_i d_i.$
 - **Cosine similarity** (scale-invariant):
 $$
-\text{cos}(\mathbf{q}, \mathbf{d}) \thickspace{}=\thickspace{}
-\frac{\mathbf{q}^{\top}\mathbf{d}}{\lVert \mathbf{q}\rVert\thinspace{}\lVert \mathbf{d}\rVert}
-\thickspace{}=\thickspace{} \frac{\sum_i q_i d_i}{\sqrt{\sum_i q_i^2}\thinspace{}\sqrt{\sum_i d_i^2}} \thickspace{}\in [-1, 1].
+\text{cos}(\mathbf{q}, \mathbf{d}) =
+\frac{\mathbf{q}^{\top}\mathbf{d}}{\lVert \mathbf{q}\rVert\lVert \mathbf{d}\rVert}
+= \frac{\sum_i q_i d_i}{\sqrt{\sum_i q_i^2}\sqrt{\sum_i d_i^2}} \in [-1, 1].
 $$
-- **Euclidean (L2) distance:** $\thickspace{}\lVert \mathbf{q}-\mathbf{d}\rVert.$
+- **Euclidean (L2) distance:** $\lVert \mathbf{q}-\mathbf{d}\rVert.$
 
 These are not independent. If embeddings are **unit-normalized** ($\lVert\mathbf{q}\rVert=\lVert\mathbf{d}\rVert=1$):
 
 $$
 \lVert \mathbf{q}-\mathbf{d}\rVert^2
-= \lVert\mathbf{q}\rVert^2 + \lVert\mathbf{d}\rVert^2 - 2\thinspace{}\mathbf{q}^{\top}\mathbf{d}
-= 2 - 2\thinspace{}\text{cos}(\mathbf{q}, \mathbf{d}).
+= \lVert\mathbf{q}\rVert^2 + \lVert\mathbf{d}\rVert^2 - 2\mathbf{q}^{\top}\mathbf{d}
+= 2 - 2\text{cos}(\mathbf{q}, \mathbf{d}).
 $$
 
 So **maximizing cosine similarity is equivalent to minimizing L2 distance** for normalized
 vectors. This matters in practice: vector stores (e.g. ChromaDB) often return a **distance**
 (smaller = closer), while application code reasons in **similarity** (larger = closer). The
-wrapper must convert consistently, e.g. $\text{sim} = 1 - \tfrac{1}{2}\thinspace{}\text{dist}^2$ or
-$\text{sim} = -\thinspace{}\text{dist}$, or top-$k$ ranking silently inverts. *(This is exactly the
+wrapper must convert consistently, e.g. $\text{sim} = 1 - \tfrac{1}{2}\text{dist}^2$ or
+$\text{sim} = -\text{dist}$, or top-$k$ ranking silently inverts. *(This is exactly the
 "score convention" note flagged for this repo's vector-store layer.)*
 
 ### 4.3 Why embeddings are semantic: contrastive learning
 
 Embeddings are not hand-built; they are **learned** so that matching pairs are close and
 mismatched pairs are far. The workhorse objective is **InfoNCE** (contrastive loss). For a
-query $q$ with one positive document $d^{+}$ and a set of negatives $\lbrace{}d^{-}_j\rbrace{}$:
+query $q$ with one positive document $d^{+}$ and a set of negatives $\{d^{-}_j\}$:
 
 $$
 \mathcal{L}_{\text{InfoNCE}}
-= -\thinspace{}\log \frac{\exp\negthinspace{}\big(\text{sim}(q, d^{+})/\tau\big)}
-{\exp\negthinspace{}\big(\text{sim}(q, d^{+})/\tau\big) + \sum_{j}\exp\negthinspace{}\big(\text{sim}(q, d^{-}_j)/\tau\big)} ,
+= -\log \frac{\exp\big(\text{sim}(q, d^{+})/\tau\big)}
+{\exp\big(\text{sim}(q, d^{+})/\tau\big) + \sum_{j}\exp\big(\text{sim}(q, d^{-}_j)/\tau\big)} ,
 $$
 
 where $\tau > 0$ is a **temperature**. Minimizing $\mathcal{L}$ pulls $q$ toward $d^{+}$
@@ -442,9 +442,9 @@ product codename). The classic lexical scorer **BM25** complements them:
 
 $$
 \text{BM25}(q, d) = \sum_{t \in q} \text{IDF}(t)\cdot
-\frac{f(t,d)\thinspace{}(k_1 + 1)}{f(t,d) + k_1\big(1 - b + b\thinspace{}\frac{\lvert d\rvert}{\text{avgdl}}\big)},
+\frac{f(t,d)(k_1 + 1)}{f(t,d) + k_1\big(1 - b + b\frac{\lvert d\rvert}{\text{avgdl}}\big)},
 \qquad
-\text{IDF}(t) = \log\negthinspace{}\left(\frac{N - n_t + 0.5}{n_t + 0.5} + 1\right),
+\text{IDF}(t) = \log\left(\frac{N - n_t + 0.5}{n_t + 0.5} + 1\right),
 $$
 
 where $f(t,d)$ is term frequency, $n_t$ the number of documents containing $t$,
@@ -453,7 +453,7 @@ tuning constants. **Hybrid search** fuses dense and sparse rankings — a robust
 choice is **Reciprocal Rank Fusion (RRF)**:
 
 $$
-\text{RRF}(d) = \sum_{r \in \lbrace{}\text{dense},\thinspace{}\text{sparse}\rbrace{}} \frac{1}{c + \text{rank}_r(d)},
+\text{RRF}(d) = \sum_{r \in \{\text{dense},\text{sparse}\}} \frac{1}{c + \text{rank}_r(d)},
 $$
 
 with a small constant $c$ (often $60$). Hybrid is a V1 feature here; the MVP uses dense
@@ -483,7 +483,7 @@ result set $S$:
 
 $$
 \text{MMR} = \arg\max_{d_i \in R \setminus S}
-\Big[\thinspace{} \lambda\thinspace{} \text{sim}(q, d_i)\thickspace{} -\thickspace{} (1-\lambda)\thinspace{}\max_{d_j \in S}\thinspace{}\text{sim}(d_i, d_j) \thinspace{}\Big],
+\Big[ \lambda \text{sim}(q, d_i) - (1-\lambda)\max_{d_j \in S}\text{sim}(d_i, d_j) \Big],
 $$
 
 where $R$ is the candidate pool and $\lambda \in [0,1]$ trades relevance ($\lambda\to 1$)
@@ -496,7 +496,7 @@ A bi-encoder embeds $q$ and $d$ **separately**, so it cannot model fine token-le
 interactions — fast but coarse. A **cross-encoder** scores the *pair jointly*,
 
 $$
-s_{\text{ce}}(q, d) = \text{CrossEncoder}\big([\thinspace{}q \thinspace{};\thinspace{} d\thinspace{}]\big),
+s_{\text{ce}}(q, d) = \text{CrossEncoder}\big([q ; d]\big),
 $$
 
 running full attention over the concatenation. It is far more accurate but $O(k)$ model
@@ -511,7 +511,7 @@ cross-encoder. (V1 here; the MVP skips it.)
 **Question:** *"What AI growth drivers did NVDA management highlight?"*
 
 Suppose ingestion produced three (toy, 3-dimensional) chunk embeddings from the 10-K, and
-the query embeds to $\mathbf{q} = [0.90,\thinspace{} 0.10,\thinspace{} 0.20]$:
+the query embeds to $\mathbf{q} = [0.90, 0.10, 0.20]$:
 
 | Chunk | Text (abbreviated) | Embedding $\mathbf{d}$ |
 |---|---|---|
@@ -527,7 +527,7 @@ $$
 \text{cos}(\mathbf{q}, d_3) = \frac{0.82}{0.927\cdot 0.887} \approx 0.996.
 $$
 
-**Step 2 — top-$k$** ($k=2$): keep $\lbrace{}d_3, d_1\rbrace{}$; drop $d_2$ (the gaming chunk is
+**Step 2 — top-$k$** ($k=2$): keep $\{d_3, d_1\}$; drop $d_2$ (the gaming chunk is
 semantically far — note it shares no keyword with the query, yet is correctly excluded by
 *meaning*).
 
@@ -538,7 +538,7 @@ p_\eta(d_3 \mid x) \approx 0.455,\quad p_\eta(d_1 \mid x) \approx 0.446,\quad
 p_\eta(d_2 \mid x) \approx 0.099.
 $$
 
-**Step 4 — grounded generation.** The LLM conditions on $\lbrace{}d_3, d_1\rbrace{}$ and writes, with
+**Step 4 — grounded generation.** The LLM conditions on $\{d_3, d_1\}$ and writes, with
 citations:
 
 > "Management highlighted **AI accelerators** and **data-center demand** as the primary
@@ -548,7 +548,7 @@ citations:
 an expected return, a VaR — does **not** come from the LLM or a retrieved sentence; it comes
 from the quantitative modules (`forecasting/`, `indicators/`). RAG supplies the
 **qualitative, cited narrative**; the numbers stay model-generated. A separate **citation
-guard** rejects any source the answer cites that is not in $\lbrace{}d_3, d_1\rbrace{}$, and if retrieval
+guard** rejects any source the answer cites that is not in $\{d_3, d_1\}$, and if retrieval
 returns nothing the system answers *"Insufficient evidence found."* rather than inventing.
 
 ---
@@ -562,7 +562,7 @@ truly relevant chunks for query $q$:
 
 - **Recall@k** — fraction of relevant chunks captured in the top-$k$:
 $$
-\text{Recall@}k = \frac{\big\lvert \lbrace{}\text{relevant chunks}\rbrace{} \cap \mathrm{TopK} \big\rvert}{\lvert \mathcal{R}_q \rvert}.
+\text{Recall@}k = \frac{\big\lvert \{\text{relevant chunks}\} \cap \mathrm{TopK} \big\rvert}{\lvert \mathcal{R}_q \rvert}.
 $$
 - **MRR** (mean reciprocal rank of the first relevant hit), over a query set $Q$:
 $$
@@ -756,13 +756,13 @@ the graded relevance (the **gain**) of chunk $c$ is the count of distinct spans 
 optional metadata constraints:
 
 $$
-g_q(c) \thickspace{}=\thickspace{} \Big\lvert \lbrace{}\thinspace{} s \in S_q : \hat{s} \subseteq \hat{c} \thinspace{}\rbrace{} \Big\rvert \thickspace{}\cdot\thickspace{} \mathbb{1}\big[\thinspace{}\mathrm{meta}_q(c)\thinspace{}\big],
+g_q(c) = \Big\lvert \{ s \in S_q : \hat{s} \subseteq \hat{c} \} \Big\rvert \cdot \mathbb{1}\big[\mathrm{meta}_q(c)\big],
 $$
 
 where $\hat{x}$ is the normalized text (lowercased, whitespace-collapsed), $\hat s \subseteq \hat c$
 means "the span occurs in the chunk," and $\mathbb{1}[\mathrm{meta}_q(c)]$ is 1 iff $c$'s
 `document_type` and `section` satisfy the query's optional `expected_document_types` /
-`expected_sections` filters (else 0). Binary relevance is the special case $\mathrm{rel}_q(c) = \mathbb{1}[\thinspace{}g_q(c) > 0\thinspace{}]$.
+`expected_sections` filters (else 0). Binary relevance is the special case $\mathrm{rel}_q(c) = \mathbb{1}[g_q(c) > 0]$.
 A higher grade means a chunk answers *more* of the question — and graded gains are exactly what
 nDCG consumes.
 
@@ -779,7 +779,7 @@ $g_i$ = its relevance grade (here, the distinct-span count from §11.1). Cumulat
 sum down to depth $k$:
 
 $$
-\mathrm{CG@}k \thickspace{}=\thickspace{} \sum_{i=1}^{k} g_i.
+\mathrm{CG@}k = \sum_{i=1}^{k} g_i.
 $$
 
 In plain English: "how much total relevance did the top-$k$ contain." It honors intuitions (1) and
@@ -790,7 +790,7 @@ answer at rank 8 scores the same as one that puts it at rank 1. That is the flaw
 grows with rank, so later positions contribute less:
 
 $$
-\mathrm{DCG@}k \thickspace{}=\thickspace{} \sum_{i=1}^{k} \frac{2^{\thinspace{}g_i} - 1}{\log_2(i+1)}.
+\mathrm{DCG@}k = \sum_{i=1}^{k} \frac{2^{g_i} - 1}{\log_2(i+1)}.
 $$
 
 Two deliberate choices, in words:
@@ -812,7 +812,7 @@ relevant gains, sort them **descending** (highest gain first — the optimal ord
 that ideal list:
 
 $$
-\mathrm{IDCG@}k \thickspace{}=\thickspace{} \sum_{i=1}^{k}\frac{2^{\thinspace{}g_{(i)}} - 1}{\log_2(i+1)}, \qquad g_{(1)} \ge g_{(2)} \ge \cdots
+\mathrm{IDCG@}k = \sum_{i=1}^{k}\frac{2^{g_{(i)}} - 1}{\log_2(i+1)}, \qquad g_{(1)} \ge g_{(2)} \ge \cdots
 $$
 
 In words: "the score a perfect retriever would get on this query" — the maximum achievable DCG@k.
@@ -820,7 +820,7 @@ In words: "the score a perfect retriever would get on this query" — the maximu
 **nDCG — Normalized DCG (what we report).** The ratio of the two, which lands in $[0, 1]$:
 
 $$
-\mathrm{nDCG@}k \thickspace{}=\thickspace{} \frac{\mathrm{DCG@}k}{\mathrm{IDCG@}k}.
+\mathrm{nDCG@}k = \frac{\mathrm{DCG@}k}{\mathrm{IDCG@}k}.
 $$
 
 $1.0$ means you ranked as well as the ideal ordering; $0.0$ means no relevant chunk was retrieved (or
@@ -858,11 +858,11 @@ have reported a misleading $1.0$.
 ### 11.3 Citation accuracy — citation precision (the deterministic generation metric)
 
 Retrieval metrics ask "did we fetch the right chunks?"; the first *generation* question is "did the
-answer cite honestly?" For an answer's citation set $C = \lbrace{}(m_t, j_t)\rbrace{}$ (inline marker $m$ →
+answer cite honestly?" For an answer's citation set $C = \{(m_t, j_t)\}$ (inline marker $m$ →
 `chunk_id` $j$), with retrieved set $R$ and the relevance predicate $\mathrm{rel}_q$:
 
 $$
-\mathrm{CitAcc}_q \thickspace{}=\thickspace{} \frac{1}{\lvert C \rvert} \sum_{(m,j)\thinspace{}\in\thinspace{}C} \mathbb{1}\big[\thinspace{} j \in R \ \wedge\ \mathrm{rel}_q(j) \thinspace{}\big], \qquad (\text{undefined when } \lvert C \rvert = 0).
+\mathrm{CitAcc}_q = \frac{1}{\lvert C \rvert} \sum_{(m,j)\inC} \mathbb{1}\big[ j \in R \ \wedge\ \mathrm{rel}_q(j) \big], \qquad (\text{undefined when } \lvert C \rvert = 0).
 $$
 
 It is the **precision** of citations: of everything the answer claimed a source for, how much pointed
@@ -903,7 +903,7 @@ model used for final ranking should be **different models**, run in two stages.
 into fixed vectors, and relevance is their cosine:
 
 $$
-s_{\mathrm{bi}}(q, d) \thickspace{}=\thickspace{} \cos\big(E(q),\thinspace{} E(d)\big),
+s_{\mathrm{bi}}(q, d) = \cos\big(E(q), E(d)\big),
 $$
 
 where $E(\cdot)$ is the embedding model (§4.1). In plain English: the model looks at the query and
@@ -918,10 +918,10 @@ vocabulary get similar scores even if only one truly answers the question.
 transformer **jointly**, producing a single learned relevance scalar:
 
 $$
-s_{\mathrm{ce}}(q, d) \thickspace{}=\thickspace{} f\big(\thinspace{}[\thinspace{}q \thinspace{};\thinspace{} d\thinspace{}]\thinspace{}\big) \in \mathbb{R},
+s_{\mathrm{ce}}(q, d) = f\big([q ; d]\big) \in \mathbb{R},
 $$
 
-where $[\thinspace{}q;d\thinspace{}]$ is the paired input and $f$ is the cross-encoder (a transformer + a scoring head).
+where $[q;d]$ is the paired input and $f$ is the cross-encoder (a transformer + a scoring head).
 Because every layer attends over the query and passage tokens *together*, $f$ models fine-grained
 interactions — term overlap, paraphrase, negation, entity binding — and is markedly more accurate.
 The cost: $s_{\mathrm{ce}}$ **cannot be precomputed** (it needs the specific pair), so scoring $N$
@@ -1002,7 +1002,7 @@ in $d$ (term frequency, but with diminishing returns), and **less** if $d$ is lo
 normalization):
 
 $$
-s(q, d) \thickspace{}=\thickspace{} \sum_{t \in q} \mathrm{IDF}(t)\thickspace{}\cdot\thickspace{}\frac{f(t, d)\thinspace{}(k_1 + 1)}{f(t, d) + k_1\big(1 - b + b\thinspace{}\frac{\lvert d\rvert}{\mathrm{avgdl}}\big)},
+s(q, d) = \sum_{t \in q} \mathrm{IDF}(t)\cdot\frac{f(t, d)(k_1 + 1)}{f(t, d) + k_1\big(1 - b + b\frac{\lvert d\rvert}{\mathrm{avgdl}}\big)},
 $$
 
 term by term, in plain English:
@@ -1012,7 +1012,7 @@ term by term, in plain English:
 - $\lvert d\rvert / \mathrm{avgdl}$ — the document's length over the corpus average. $b$ (here $0.75$)
   tunes how hard long documents are penalized; it stops a long chunk from scoring high just by
   containing more words.
-- $\mathrm{IDF}(t) = \ln\negthinspace{}\big(\frac{N - n_t + 0.5}{n_t + 0.5} + 1\big)$ — inverse document
+- $\mathrm{IDF}(t) = \ln\big(\frac{N - n_t + 0.5}{n_t + 0.5} + 1\big)$ — inverse document
   frequency: $N$ is the corpus size, $n_t$ the number of chunks containing $t$. A term in *every*
   chunk ($n_t \approx N$) gets IDF $\approx 0$ (it discriminates nothing); a **rare** term gets a
   large IDF. The $+1$ inside the log keeps IDF non-negative. This is why matching "Hopper" (rare)
@@ -1029,7 +1029,7 @@ raw scores is meaningless and needs fragile normalization. **Reciprocal Rank Fus
 al.) sidesteps this by using only each item's **rank**:
 
 $$
-\mathrm{RRF}(d) \thickspace{}=\thickspace{} \sum_{L}\thickspace{} \frac{1}{k + \mathrm{rank}_L(d)},
+\mathrm{RRF}(d) = \sum_{L} \frac{1}{k + \mathrm{rank}_L(d)},
 $$
 
 where the sum is over the lists $L$ (dense, sparse), $\mathrm{rank}_L(d)$ is $d$'s 1-based position
@@ -1050,7 +1050,7 @@ $[b, d]$, $k = 60$:
 | $d$ | — | 2 → $1/62$ | $0.01613$ |
 | $c$ | 3 → $1/63$ | — | $0.01587$ |
 
-Fused order: $[\thinspace{}b, a, d, c\thinspace{}]$. Note $b$ wins despite being *first* in neither list — it's the only
+Fused order: $[b, a, d, c]$. Note $b$ wins despite being *first* in neither list — it's the only
 doc both retrievers liked. Ties (e.g. a dense-rank-1 and a sparse-rank-1 each scoring $1/61$) are
 broken by id for determinism.
 
@@ -1078,15 +1078,15 @@ data flow, the scoring math, the per-query cost, and the measured result for eac
 
 ### 14.0 Shared notation
 
-- **Corpus** $D = \lbrace{}d_1, \dots, d_N\rbrace{}$ — the chunks (each carries text + flat metadata).
+- **Corpus** $D = \{d_1, \dots, d_N\}$ — the chunks (each carries text + flat metadata).
 - **Query** $q$ — the natural-language question.
 - **Filter** $\varphi$ — an optional metadata predicate (`ChunkFilter`: ticker / form / section / date).
-  Retrieval is always over the filtered set $D_\varphi = \lbrace{}\thinspace{} d \in D : \varphi(d)\thinspace{}\rbrace{}$; if $\varphi$
+  Retrieval is always over the filtered set $D_\varphi = \{ d \in D : \varphi(d)\}$; if $\varphi$
   is empty, $D_\varphi = D$.
 - **Embedder** $E : \text{text} \to \mathbb{R}^{m}$ — maps text to an $m$-dim **unit** vector
   (our stores L2-normalize, so $\lVert E(\cdot)\rVert = 1$). Built once at ingest for every chunk;
   at query time only $E(q)$ is computed.
-- $\operatorname{Top}_n[\thinspace{} g(\cdot)\thinspace{} ;\thinspace{} S\thinspace{}]$ — the $n$ items of set $S$ with the largest score
+- $\operatorname{Top}_n[ g(\cdot) ; S]$ — the $n$ items of set $S$ with the largest score
   $g$, in descending order. (Approximated for dense search by ANN / HNSW, §4.4.)
 - **Knobs:** $k$ = final chunks returned (`top_k`); $k_f$ = wide candidate count for reranking
   (`fetch_k`); $k_d, k_s$ = dense / sparse over-fetch (`hybrid_dense_k` / `hybrid_sparse_k`);
@@ -1105,10 +1105,10 @@ A single **bi-encoder** stage. Score each chunk by cosine similarity between the
 embeddings:
 
 $$
-s_{\mathrm{dense}}(q, d) \thickspace{}=\thickspace{} \cos\negthinspace{}\big(E(q), E(d)\big) \thickspace{}=\thickspace{} \frac{\langle E(q),\thinspace{} E(d)\rangle}{\lVert E(q)\rVert\thinspace{}\lVert E(d)\rVert} \thickspace{}\overset{\text{unit}}{=}\thickspace{} \langle E(q),\thinspace{} E(d)\rangle \thickspace{}=\thickspace{} \sum_{j=1}^{m} E(q)_j\thinspace{} E(d)_j,
+s_{\mathrm{dense}}(q, d) = \cos\big(E(q), E(d)\big) = \frac{\langle E(q), E(d)\rangle}{\lVert E(q)\rVert\lVert E(d)\rVert} \overset{\text{unit}}{=} \langle E(q), E(d)\rangle = \sum_{j=1}^{m} E(q)_j E(d)_j,
 $$
 
-then return $\operatorname{Top}_k[\thinspace{} s_{\mathrm{dense}}(q,\cdot)\thinspace{} ;\thinspace{} D_\varphi\thinspace{}]$. The crucial property is
+then return $\operatorname{Top}_k[ s_{\mathrm{dense}}(q,\cdot) ; D_\varphi]$. The crucial property is
 that the score **factorizes** into a dot product of two independently-computed vectors — so every
 $E(d)$ is precomputed at ingest and the query needs just one embed plus an ANN lookup.
 
@@ -1126,14 +1126,14 @@ Two stages (the **retrieve-wide-then-narrow** pattern, §12.2). Stage 1 uses the
 recall; stage 2 uses an expensive **cross-encoder** for precision on the small candidate set:
 
 $$
-C \thickspace{}=\thickspace{} \operatorname{Top}_{k_f}\negthinspace{}\big[\thinspace{} s_{\mathrm{dense}}(q,\cdot)\thinspace{} ;\thinspace{} D_\varphi\thinspace{}\big], \qquad
-\text{return } \operatorname{Top}_{k}\negthinspace{}\big[\thinspace{} s_{\mathrm{ce}}(q,\cdot)\thinspace{} ;\thinspace{} C\thinspace{}\big],
+C = \operatorname{Top}_{k_f}\big[ s_{\mathrm{dense}}(q,\cdot) ; D_\varphi\big], \qquad
+\text{return } \operatorname{Top}_{k}\big[ s_{\mathrm{ce}}(q,\cdot) ; C\big],
 $$
 
 where the cross-encoder scores the **jointly-encoded pair**
 
 $$
-s_{\mathrm{ce}}(q, d) \thickspace{}=\thickspace{} f_\theta\big(\thinspace{}[\thinspace{}q\thinspace{};\thinspace{}d\thinspace{}]\thinspace{}\big) \in \mathbb{R}.
+s_{\mathrm{ce}}(q, d) = f_\theta\big([q;d]\big) \in \mathbb{R}.
 $$
 
 Unlike $s_{\mathrm{dense}}$, $s_{\mathrm{ce}}$ does **not** factorize — $f_\theta$ attends over the
@@ -1159,7 +1159,7 @@ Dense gives a list $L_d$ ordered by $s_{\mathrm{dense}}$; sparse gives a list $L
 (§13.2),
 
 $$
-s_{\mathrm{bm25}}(q, d) \thickspace{}=\thickspace{} \sum_{t \in q} \mathrm{IDF}(t)\thinspace{}\frac{f(t,d)\thinspace{}(k_1+1)}{f(t,d) + k_1\big(1 - b + b\thinspace{}\lvert d\rvert/\mathrm{avgdl}\big)},
+s_{\mathrm{bm25}}(q, d) = \sum_{t \in q} \mathrm{IDF}(t)\frac{f(t,d)(k_1+1)}{f(t,d) + k_1\big(1 - b + b\lvert d\rvert/\mathrm{avgdl}\big)},
 $$
 
 (term frequency $f$ with saturation $k_1$, length penalty $b$, rarity weight $\mathrm{IDF}$ — §13.2).
@@ -1167,9 +1167,9 @@ The two score scales are not comparable (cosine $\in[-1,1]$, BM25 $\in[0,\infty)
 **rank**, not score — **Reciprocal Rank Fusion** (§13.3):
 
 $$
-\mathrm{RRF}(q, d) \thickspace{}=\thickspace{} \sum_{L \thinspace{}\in\thinspace{} \lbrace{}L_d,\thinspace{} L_s\rbrace{}} \frac{1}{k_{\mathrm{rrf}} + \mathrm{rank}_L(d)},
+\mathrm{RRF}(q, d) = \sum_{L \in \{L_d, L_s\}} \frac{1}{k_{\mathrm{rrf}} + \mathrm{rank}_L(d)},
 \qquad
-\text{return } \operatorname{Top}_k\negthinspace{}\big[\thinspace{} \mathrm{RRF}(q,\cdot)\thinspace{} ;\thinspace{} L_d \cup L_s\thinspace{}\big],
+\text{return } \operatorname{Top}_k\big[ \mathrm{RRF}(q,\cdot) ; L_d \cup L_s\big],
 $$
 
 where $\mathrm{rank}_L(d)$ is $d$'s 1-based position in list $L$ (a list **not** containing $d$
@@ -1196,8 +1196,8 @@ Compose A3 then A2: hybrid produces the **wide** candidate set, the cross-encode
 Formally $\text{rerank}\big(\text{hybrid}(\text{dense}, \text{sparse})\big)$:
 
 $$
-C \thickspace{}=\thickspace{} \operatorname{Top}_{k_f}\negthinspace{}\big[\thinspace{} \mathrm{RRF}(q,\cdot)\thinspace{} ;\thinspace{} L_d \cup L_s\thinspace{}\big], \qquad
-\text{return } \operatorname{Top}_{k}\negthinspace{}\big[\thinspace{} s_{\mathrm{ce}}(q,\cdot)\thinspace{} ;\thinspace{} C\thinspace{}\big].
+C = \operatorname{Top}_{k_f}\big[ \mathrm{RRF}(q,\cdot) ; L_d \cup L_s\big], \qquad
+\text{return } \operatorname{Top}_{k}\big[ s_{\mathrm{ce}}(q,\cdot) ; C\big].
 $$
 
 The over-fetch **cascades**: the reranker asks hybrid for $k_f$ candidates; hybrid asks dense for
@@ -1289,7 +1289,7 @@ both:
   factors?"* Retrieve both sides, then judge agreement.
 
 Formally: single-shot retrieval assumes the optimal query is $q$ itself. Multi-hop questions need a
-**sequence** $q_1, q_2, \ldots$ where $q_{i+1} = f(q,\thinspace{} E_1, \ldots, E_i)$ — each query may depend on
+**sequence** $q_1, q_2, \ldots$ where $q_{i+1} = f(q, E_1, \ldots, E_i)$ — each query may depend on
 the evidence gathered so far ((C)), or simply target a different region than its predecessors ((D)).
 That dependency/coverage gap is the entire difficulty, and it is what an agent adds. (The *simple*
 case — one topic, one entity, one section — stays on single-shot `search_filings`: the fast path.)
@@ -1301,7 +1301,7 @@ contrast — is in [example_rag_questions.md](example_rag_questions.md).
 There are two standard ways to produce that query sequence:
 
 - **Query decomposition (plan-and-execute).** One up-front LLM call splits $q$ into a *fixed* set of
-  sub-queries $\lbrace{}q_1,\ldots,q_m\rbrace{}$, each retrieved independently, then the union is synthesized. Simple
+  sub-queries $\{q_1,\ldots,q_m\}$, each retrieved independently, then the union is synthesized. Simple
   and parallelizable — but the plan is frozen *before any evidence is seen*. It **cannot** express the
   bridging case (§15.1), because $q_2$ there is unknowable until $E_1$ exists.
 - **ReAct (reason + act), the choice here.** Interleave reasoning and retrieval in a loop: the model
@@ -1330,7 +1330,7 @@ State carried across steps: an accumulating **evidence union** $E$ (deduped `Ret
    and a **compact summary** of $E$ (a short snippet per chunk, not full text — that keeps the
    decision call small), and emits a `ReActStep`:
 
-   $$\text{step} = (\text{thought},\ \text{action} \in \lbrace{}\textsf{search},\textsf{stop}\rbrace{},\ \text{query},\ \text{scope}).$$
+   $$\text{step} = (\text{thought},\ \text{action} \in \{\textsf{search},\textsf{stop}\},\ \text{query},\ \text{scope}).$$
 
    Crucially the decision emits **only a query and a scope — never numbers, never citations.** There
    is nothing in a decision that *could* be hallucinated-grounded, so the grounding guards have
@@ -1340,7 +1340,7 @@ State carried across steps: an accumulating **evidence union** $E$ (deduped `Ret
 3. **Act (retrieve).** Else run $E_i = \text{retrieve}(\text{query}, k_{\text{step}}, \text{scope})$
    through the **existing** §14 stack ($0/local) and fold it in:
 
-   $$E \leftarrow \big(\text{dedup}(E \cup E_i)\big)[\thinspace{}:M\thinspace{}],$$
+   $$E \leftarrow \big(\text{dedup}(E \cup E_i)\big)[:M],$$
 
    deduped by `chunk_id`, order-preserving (earlier, higher-scored provenance kept), capped at
    $M$ (`max_evidence`) to bound context and cost.
@@ -1368,7 +1368,7 @@ SEC-research tool must be safe on both. Three bounds, all hard:
   in review; the regression test is `test_same_query_different_ticker_not_deduped`.)
 - **Budget.** Exactly one decision call per iteration + one terminal synthesis ⇒
 
-  $$N_{\text{calls}} \thickspace{}\le\thickspace{} \underbrace{T}_{\text{decisions}} + \underbrace{1}_{\text{terminal}} \thickspace{}=\thickspace{} 4 \ \text{by default } (T=3)$$
+  $$N_{\text{calls}} \le \underbrace{T}_{\text{decisions}} + \underbrace{1}_{\text{terminal}} = 4 \ \text{by default } (T=3)$$
 
   (a guard-triggered synthesis retry can add one). All *retrieval* between steps is local and free.
   The single heavy call is the terminal answer; the per-step decisions are cheap by construction
@@ -1424,7 +1424,7 @@ answer-bearing spans $S_a$ (phrases the right passage must contain — the same 
 as §11.1, grouped by hop). Given a retrieved set $E$ (a set of chunks), aspect $a$ is *covered* iff
 some chunk contains some span of $a$, and coverage is the fraction of aspects covered:
 
-$$\text{cov}(E) \thickspace{}=\thickspace{} \frac{1}{K}\sum_{a=1}^{K}\mathbb{1}\big[\thinspace{}\exists\thinspace{} c \in E,\ \exists\thinspace{} s \in S_a:\ s \subseteq \text{norm}(c)\thinspace{}\big]$$
+$$\text{cov}(E) = \frac{1}{K}\sum_{a=1}^{K}\mathbb{1}\big[\exists c \in E,\ \exists s \in S_a:\ s \subseteq \text{norm}(c)\big]$$
 
 where $\subseteq$ is normalized-substring containment ($\text{norm}$ = lowercase + collapse
 whitespace) and $\mathbb{1}[\cdot]$ is 1 when the bracketed condition holds, else 0. Each quantity in
@@ -1437,7 +1437,7 @@ would over-credit).
 The decisive number is the **gain** over the single-shot baseline — the *same* retriever, one
 `retrieve` of the literal question, $E_{\text{single}}$:
 
-$$\Delta_{\text{cov}} \thickspace{}=\thickspace{} \text{cov}(E_{\text{multi}}) \thickspace{}-\thickspace{} \text{cov}(E_{\text{single}})$$
+$$\Delta_{\text{cov}} = \text{cov}(E_{\text{multi}}) - \text{cov}(E_{\text{single}})$$
 
 Holding the retrieval backend fixed, the only difference is *the number of hops*, so $\Delta_{\text{cov}} > 0$
 is the empirical value the loop adds. **Worked micro-example** (the exact values the test asserts): a
@@ -1578,7 +1578,7 @@ live.
 A **knowledge graph** is a directed, edge-labeled multigraph
 
 $$
-G = (V,\thinspace{} R,\thinspace{} E), \qquad E \subseteq V \times R \times V,
+G = (V, R, E), \qquad E \subseteq V \times R \times V,
 $$
 
 - $V$ — the **entities** (vertices). In A5: typed nodes — `company`, `product`, `segment`, `risk`,
@@ -1587,7 +1587,7 @@ $$
 - $R$ — the finite set of **relation types** (edge labels). In A5: `depends_on`, `competes_with`,
   `mentions_risk`, `exposed_to`.
 - $E$ — the **edges**, each a **triple** $(s, r, o)$: subject entity $s$, relation $r$, object entity
-  $o$ (e.g. $(\text{NVDA},\thinspace{} \texttt{depends-on},\thinspace{} \text{MU})$). "Multigraph" because two entities
+  $o$ (e.g. $(\text{NVDA}, \texttt{depends-on}, \text{MU})$). "Multigraph" because two entities
   can be joined by several relations; "directed" because $\texttt{depends-on}$ is asymmetric
   (NVDA depends on MU $\ne$ MU depends on NVDA).
 
@@ -1599,7 +1599,7 @@ Two derived objects drive retrieval. The **typed neighborhood** of an entity $v$
 $r$:
 
 $$
-N_r(v) \thickspace{}=\thickspace{} \lbrace{}\thinspace{} u \in V : (v, r, u) \in E \thinspace{}\rbrace{},
+N_r(v) = \{ u \in V : (v, r, u) \in E \},
 $$
 
 and its undirected/relation-agnostic version $N(v)=\bigcup_{r} \big(N_r(v)\cup N_r^{-1}(v)\big)$,
@@ -1608,17 +1608,17 @@ reverse — we store one direction and derive the other, per the A5 locked decis
 
 ### 16.2 Multi-hop reachability — the adjacency-matrix view
 
-Stack the (relation-agnostic) edges into an **adjacency matrix** $A \in \lbrace{}0,1\rbrace{}^{n \times n}$,
+Stack the (relation-agnostic) edges into an **adjacency matrix** $A \in \{0,1\}^{n \times n}$,
 $n=\lvert V\rvert$, with $A_{ij}=1$ iff there is an edge $i \to j$. The classic identity: the entry
 
 $$
-\big(A^{k}\big)_{ij} \thickspace{}=\thickspace{} \big\lvert\lbrace{}\text{directed walks of length } k \text{ from } i \text{ to } j\rbrace{}\big\rvert,
+\big(A^{k}\big)_{ij} = \big\lvert\{\text{directed walks of length } k \text{ from } i \text{ to } j\}\big\rvert,
 $$
 
 so $j$ is **reachable from $i$ within $K$ hops** iff $\big(\sum_{k=1}^{K} A^{k}\big)_{ij} > 0$. This
 is the formal meaning of "$K$-hop traversal": the bridging hop NVDA → MU is a length-1 walk; "which
 of NVDA's suppliers' competitors…" is length-2. In practice we never materialize $A^k$ (dense, $n^2$)
-— we run **breadth-first search** from the seed entity to depth $K$ (here $K\in\lbrace{}1,2\rbrace{}$), which is
+— we run **breadth-first search** from the seed entity to depth $K$ (here $K\in\{1,2\}$), which is
 $O(\lvert V\rvert + \lvert E\rvert)$ and only visits the reachable subgraph. The matrix view is the
 *why*; BFS is the *how*.
 
@@ -1627,9 +1627,9 @@ principled generalization scores every node by a random walk that restarts at th
 probability vector concentrated on the query's entities):
 
 $$
-\pi \thickspace{}=\thickspace{} (1-\alpha)\thinspace{} P^{\top} \pi \thickspace{}+\thickspace{} \alpha\thinspace{} s
+\pi = (1-\alpha) P^{\top} \pi + \alpha s
 \qquad\Longrightarrow\qquad
-\pi \thickspace{}=\thickspace{} \alpha\thinspace{}\big(I - (1-\alpha)\thinspace{}P^{\top}\big)^{-1} s,
+\pi = \alpha\big(I - (1-\alpha)P^{\top}\big)^{-1} s,
 $$
 
 where $P$ is the row-normalized adjacency (transition matrix), $\alpha \in (0,1)$ the restart
@@ -1652,7 +1652,7 @@ done **once, offline, at ingest** (never at query time), as a cost-gated batch. 
    approximates the conditional
 
    $$
-   p\big(T \mid c\big), \qquad T = \lbrace{}(s_i, r_i, o_i)\rbrace{}_{i=1}^{m},
+   p\big(T \mid c\big), \qquad T = \{(s_i, r_i, o_i)\}_{i=1}^{m},
    $$
 
    the set of typed triples $T$ supported by chunk text $c$, emitted as JSON with, per triple, the
@@ -1663,17 +1663,17 @@ done **once, offline, at ingest** (never at query time), as a cost-gated batch. 
    never connects. We reuse the **deterministic alias map** (`research/bridge.load_alias_map`,
    `configs/ticker_aliases.json`) — the *same* resolver the A4 query-time bridge uses, but applied
    **offline and verified** (§15.9's whole point: move `micron → MU` from query-time to ingest-time).
-   Resolution is a name-matching map $\rho:\text{surface}\to\text{id}\cup\lbrace{}\bot\rbrace{}$; unresolved company
+   Resolution is a name-matching map $\rho:\text{surface}\to\text{id}\cup\{\bot\}$; unresolved company
    names are stored with `ticker=None` (lower-value but still cited), non-company nodes get a
    normalized-name id.
 4. **Verification — the hallucinated-edge guard.** The edge analogue of the P7 **citation guard**.
-   For a **company→company** edge ($r \in \lbrace{}\texttt{depends-on}, \texttt{competes-with}\rbrace{}$) keep the
+   For a **company→company** edge ($r \in \{\texttt{depends-on}, \texttt{competes-with}\}$) keep the
    triple $(s,r,o)$ **iff the object's surface name (or a resolved-ticker alias) literally appears in
    its provenance chunk** $c$, and `confidence` $\ge$ `graph_min_confidence`. The subject $s$ is the
    filing's *own* company — written as "we/our", so it is implicit and not required to appear; the
    load-bearing check is the **object**: a fabricated supplier/competitor name will not be in the
    text. Symbolically, drop the edge unless
-   $\big(\exists\thinspace{} a \in \text{alias}(o):\ a \subseteq c\big) \thinspace{}\wedge\thinspace{} \text{conf} \ge \tau$.
+   $\big(\exists a \in \text{alias}(o):\ a \subseteq c\big) \wedge \text{conf} \ge \tau$.
    Risk/regulatory objects ($\texttt{mentions-risk}$, $\texttt{exposed-to}$) are model-*paraphrased*
    (no canonical surface to match), so they pass on confidence + a valid provenance mapping rather
    than a substring test. This keeps a *generated* graph grounded: an edge the model asserted but the
@@ -1691,7 +1691,7 @@ filing chunk that licenses it.
 A4 loop, and the A1 eval harness with zero caller changes (§15.9's glue). One `retrieve` call is:
 
 1. **Seed.** Resolve the query's anchor entity — `where.ticker`, else `mentioned_tickers(query)`
-   (reuse the bridge resolver). Seed set $s_0 = \lbrace{}\text{NVDA}\rbrace{}$.
+   (reuse the bridge resolver). Seed set $s_0 = \{\text{NVDA}\}$.
 2. **Traverse.** BFS 1–2 hops over the chosen relations → neighbor entities
    $\mathcal{N} = \bigcup_{r}N_r(\text{seed})$ and the **edge-provenance chunk ids** along the way.
    *(The graph supplies the **who**.)*
@@ -1728,8 +1728,8 @@ community with an LLM, then answers a global query by mapping it over every comm
 reducing the partial answers. Modularity, the objective the clustering maximizes, is
 
 $$
-Q \thickspace{}=\thickspace{} \frac{1}{2\lvert E\rvert}\sum_{i,j}\Big(A_{ij} - \frac{k_i k_j}{2\lvert E\rvert}\Big)\thinspace{}
-\mathbb{1}[\thinspace{}c_i = c_j\thinspace{}],
+Q = \frac{1}{2\lvert E\rvert}\sum_{i,j}\Big(A_{ij} - \frac{k_i k_j}{2\lvert E\rvert}\Big)
+\mathbb{1}[c_i = c_j],
 $$
 
 where $k_i$ is the degree of node $i$, $c_i$ its community, and the $k_ik_j/2\lvert E\rvert$ term is
@@ -1852,13 +1852,13 @@ of chunk texts for ticker $x$, $s$ the seed, $t$ the bridged target, and $\sigma
 $$
 \text{stratum}(s,t,\sigma)=
 \begin{cases}
-\textbf{discard} & \neg\thinspace{}\text{present}(T(t),\sigma) \quad\text{(unanswerable: not in the target either)}\\
-\textbf{HARD} & \text{present}(T(t),\sigma)\ \wedge\ \neg\thinspace{}\text{present}(T(s),\sigma)\\
+\textbf{discard} & \neg\text{present}(T(t),\sigma) \quad\text{(unanswerable: not in the target either)}\\
+\textbf{HARD} & \text{present}(T(t),\sigma)\ \wedge\ \neg\text{present}(T(s),\sigma)\\
 \textbf{MED} & \text{present}(T(t),\sigma)\ \wedge\ \text{present}(T(s),\sigma)\quad\text{(co-disclosed)}
 \end{cases}
 $$
 
-where $\text{present}(\mathcal{T},\sigma)=\bigvee_{u\in\mathcal{T}}[\thinspace{}\text{norm}(\sigma)\subseteq\text{norm}(u)\thinspace{}]$
+where $\text{present}(\mathcal{T},\sigma)=\bigvee_{u\in\mathcal{T}}[\text{norm}(\sigma)\subseteq\text{norm}(u)]$
 is exactly `spans_present`. CTRL (single-entity control) questions skip the bridge: one aspect, the
 seed's *own* topic, verified present in the seed.
 
@@ -1886,15 +1886,15 @@ more bridges), not to dilute. (Our 20-ticker graph supplied 212: HARD 120 / MED 
 
 ### 17.4 Group-wise (leakage-safe) splitting
 
-Templated generation produces *near-duplicate* rows — the same bridge pair $\lbrace{}s,t\rbrace{}$ with different
+Templated generation produces *near-duplicate* rows — the same bridge pair $\{s,t\}$ with different
 topics. A naïve **row-wise** train/test split can place such variants on both sides, so the held-out set
 is near-copies of training rows: **pseudo-replication** (CIs look tighter than the information justifies)
 and **leakage** (the overfit check silently passes). The fix is to split by **group** $g$, where
-$g=\lbrace{}s,t\rbrace{}$ for a bridge (order-independent) or $g=s$ for CTRL, partitioning *groups* (not rows) into the
+$g=\{s,t\}$ for a bridge (order-independent) or $g=s$ for CTRL, partitioning *groups* (not rows) into the
 folds:
 
 $$
-\text{Train}=\lbrace{}q : g(q)\notin G_{\text{test}}\rbrace{},\quad \text{Test}=\lbrace{}q : g(q)\in G_{\text{test}}\rbrace{},\quad |G_{\text{test}}|=\lfloor f\thinspace{}|G|\rceil
+\text{Train}=\{q : g(q)\notin G_{\text{test}}\},\quad \text{Test}=\{q : g(q)\in G_{\text{test}}\},\quad |G_{\text{test}}|=\lfloor f|G|\rceil
 $$
 
 with $G_{\text{test}}$ a seeded random subset of the groups and $f$ the test fraction. This guarantees

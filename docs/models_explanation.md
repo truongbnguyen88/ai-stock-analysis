@@ -109,23 +109,23 @@ $$
 r_t = \frac{P_{t+h}}{P_t} - 1, \qquad t = 0, 1, \dots, T-h
 $$
 
-This yields a sample $\lbrace{}r_t\rbrace{}$ of size $T-h$. Everything is read directly off
+This yields a sample $\{r_t\}$ of size $T-h$. Everything is read directly off
 this empirical sample:
 
 $$
 \widehat{\mathbb{E}}[r] = \frac{1}{N}\sum_t r_t,
 \qquad
-P(\text{bucket}_k) = \frac{1}{N}\sum_t \mathbb{1}[\thinspace{} r_t \in \text{bucket}_k \thinspace{}]
+P(\text{bucket}_k) = \frac{1}{N}\sum_t \mathbb{1}[ r_t \in \text{bucket}_k ]
 $$
 
 $$
-\mathrm{VaR}_{95} = Q_{0.05}(\lbrace{}r_t\rbrace{}), \quad
-\mathrm{VaR}_{99} = Q_{0.01}(\lbrace{}r_t\rbrace{}), \quad
+\mathrm{VaR}_{95} = Q_{0.05}(\{r_t\}), \quad
+\mathrm{VaR}_{99} = Q_{0.01}(\{r_t\}), \quad
 \text{90\% CI} = \big[Q_{0.05}, Q_{0.95}\big]
 $$
 
 where $Q_p$ is the empirical $p$-quantile and $N = T-h$. `upside_prob` is just
-$\frac{1}{N}\sum_t \mathbb{1}[\thinspace{} r_t > 0 \thinspace{}]$.
+$\frac{1}{N}\sum_t \mathbb{1}[ r_t > 0 ]$.
 
 If fewer than `_MIN_SAMPLES = 30` returns are available, the forecast is still
 produced but flagged low-confidence in `notes`.
@@ -178,7 +178,7 @@ path's terminal return, and forms the distribution by *frequency over the
 ensemble* — every path is equiprobable, so:
 
 $$
-P(\text{bucket}_k) = \frac{1}{N}\sum_{i=1}^{N} \mathbb{1}[\thinspace{} r_i \in \text{bucket}_k \thinspace{}]
+P(\text{bucket}_k) = \frac{1}{N}\sum_{i=1}^{N} \mathbb{1}[ r_i \in \text{bucket}_k ]
 $$
 
 The terminal-return sample is then fed through the **same** `sample_to_forecast`
@@ -203,12 +203,12 @@ flowchart LR
 ### 2.1 GBM (parametric) — `monte_carlo_gbm`
 
 **Model.** Geometric Brownian Motion: log returns are i.i.d. Normal. In
-continuous time $dP/P = \mu\thinspace{}dt + \sigma\thinspace{}dW_t$; discretized to one trading day
+continuous time $dP/P = \mudt + \sigmadW_t$; discretized to one trading day
 ($dt = 1$) the **log** return increment is
 
 $$
 r^{\log}_d = \Big(\mu - \tfrac{1}{2}\sigma^2\Big) + \sigma Z_d,
-\qquad Z_d \sim \mathcal{N}(0,1) \thickspace{}\text{i.i.d.}
+\qquad Z_d \sim \mathcal{N}(0,1) \text{i.i.d.}
 $$
 
 The $-\tfrac{1}{2}\sigma^2$ is the **Itô correction**: it makes
@@ -224,10 +224,10 @@ increments, and sum across the horizon to get each path's terminal log return:
 
 $$
 R_i = \sum_{d=1}^{h} r^{\log}_{i,d}, \qquad
-\text{simple return}_i = e^{R_i} - 1 \thickspace{}\thickspace{} (\texttt{expm1})
+\text{simple return}_i = e^{R_i} - 1  (\texttt{expm1})
 $$
 
-Because log returns are i.i.d. Normal, $R_i \sim \mathcal{N}\negthinspace{}\big(h(\mu-\tfrac12\sigma^2),\thickspace{} h\sigma^2\big)$ —
+Because log returns are i.i.d. Normal, $R_i \sim \mathcal{N}\big(h(\mu-\tfrac12\sigma^2), h\sigma^2\big)$ —
 the terminal distribution is exactly lognormal. (We still simulate rather than
 use the closed form, so the *same* code path serves all three variants.)
 
@@ -261,12 +261,12 @@ realized history rather than a fitted parametric jump):
 
 $$
 R_i = \underbrace{\sum_{d=1}^{h-1} r^{\log}_{i,d}}_{\text{GBM, } h-1 \text{ normal days}}
-      \thickspace{}+\thickspace{} \underbrace{J_i}_{\text{one earnings move}},
+      + \underbrace{J_i}_{\text{one earnings move}},
 \qquad
-J_i \sim \mathrm{Uniform}\big(\lbrace{}m_1, \dots, m_M\rbrace{}\big)
+J_i \sim \mathrm{Uniform}\big(\{m_1, \dots, m_M\}\big)
 $$
 
-where $\lbrace{}m_j\rbrace{}$ are the **historical post-earnings log moves** (below). Note
+where $\{m_j\}$ are the **historical post-earnings log moves** (below). Note
 $h-1$ normal days, not $h$ — the earnings day is *replaced* by the jump, not
 stacked on top of a normal day (avoids double-counting that day's variance).
 
@@ -274,7 +274,7 @@ stacked on top of a normal day (avoids double-counting that day's variance).
 earnings date $e$, the close-before → close-after log move:
 
 $$
-m_j = \log\negthinspace{}\frac{P_{i_j + 1}}{P_{i_j}},
+m_j = \log\frac{P_{i_j + 1}}{P_{i_j}},
 \qquad i_j = \text{index of the last bar on or before } e_j
 $$
 
@@ -385,15 +385,15 @@ predictable, direction is not*.
 return into a mean plus a time-varying-scale shock,
 
 $$
-r_t = \mu + \varepsilon_t, \qquad \varepsilon_t = \sigma_t\thinspace{} z_t, \qquad
+r_t = \mu + \varepsilon_t, \qquad \varepsilon_t = \sigma_t z_t, \qquad
 z_t \sim t_\nu \ \text{(standardized to unit variance)},
 $$
 
 and let the **conditional variance** evolve as
 
 $$
-\sigma_t^2 = \omega + \big(\alpha + \gamma\thinspace{}\mathbb{1}[\varepsilon_{t-1} < 0]\big)\thinspace{}
-\varepsilon_{t-1}^2 + \beta\thinspace{}\sigma_{t-1}^2 .
+\sigma_t^2 = \omega + \big(\alpha + \gamma\mathbb{1}[\varepsilon_{t-1} < 0]\big)
+\varepsilon_{t-1}^2 + \beta\sigma_{t-1}^2 .
 $$
 
 - $\alpha$ — **ARCH** term: how strongly a fresh shock raises tomorrow's variance.
@@ -479,7 +479,7 @@ distribution, learned from labeled history across many stocks.
 
 We do **not** regress the return directly. Instead we discretize using the same
 five bucket boundaries as thresholds (the **h20** band
-$\Theta = \lbrace{}-0.10, -0.05, 0, +0.05, +0.10\rbrace{}$, horizon-scaled via
+$\Theta = \{-0.10, -0.05, 0, +0.05, +0.10\}$, horizon-scaled via
 `thresholds_for_horizon`; the model persists its own cut-points) and train **one
 binary classifier per threshold** predicting the survival probability:
 
@@ -537,14 +537,14 @@ flowchart TD
 Suppose for some stock today the five classifiers output (already monotone):
 
 $$
-\mathbf{m} = [\thinspace{}0.85,\ 0.70,\ 0.55,\ 0.38,\ 0.20\thinspace{}]
+\mathbf{m} = [0.85,\ 0.70,\ 0.55,\ 0.38,\ 0.20]
 $$
 
 Differencing gives buckets:
 
 $$
-[\thinspace{}1-0.85,\ 0.85-0.70,\ 0.70-0.55,\ 0.55-0.38,\ 0.38-0.20,\ 0.20\thinspace{}]
-= [\thinspace{}0.15,\ 0.15,\ 0.15,\ 0.17,\ 0.18,\ 0.20\thinspace{}]
+[1-0.85,\ 0.85-0.70,\ 0.70-0.55,\ 0.55-0.38,\ 0.38-0.20,\ 0.20]
+= [0.15,\ 0.15,\ 0.15,\ 0.17,\ 0.18,\ 0.20]
 $$
 
 With midpoints $[-0.15, -0.075, -0.025, 0.025, 0.075, 0.15]$:
@@ -574,7 +574,7 @@ space). Defined in
 | 10 | `hist_vol_20` | Annualized std of log returns, 20-day window, $\times\sqrt{252}$ |
 | 11 | `hist_vol_60` | Same, 60-day window |
 | 12 | `vol_ratio` | `hist_vol_20 / hist_vol_60` (>1 = vol expanding) |
-| 13 | `atr_pct` | ATR(14, Wilder) $/\thinspace{}P_t$ (normalized daily range) |
+| 13 | `atr_pct` | ATR(14, Wilder) $/P_t$ (normalized daily range) |
 | 14 | `drawdown` | $P_t/\max_{s\le t}P_s - 1\ (\le 0)$ |
 | 15 | `B_perc` | Bollinger %B: $(P_t - \text{lower})/(\text{upper}-\text{lower})$, bands = $\mathrm{SMA}_{20}\pm2\sigma$ |
 | 16 | `vix_level` | VIX / 100 — market-wide annualized vol (real-time, leakage-safe); mainly sharpens the big-move/vol signal |
@@ -708,7 +708,7 @@ from XOM live in the same space.
 2. Build the point-in-time $(X, y)$ matrix
    ([assembler.py](../src/stock_agent/features/assembler.py)):
    - $X$ = the 24 features at each date $t$ (data up to and including $t$).
-   - $y$ = five binary columns, $\mathbb{1}[\thinspace{}r_{t \to t+h} > \theta_k\thinspace{}]$,
+   - $y$ = five binary columns, $\mathbb{1}[r_{t \to t+h} > \theta_k]$,
      where the target uses `close.shift(-horizon)` — **strictly future**.
    - A leakage assertion checks the feature index equals the price-date index
      (features never depend on the forward-shifted series).
@@ -810,10 +810,10 @@ large move of either sign over the horizon — read straight off the bucket
 distribution every model already produces:
 
 $$
-P(|r| > k) \thickspace{}=\thickspace{} P(r < -k) + P(r > +k)
+P(|r| > k) = P(r < -k) + P(r > +k)
 $$
 
-i.e. the **two outer buckets**; the realized label is $\mathbb{1}[\thinspace{}|r| > k\thinspace{}]$.
+i.e. the **two outer buckets**; the realized label is $\mathbb{1}[|r| > k]$.
 The threshold $k$ is **sized to the horizon** so the event isn't degenerate (at h60
 a fixed 5% band is exceeded ~90% of the time): the shipped buckets are
 **h20 ±5/±10, h30 ±10/±20, h60 ±15/±30**, and the default big-move `k` is the inner
@@ -868,7 +868,7 @@ AUC/calibration shown inline as a trust badge) is the next enhancement.
 
 **How the blend is built (each rule is principled, not ad-hoc):**
 
-- **Bucket probabilities** → linear pool: $p^{\text{blend}}_i = \sum_m w_m\thinspace{} p^{(m)}_i$. This is the exact bucket mass of the mixture distribution "pick member $m$ with prob $w_m$, then draw from it." All members share the horizon's bucket scheme, so the masses align.
+- **Bucket probabilities** → linear pool: $p^{\text{blend}}_i = \sum_m w_m p^{(m)}_i$. This is the exact bucket mass of the mixture distribution "pick member $m$ with prob $w_m$, then draw from it." All members share the horizon's bucket scheme, so the masses align.
 - **E[r], P(up), P(down)** → exact weighted means. These are *linear* functionals of the distribution, so the mixture's value equals the weighted average of the members' values — no approximation.
 - **VaR / CI (quantiles)** → **mixture-CDF inversion**, never an average of the members' quantiles (the quantile of a mixture is *not* the average of the quantiles). Each member's CDF is reconstructed from its bucket-boundary cumulative masses + its own var/ci anchors (`forecasting/quantiles.py`), the mixture CDF $\sum_m w_m F_m$ is formed, and it is inverted at the 1% / 5% / 95% levels.
 
@@ -897,8 +897,8 @@ ECE (above) calibrates the *bucket probabilities*; **split conformal** calibrate
 *prediction interval* — a different, stronger guarantee. A model's stated 90% CI is its
 *belief*; out-of-sample it may cover more or less. `forecasting/conformal.py` corrects it:
 
-- **Nonconformity score** $E = \max(\text{lo}-y,\thickspace{} y-\text{hi})$ — how far the realized $y$ fell outside $[\text{lo}, \text{hi}]$ (negative when inside).
-- **Correction** $q$ = the finite-sample $(1-\alpha)$ quantile of the calibration scores; the conformalized interval is $[\text{lo}-q,\thickspace{} \text{hi}+q]$, which has **$\ge 1-\alpha$ marginal coverage**, distribution-free and finite-sample.
+- **Nonconformity score** $E = \max(\text{lo}-y, y-\text{hi})$ — how far the realized $y$ fell outside $[\text{lo}, \text{hi}]$ (negative when inside).
+- **Correction** $q$ = the finite-sample $(1-\alpha)$ quantile of the calibration scores; the conformalized interval is $[\text{lo}-q, \text{hi}+q]$, which has **$\ge 1-\alpha$ marginal coverage**, distribution-free and finite-sample.
 
 It's computed **offline and pooled** (`train_conformal.py`, CLI `conformal-calibrate`): each
 model is built as-of a cutoff, forecast across a held-out window over the universe, and the
