@@ -55,7 +55,7 @@ def test_normalizes_results(tmp_path: Path) -> None:
     art = bundle.articles[0]
     assert art.title == "AI memory demand surges"
     assert art.source == "The Guardian"
-    assert art.summary.startswith("HBM shortages")
+    assert art.summary is not None and art.summary.startswith("HBM shortages")
     assert art.sentiment is None  # Guardian supplies no sentiment
     # OR-joined query, phrases quoted; date window + api-key passed through.
     assert seen["params"]["q"] == '"AI memory" OR "high bandwidth memory"'

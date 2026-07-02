@@ -58,7 +58,7 @@ def test_normalizes_and_filters_window(tmp_path: Path) -> None:
     ]  # window + date-guard
     art = bundle.articles[0]
     assert art.source == "reuters.com"
-    assert art.summary.startswith("Blackwell")
+    assert art.summary is not None and art.summary.startswith("Blackwell")
     assert art.published_at.tzinfo is not None  # naive FMP date coerced to aware UTC
     assert seen["params"]["tickers"] == "NVDA"
 
