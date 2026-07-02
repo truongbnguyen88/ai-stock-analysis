@@ -145,26 +145,30 @@ class ProviderRegistry:
         if not chain:
             raise ProviderUnavailable("registry", "no topic-news providers available")
         last_error: ProviderError | None = None
+        last_empty: NewsBundle | None = None
         for provider in chain:
             try:
                 bundle = provider.get_topic_news(keywords, start, end, top_n=top_n)
-                log.info(
-                    "provider.topic_news_ok",
-                    provider=provider.name,
-                    n=len(bundle),
-                    keywords=list(keywords),
-                )
-                return bundle
             except ProviderError as exc:
                 log.warning(
                     "provider.topic_news_failed",
-                    provider=provider.name,
-                    keywords=list(keywords),
-                    error=str(exc),
+                    provider=provider.name, keywords=list(keywords), error=str(exc),
                 )
                 last_error = exc
                 continue
-        assert last_error is not None
+            if len(bundle) > 0:
+                log.info(
+                    "provider.topic_news_ok",
+                    provider=provider.name, n=len(bundle), keywords=list(keywords),
+                )
+                return bundle
+            # A 200-with-zero-articles is NOT a stop signal — a flaky source (e.g. GDELT) often
+            # returns empty without erroring; fall through so a healthier provider can answer.
+            log.info("provider.topic_news_empty", provider=provider.name, keywords=list(keywords))
+            last_empty = bundle
+        if last_empty is not None:  # every provider was reachable but found nothing — honest empty
+            return last_empty
+        assert last_error is not None  # every provider errored
         raise last_error
 
     def get_topic_tone(
@@ -228,16 +232,26 @@ def build_default_registry(settings: Settings) -> ProviderRegistry:
     from stock_agent.providers._cache import DiskCache
     from stock_agent.providers.alpha_vantage import AlphaVantageProvider
     from stock_agent.providers.finnhub import FinnhubProvider
+    from stock_agent.providers.fmp import FmpProvider
     from stock_agent.providers.gdelt_doc import GdeltDocProvider
+    from stock_agent.providers.google_news_rss import GoogleNewsRssProvider
+    from stock_agent.providers.guardian import GuardianProvider
     from stock_agent.providers.marketaux import MarketauxProvider
+    from stock_agent.providers.newsdata import NewsDataProvider
     from stock_agent.providers.yfinance_provider import YFinanceProvider
 
     cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
+    # Providers whose key is absent are skipped at chain-resolution time (available()==False), so
+    # registering them here is harmless — they activate only once their key is set.
     providers: list[Provider] = [
         YFinanceProvider(cache=cache),
         FinnhubProvider(settings=settings, cache=cache),
         MarketauxProvider(settings=settings, cache=cache),
         AlphaVantageProvider(settings=settings, cache=cache),
+        FmpProvider(settings=settings, cache=cache),  # per-ticker finance news (keyed)
         GdeltDocProvider(settings=settings, cache=cache),  # keyless topic/theme news
+        GuardianProvider(settings=settings, cache=cache),  # topic news (keyed, 5k/day)
+        NewsDataProvider(settings=settings, cache=cache),  # per-ticker + topic (keyed)
+        GoogleNewsRssProvider(settings=settings, cache=cache),  # per-ticker + topic (KEYLESS)
     ]
     return ProviderRegistry(providers, settings)
