@@ -154,7 +154,7 @@ ai-stock-analysis/
 │   ├── settings.py              # pydantic-settings (.env binding)
 │   ├── logging_config.py        # structlog
 │   ├── schemas/                 # market · news · forecast · report · earnings · synthesis · backtest (+ConformalReport) · documents · retrieval · research
-│   ├── providers/               # base(Protocols: price/news/earnings) · registry · av · finnhub · yfinance · marketaux · sec_edgar (EDGAR official API) · _cache
+│   ├── providers/               # base(Protocols: price/news/earnings) · registry · av · finnhub · yfinance · marketaux · gdelt_doc · guardian · fmp · newsdata · google_news_rss · sec_edgar (EDGAR official API) · _cache
 │   ├── data/                    # loader · validation · earnings (context + cadence) · market_context (VIX)
 │   ├── indicators/              # trend · momentum · volatility · returns
 │   ├── features/                # price_features · news_features (display) · news_history (GDELT, leakage-safe) · assembler
@@ -219,6 +219,25 @@ NewsProvider:          get_company_news(ticker, start, end) -> NewsBundle
 - **Caching + rate limiting** are uniform decorators, not per-provider code.
 - **Adding a provider** = implement the Protocol + register in YAML. Zero business-logic changes.
 - **Testability** — a `FakeProvider` returning fixtures runs the whole pipeline offline/deterministically.
+
+### News source chains (free-tier, config-driven)
+Two distinct news paths, each a config-ordered chain of providers that are **skipped when their key is absent** (so the chains degrade gracefully):
+
+- **Per-ticker** (`provider_news_priority`) — **MERGE**: every available provider is queried and the articles are concatenated, then deduped/ranked. Order = dedup precedence (richer copy wins).
+- **Theme/topic** (`provider_topic_priority`) — **FAILOVER**: the first provider returning ≥1 article wins; an errored **or empty** result falls through to the next, so a flaky source (e.g. GDELT's 429s / empty 200s) can't block the chain.
+
+| Provider | Chain(s) | Free tier | Key env var |
+|---|---|---|---|
+| Finnhub | per-ticker | 60/min | `FINNHUB_API_KEY` |
+| Financial Modeling Prep | per-ticker | 250/day | `FMP_API_KEY` |
+| Marketaux | per-ticker + topic | ~100/day | `MARKETAUX_API_KEY` |
+| Alpha Vantage | per-ticker (also numeric sentiment) | 25/day | `ALPHA_VANTAGE_API_KEY` |
+| GDELT DOC | topic | keyless | — |
+| The Guardian | topic | 5,000/day | `GUARDIAN_API_KEY` |
+| NewsData.io | per-ticker + topic | ~200/day | `NEWSDATA_API_KEY` |
+| Google News RSS | per-ticker + topic | keyless (headlines only) | — |
+
+The four newer sources supply **no per-article sentiment** (numeric sentiment stays with Alpha Vantage / the models, per the numbers-vs-narrative invariant); they broaden qualitative coverage for the LLM synthesis. Google News RSS is keyless, so **both chains work with zero keys**; each keyed source activates once its `.env` key is set.
 
 ## 8. Data flow
 
