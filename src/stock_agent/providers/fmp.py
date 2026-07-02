@@ -1,15 +1,13 @@
-"""Financial Modeling Prep (FMP) — per-ticker finance news provider (free tier 250 req/day).
+"""Financial Modeling Prep (FMP) — per-ticker finance news provider.
 
-Ticker-tagged financial news, so it deepens the per-ticker MERGE chain alongside Finnhub /
-Marketaux. Free, keyed; skipped when the key is absent.
+Ticker-tagged financial news. **FMP's news endpoint is a PAID feature** — verified live: the free
+tier returns HTTP 402 (``/stable/news/stock``) / 403 (legacy ``/api/v3/stock_news``). So ``fmp`` is
+NOT in the default ``provider_news_priority``; a paid-plan subscriber can add it. Kept because the
+code is correct against the current endpoint and activates cleanly on a paid key.
 
-API: GET https://financialmodelingprep.com/api/v3/stock_news
-     ?tickers=NVDA&from=&to=&limit=&apikey=
-Response: [{symbol, publishedDate: "2026-06-01 12:00:00", title, image, site, text, url}, ...]
-
-NOTE: FMP has reshuffled endpoints over time (v3 ``stock_news`` vs newer ``/stable/news/stock``).
-If a live fetch 404s, confirm which news endpoint your plan exposes and update ``_URL`` — the
-normalizer only depends on the field names above.
+API: GET https://financialmodelingprep.com/stable/news/stock
+     ?symbols=NVDA&from=&to=&limit=&apikey=
+Response: [{symbol, publishedDate: "2026-06-01 12:00:00", title, image, site/publisher, text, url}]
 """
 
 from __future__ import annotations
@@ -23,7 +21,7 @@ from stock_agent.providers._http import HttpJson
 from stock_agent.schemas.news import Article, NewsBundle
 
 _NAME = "fmp"
-_URL = "https://financialmodelingprep.com/api/v3/stock_news"
+_URL = "https://financialmodelingprep.com/stable/news/stock"  # paid endpoint (free tier 402/403)
 _MAX_LIMIT = 100
 
 
@@ -57,7 +55,7 @@ def _articles_from_payload(ticker: str, payload: Any, start: Date, end: Date) ->
             Article(
                 title=str(title),
                 url=str(url),
-                source=str(item.get("site") or _NAME),
+                source=str(item.get("site") or item.get("publisher") or _NAME),
                 published_at=dt,
                 summary=str(item["text"]) if item.get("text") else None,
             )
@@ -83,7 +81,7 @@ class FmpProvider:
         payload = self._http.get(
             _URL,
             params={
-                "tickers": ticker.upper(),
+                "symbols": ticker.upper(),
                 "from": start.isoformat(),
                 "to": end.isoformat(),
                 "limit": _MAX_LIMIT,

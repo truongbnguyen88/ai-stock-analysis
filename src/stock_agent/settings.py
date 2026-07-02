@@ -97,10 +97,13 @@ class Settings(BaseSettings):
     # intentionally absent from the price chain.
     provider_price_priority: str = "yfinance,alpha_vantage"
     # Per-ticker news is MERGED across all available providers (dedup removes overlap). Finnhub +
-    # Marketaux + Alpha Vantage lead; FMP + NewsData add finance coverage when their keys are set;
-    # Google News RSS is last — KEYLESS, so company news still works with zero keys (headline-only,
+    # Marketaux + Alpha Vantage lead; NewsData adds finance coverage when its key is set; Google
+    # News RSS is last — KEYLESS, so company news still works with zero keys (headline-only,
     # deduped). All the keyed sources are skipped until their key is present.
-    provider_news_priority: str = "finnhub,fmp,marketaux,alpha_vantage,newsdata,google_news_rss"
+    # fmp omitted: FMP's per-ticker news endpoints require a paid plan (free tier → 402 Restricted;
+    # verified live). The FmpProvider code stays available and re-activates if `fmp` is added back
+    # here alongside a paid FMP key.
+    provider_news_priority: str = "finnhub,marketaux,alpha_vantage,newsdata,google_news_rss"
     provider_earnings_priority: str = "yfinance"  # earnings dates (keyless, unlimited)
     # Theme/keyword news (Enhancement C), FAILOVER order. GDELT DOC is keyless + theme-aware so it
     # leads; The Guardian (5k/day, reliable) is the strong keyed backup for GDELT's 429 flakiness;

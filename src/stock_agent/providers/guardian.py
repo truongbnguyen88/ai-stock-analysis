@@ -5,7 +5,7 @@ on the topic chain (GDELT is keyless but rate-limit-flaky). English-only; genera
 finance-tagged) coverage, so it serves the THEME path ("AI memory", "semiconductors"), not
 ticker-scoped news. The free developer key is non-commercial (fine for a research/education repo).
 
-API: GET https://content.guardianapi.com/search
+API: GET https://content.guardianapis.com/search
      ?q=<expr>&from-date=&to-date=&order-by=newest&page-size=&show-fields=trailText&api-key=
 Response: {"response": {"status": "ok", "results": [{webTitle, webUrl, webPublicationDate,
           fields: {trailText}}]}}
@@ -25,7 +25,7 @@ from stock_agent.providers.base import ProviderUnavailable
 from stock_agent.schemas.news import Article, NewsBundle
 
 _NAME = "guardian"
-_URL = "https://content.guardianapi.com/search"
+_URL = "https://content.guardianapis.com/search"  # note: guardianapiS (plural)
 _MAX_PAGE = 50  # Guardian page-size cap
 
 

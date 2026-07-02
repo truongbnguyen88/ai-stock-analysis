@@ -80,8 +80,23 @@ def test_keys_activate_the_keyed_providers() -> None:
     reg = build_default_registry(settings)
     news = [p.name for p in reg._chain(settings.news_priority, NewsProvider)]  # type: ignore[type-abstract]
     topic = [p.name for p in reg._chain(settings.topic_priority, TopicNewsProvider)]  # type: ignore[type-abstract]
-    assert news == ["finnhub", "fmp", "marketaux", "alpha_vantage", "newsdata", "google_news_rss"]
+    # fmp is intentionally absent from the default news chain (its news endpoints are paid; free
+    # tier → 402), even though fmp_api_key is set here — the chain follows provider_news_priority.
+    assert news == ["finnhub", "marketaux", "alpha_vantage", "newsdata", "google_news_rss"]
     assert topic == ["gdelt_doc", "guardian", "marketaux", "newsdata", "google_news_rss"]
+
+
+def test_fmp_reactivates_when_added_back_to_chain() -> None:
+    # The FmpProvider stays registered; a paid-plan user re-enables it purely via config, no code
+    # change — putting `fmp` back in provider_news_priority makes it appear in the chain again.
+    settings = Settings(
+        _env_file=None,
+        fmp_api_key="d",
+        provider_news_priority="finnhub,fmp,google_news_rss",
+    )
+    reg = build_default_registry(settings)
+    news = [p.name for p in reg._chain(settings.news_priority, NewsProvider)]  # type: ignore[type-abstract]
+    assert news == ["fmp", "google_news_rss"]  # finnhub skipped (no key); fmp keyed → active
 
 
 def test_topic_failover_skips_empty_provider() -> None:
