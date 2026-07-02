@@ -82,8 +82,10 @@ class Settings(BaseSettings):
     # Additional free-tier news sources (all OPTIONAL — each provider is skipped when its key is
     # absent, so the chains degrade gracefully). Google News RSS is keyless (no key field).
     guardian_api_key: str | None = None  # The Guardian (5k/day; open-platform.theguardian.com)
-    fmp_api_key: str | None = None  # Financial Modeling Prep (250/day; financialmodelingprep.com)
+    fmp_api_key: str | None = None  # Financial Modeling Prep (news is PAID; free tier → 402)
     newsdata_api_key: str | None = None  # NewsData.io (~200 credits/day; newsdata.io)
+    tiingo_api_key: str | None = None  # Tiingo per-ticker news (1,000/day free; api.tiingo.com)
+    thenewsapi_api_key: str | None = None  # TheNewsAPI topic news (100/day, 3/req; thenewsapi.com)
 
     # Provider fallback order, comma-separated in env. Stored as raw strings and
     # parsed via the properties below: pydantic-settings would otherwise try to
@@ -97,19 +99,21 @@ class Settings(BaseSettings):
     # intentionally absent from the price chain.
     provider_price_priority: str = "yfinance,alpha_vantage"
     # Per-ticker news is MERGED across all available providers (dedup removes overlap). Finnhub +
-    # Marketaux + Alpha Vantage lead; NewsData adds finance coverage when its key is set; Google
-    # News RSS is last — KEYLESS, so company news still works with zero keys (headline-only,
-    # deduped). All the keyed sources are skipped until their key is present.
+    # Tiingo (1k/day, real ticker tagging) + Marketaux + Alpha Vantage lead; NewsData adds coverage
+    # when its key is set; Google News RSS is last — KEYLESS, so company news still works with zero
+    # keys (headline-only, deduped). All the keyed sources are skipped until their key is present.
     # fmp omitted: FMP's per-ticker news endpoints require a paid plan (free tier → 402 Restricted;
     # verified live). The FmpProvider code stays available and re-activates if `fmp` is added back
     # here alongside a paid FMP key.
-    provider_news_priority: str = "finnhub,marketaux,alpha_vantage,newsdata,google_news_rss"
+    provider_news_priority: str = "finnhub,tiingo,marketaux,alpha_vantage,newsdata,google_news_rss"
     provider_earnings_priority: str = "yfinance"  # earnings dates (keyless, unlimited)
     # Theme/keyword news (Enhancement C), FAILOVER order. GDELT DOC is keyless + theme-aware so it
     # leads; The Guardian (5k/day, reliable) is the strong keyed backup for GDELT's 429 flakiness;
-    # Marketaux + NewsData follow; Google News RSS is the KEYLESS last resort — so even with no new
-    # keys set, topic news now falls back to Google News RSS when GDELT is rate-limited.
-    provider_topic_priority: str = "gdelt_doc,guardian,marketaux,newsdata,google_news_rss"
+    # Marketaux + NewsData + TheNewsAPI (100/day, 3 art/req) follow; Google News RSS is the KEYLESS
+    # last resort — so even with no new keys set, topic news falls back to it when GDELT is limited.
+    provider_topic_priority: str = (
+        "gdelt_doc,guardian,marketaux,newsdata,thenewsapi,google_news_rss"
+    )
     # Expand a FREE-FORM topic phrase into OR-able search keywords via the LLM
     # (curated registry themes are left untouched). Improves recall on ad-hoc
     # themes; best-effort, so it never blocks a search. Off => exact phrase only.

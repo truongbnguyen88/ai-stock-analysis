@@ -229,15 +229,17 @@ Two distinct news paths, each a config-ordered chain of providers that are **ski
 | Provider | Chain(s) | Free tier | Key env var |
 |---|---|---|---|
 | Finnhub | per-ticker | 60/min | `FINNHUB_API_KEY` |
+| Tiingo | per-ticker | 1,000/day (real ticker tagging) | `TIINGO_API_KEY` |
 | Financial Modeling Prep | per-ticker (**paid news**; out of default chain) | free tier ≠ news (402) | `FMP_API_KEY` |
 | Marketaux | per-ticker + topic | ~100/day | `MARKETAUX_API_KEY` |
 | Alpha Vantage | per-ticker (also numeric sentiment) | 25/day | `ALPHA_VANTAGE_API_KEY` |
 | GDELT DOC | topic | keyless | — |
 | The Guardian | topic | 5,000/day | `GUARDIAN_API_KEY` |
 | NewsData.io | per-ticker + topic | ~200/day | `NEWSDATA_API_KEY` |
+| TheNewsAPI | topic | 100/day (3 articles/request) | `THENEWSAPI_API_KEY` |
 | Google News RSS | per-ticker + topic | keyless (headlines only) | — |
 
-The four newer sources supply **no per-article sentiment** (numeric sentiment stays with Alpha Vantage / the models, per the numbers-vs-narrative invariant); they broaden qualitative coverage for the LLM synthesis. Google News RSS is keyless, so **both chains work with zero keys**; each keyed source activates once its `.env` key is set.
+The newer qualitative sources supply **no per-article sentiment** (numeric sentiment stays with Alpha Vantage / the models, per the numbers-vs-narrative invariant); they broaden coverage for the LLM synthesis. Google News RSS is keyless, so **both chains work with zero keys**; each keyed source activates once its `.env` key is set.
 
 ## 8. Data flow
 
