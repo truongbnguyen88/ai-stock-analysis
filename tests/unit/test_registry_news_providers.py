@@ -81,10 +81,11 @@ def test_keys_activate_the_keyed_providers() -> None:
     reg = build_default_registry(settings)
     news = [p.name for p in reg._chain(settings.news_priority, NewsProvider)]  # type: ignore[type-abstract]
     topic = [p.name for p in reg._chain(settings.topic_priority, TopicNewsProvider)]  # type: ignore[type-abstract]
-    # fmp is intentionally absent from the default news chain (its news endpoints are paid; free
-    # tier → 402), even though fmp_api_key is set here — the chain follows provider_news_priority.
+    # fmp AND tiingo are intentionally absent from the default news chain (both gate news behind a
+    # paid plan — fmp free → 402, tiingo free → 403), even though their keys are set here — the
+    # chain follows provider_news_priority, which omits them.
     assert news == [
-        "finnhub", "tiingo", "marketaux", "alpha_vantage", "newsdata", "google_news_rss"
+        "finnhub", "marketaux", "alpha_vantage", "newsdata", "google_news_rss"
     ]
     assert topic == [
         "gdelt_doc", "guardian", "marketaux", "newsdata", "thenewsapi", "google_news_rss"
@@ -102,6 +103,19 @@ def test_fmp_reactivates_when_added_back_to_chain() -> None:
     reg = build_default_registry(settings)
     news = [p.name for p in reg._chain(settings.news_priority, NewsProvider)]  # type: ignore[type-abstract]
     assert news == ["fmp", "google_news_rss"]  # finnhub skipped (no key); fmp keyed → active
+
+
+def test_tiingo_reactivates_when_added_back_to_chain() -> None:
+    # Same as fmp: TiingoProvider stays registered; a Power-plan user re-enables Tiingo news purely
+    # via config (put `tiingo` back in provider_news_priority), no code change.
+    settings = Settings(
+        _env_file=None,
+        tiingo_api_key="g",
+        provider_news_priority="finnhub,tiingo,google_news_rss",
+    )
+    reg = build_default_registry(settings)
+    news = [p.name for p in reg._chain(settings.news_priority, NewsProvider)]  # type: ignore[type-abstract]
+    assert news == ["tiingo", "google_news_rss"]  # finnhub skipped (no key); tiingo keyed → active
 
 
 def test_topic_failover_skips_empty_provider() -> None:

@@ -229,7 +229,7 @@ Two distinct news paths, each a config-ordered chain of providers that are **ski
 | Provider | Chain(s) | Free tier | Key env var |
 |---|---|---|---|
 | Finnhub | per-ticker | 60/min | `FINNHUB_API_KEY` |
-| Tiingo | per-ticker | 1,000/day (real ticker tagging) | `TIINGO_API_KEY` |
+| Tiingo | per-ticker (**paid news**; out of default chain) | free tier ≠ news (403; requires Power $30/mo) | `TIINGO_API_KEY` |
 | Financial Modeling Prep | per-ticker (**paid news**; out of default chain) | free tier ≠ news (402) | `FMP_API_KEY` |
 | Marketaux | per-ticker + topic | ~100/day | `MARKETAUX_API_KEY` |
 | Alpha Vantage | per-ticker (also numeric sentiment) | 25/day | `ALPHA_VANTAGE_API_KEY` |
