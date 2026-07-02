@@ -238,6 +238,8 @@ def build_default_registry(settings: Settings) -> ProviderRegistry:
     from stock_agent.providers.guardian import GuardianProvider
     from stock_agent.providers.marketaux import MarketauxProvider
     from stock_agent.providers.newsdata import NewsDataProvider
+    from stock_agent.providers.thenewsapi import TheNewsApiProvider
+    from stock_agent.providers.tiingo import TiingoProvider
     from stock_agent.providers.yfinance_provider import YFinanceProvider
 
     cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
@@ -248,10 +250,12 @@ def build_default_registry(settings: Settings) -> ProviderRegistry:
         FinnhubProvider(settings=settings, cache=cache),
         MarketauxProvider(settings=settings, cache=cache),
         AlphaVantageProvider(settings=settings, cache=cache),
-        FmpProvider(settings=settings, cache=cache),  # per-ticker finance news (keyed)
+        FmpProvider(settings=settings, cache=cache),  # per-ticker finance news (paid; off default)
+        TiingoProvider(settings=settings, cache=cache),  # per-ticker news (keyed, 1k/day free)
         GdeltDocProvider(settings=settings, cache=cache),  # keyless topic/theme news
         GuardianProvider(settings=settings, cache=cache),  # topic news (keyed, 5k/day)
         NewsDataProvider(settings=settings, cache=cache),  # per-ticker + topic (keyed)
+        TheNewsApiProvider(settings=settings, cache=cache),  # topic news (keyed, 100/day)
         GoogleNewsRssProvider(settings=settings, cache=cache),  # per-ticker + topic (KEYLESS)
     ]
     return ProviderRegistry(providers, settings)
