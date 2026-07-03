@@ -295,9 +295,41 @@ Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` fo
   - **Deps:** `zustand`, `react-vega` (v8 → `VegaEmbed`), `vega`, `vega-lite`, `vega-embed`.
     react-vega/Zustand land here per P2.0's "defer to the consuming slice". Vega canvas probe in
     jsdom silenced by a top-level `getContext` stub in the test setup (no chart is really rendered).
-- **P2.4 — True token streaming.** `AnthropicToolClient.stream`; adapter forwards deltas. *Tests:*
-  streaming client unit test against a recorded/faked chunk sequence (no network); multi-chunk →
-  concatenated == single-shot answer.
+- **P2.4 — True token streaming — ✅ DONE (2026-07-03).** Real streaming LLM client + multi-delta
+  emission from the runtime, **grounding-safe** (backend-only slice; the P2.3 client already renders
+  multiple `token` frames incrementally, so no web change).
+  - **Streaming client (`agent/runtime.py`):** `AnthropicToolClient.stream(...)` drives
+    `client.messages.stream(...)` — forwards `text_stream` deltas live, then yields ONE terminal
+    `ToolResponse` assembled from `get_final_message()` (shared `_tool_response_from_content` with
+    `create`; shared `_sampling_kwargs` so temperature is pinned/omitted identically). A new
+    `@runtime_checkable StreamingToolLLM` Protocol + `stream_turn(llm, …)` route a streaming LLM to
+    `.stream` and **fall back** to a single-delta `create()` for create-only LLMs — so every
+    existing test fake is unchanged.
+  - **Runtime (`run_agent_events`):** consumes `stream_turn`, collecting text deltas + the terminal
+    `ToolResponse`. On the answer turn it emits the accepted answer as **multiple `Token` deltas**
+    preserving the model's own chunk boundaries (`_answer_tokens`, which guarantees
+    `"".join(deltas) == text`). **Grounding runs on the FULL assembled answer BEFORE any delta is
+    yielded** — an ungrounded figure split across chunks (`"92." + "5%"`) is still caught, the
+    rejected attempt streams no tokens, and tool-call preamble text is discarded (never a `Token`).
+    `run_agent` (the drain) concatenates the deltas → byte-identical text; all P2.1/P2.2 tests hold.
+  - **Adapter:** unchanged — it still buffers the `token`s and flushes `tiles → chart* → token* →
+    sources → final` at `Final`. Since the deltas are emitted only *after* the guard clears (the
+    whole answer is already assembled), buffering them to keep tiles/chart first (§5) costs no
+    latency.
+  - **Design decision (grounding-safe ordering, flagged):** true live-*during*-generation typing is
+    **intentionally deferred**. It is in genuine tension with three locked invariants — the grounding
+    guard (needs the whole answer), §5 (`tiles` precede prose, built from the complete tool_results),
+    and drain-equivalence / no-preamble-leak. Delivering it would require a **provisional-reset**
+    wire frame (to discard tool-preamble + grounding-retry attempts) **and a §5 relaxation**, and it
+    would *flash ungrounded figures pre-guard* — directly undercutting the numbers-vs-narrative
+    invariant. P2.4 ships the streaming infra (a prerequisite for any future live-gen upgrade) with
+    the stronger guarantee that **no ungrounded figure ever reaches the client, even provisionally**.
+  - **Tests (11):** `tests/unit/test_streaming_client.py` (7 — deltas-then-terminal-ToolResponse,
+    multi-chunk concat == single-shot, tool_use parsed off the final message, temperature
+    pin/omit, SDK-error → `AgentError`, `stream_turn` fallback for create-only + forward for
+    streaming), `tests/integration/test_agent_events.py` (+4 — one Token per delta with boundaries
+    preserved, full-text grounding with a figure split across deltas, tool-turn preamble discarded,
+    drain concatenates deltas). `make check` green (981 passed / 3 skipped); no web change.
 - **P2.5 — Threads + export.** `/threads` wired to `ChatStore`; `ExportMenu` popover → `/export`
   download. *Tests:* thread round-trip (create/list/delete) reuses existing `ChatStore` tests; export
   bytes non-empty per format (reuses `export_summary` tests).
