@@ -21,11 +21,28 @@ learned retrieval/capability selector (a policy choosing a route per request).
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
-from dataclasses import dataclass, field
+import time
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
-from stock_agent.agent.runtime import ToolLLM, run_agent
+from stock_agent.agent.events import (
+    AgentEvent,
+    Final,
+    RouteDecided,
+    Token,
+    ToolFinish,
+    ToolStart,
+    TurnStart,
+    hue_for,
+)
+from stock_agent.agent.runtime import (
+    ToolInvocation,
+    ToolLLM,
+    _input_summary,
+    run_agent,
+    run_agent_events,
+)
 from stock_agent.agent.tools import ToolExecutor
 from stock_agent.logging_config import get_logger
 
@@ -275,6 +292,121 @@ class Router:
             model=model,
         )
         return self._run_deterministic(route, inp)
+
+    def run_events(
+        self,
+        request: str,
+        *,
+        route: str | None = None,
+        ticker: str | None = None,
+        horizon: int | None = None,
+        days: int | None = None,
+        model: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+        thread_id: str = "",
+        turn_id: str = "",
+    ) -> Iterator[AgentEvent]:
+        """Streaming twin of :meth:`run`: yield the turn as ``AgentEvent``s (plan §4/§5).
+
+        Same routing decision as :meth:`run` (same params, same ``RouterError`` on a bad route /
+        missing param), but emitted as a stream. The router owns ``turn_start`` + ``route_decided``;
+        the deterministic path emits ``tool_start``/``tool_finish`` around its single dispatch, a
+        one-shot ``token`` (the rendered result) and a ``Final`` carrying the ``ToolInvocation`` (so
+        the api adapter can build tiles/chart/sources); the LLM path delegates to
+        :func:`run_agent_events` (the very generator :func:`run_agent` drains, so behavior can't
+        diverge). ``tiles``/``chart``/``sources`` are NOT emitted here — they are adapter-owned,
+        built from ``tool_results`` (the router must not import ``ui``/``viz``).
+        """
+        yield TurnStart(
+            thread_id=thread_id,
+            turn_id=turn_id,
+            route=route or AUTO,
+            ticker=_normalize_ticker(ticker),
+        )
+        if route is None or route == AUTO:
+            yield from self._run_llm_events(request, history=history, turn_id=turn_id)
+        elif route == CLASSIFY:
+            yield from self._run_classified_events(request, history=history, turn_id=turn_id)
+        else:
+            inp = RouteInput(
+                request=request,
+                ticker=_normalize_ticker(ticker),
+                horizon=horizon,
+                days=days,
+                model=model,
+            )
+            yield from self._run_deterministic_events(route, inp, turn_id=turn_id)
+
+    def _run_deterministic_events(
+        self, route: str, inp: RouteInput, *, turn_id: str
+    ) -> Iterator[AgentEvent]:
+        """Deterministic dispatch as a stream: route_decided → tool_start/finish → token → final."""
+        spec = ROUTES.get(route)
+        if spec is None:
+            raise RouterError(f"unknown route '{route}'; choose from: {', '.join(ROUTE_NAMES)}")
+        _validate(spec, inp)
+        args = spec.build(inp)
+        log.info("router.deterministic", route=route, tool=spec.tool)
+        yield RouteDecided(mode="deterministic", route_name=route, note=spec.blurb)
+        yield ToolStart(
+            tool=spec.tool, input_summary=_input_summary(args), hue_key=hue_for(spec.tool)
+        )
+        t0 = time.perf_counter()
+        result = self._executor.execute(spec.tool, args)  # no routing LLM call
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        ok = isinstance(result, dict) and "error" not in result
+        yield ToolFinish(tool=spec.tool, ok=ok, elapsed_ms=elapsed_ms)
+        inv = ToolInvocation(name=spec.tool, input=args, result=result)
+        # Deterministic tools carry their own numbers (numeric routes) or their own guarded
+        # synthesis (news/filings): no agent-answer grounding guard applies (as in run's variant).
+        yield Token(text=_render(result))
+        yield Final(
+            tool_calls=[spec.tool],
+            iterations=1,
+            messages=[],
+            tool_results=[inv],
+            turn_id=turn_id,
+        )
+
+    def _run_llm_events(
+        self, request: str, *, history: list[dict[str, Any]] | None, turn_id: str
+    ) -> Iterator[AgentEvent]:
+        """LLM routing as a stream: route_decided(auto) then the runtime generator's events.
+
+        Delegates to :func:`run_agent_events` (single source of the loop) and stamps ``turn_id`` on
+        its terminal ``Final`` (the runtime is turn-id agnostic; turn identity is a routing idea).
+        """
+        if self._tool_llm is None:
+            raise RouterError("LLM routing requires a tool LLM (none configured)")
+        log.info("router.llm")
+        yield RouteDecided(mode="auto", route_name=AUTO)
+        for ev in run_agent_events(
+            request, llm=self._tool_llm, executor=self._executor, history=history
+        ):
+            yield replace(ev, turn_id=turn_id) if isinstance(ev, Final) else ev
+
+    def _run_classified_events(
+        self, request: str, *, history: list[dict[str, Any]] | None, turn_id: str
+    ) -> Iterator[AgentEvent]:
+        """Two-stage routing as a stream (mirrors :meth:`_run_classified`): dispatch or escalate."""
+        if self._classifier is None:
+            raise RouterError("classify routing requires a classifier (none configured)")
+        decision = self._classifier.classify(request)
+        route = decision.route
+        if route is None:  # escalated — defer to the Sonnet agent loop
+            log.info("router.classify_escalate", reason=decision.reason, conf=decision.confidence)
+            yield from self._run_llm_events(request, history=history, turn_id=turn_id)
+            return
+        log.info("router.classify_dispatch", route=route, conf=decision.confidence)
+        spec = ROUTES[route]
+        req_text = decision.topic if ("topic" in spec.needs and decision.topic) else request
+        inp = RouteInput(
+            request=req_text,
+            ticker=_normalize_ticker(decision.ticker),
+            horizon=decision.horizon,
+            days=decision.days,
+        )
+        yield from self._run_deterministic_events(route, inp, turn_id=turn_id)
 
     def _run_classified(
         self, request: str, *, history: list[dict[str, Any]] | None

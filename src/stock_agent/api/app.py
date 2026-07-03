@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from stock_agent.api.routes import meta
+from stock_agent.api.routes import chat, meta
 
 # Vite dev server origins (default port 5173). Local-dev only; a real deploy would lock
 # this down. Both host spellings are allowed so the browser's Origin header matches either.
@@ -21,7 +21,7 @@ DEV_ORIGINS: tuple[str, ...] = (
 
 
 def create_app() -> FastAPI:
-    """Build the FastAPI app: CORS for the Vite dev origin + the P2.0 meta routes."""
+    """Build the FastAPI app: CORS for the Vite dev origin + meta routes + the chat stream."""
     app = FastAPI(
         title="stock-agent api",
         version="0.0.1",
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(meta.router)
+    app.include_router(chat.router)
     return app
 
 

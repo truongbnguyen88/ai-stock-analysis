@@ -222,9 +222,33 @@ Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` fo
     test_agent_events.py` (7 — ordering, multi-tool pairing, grounding-reject→`error`-not-`final`
     with no tokens, retry→success emits only the accepted answer, tool-error→`ok=False`, `run_agent`
     ≡ drain). Existing runtime/router tests unchanged. `make check` green (955 passed / 3 skipped).
-- **P2.2 — `POST /chat/stream` (non-token).** Adapter emits everything except real `token` streaming
-  (single `token` with full text). *Tests:* SSE frame-shape + ordering via FastAPI test client;
-  `tiles`/`chart`/`sources` are byte-identical to `tiles_for`/`charts_for`/citation builders.
+- **P2.2 — `POST /chat/stream` (non-token) — ✅ DONE (2026-07-03).** SSE endpoint streaming the full
+  `AgentEvent` union in §5 order; single `token` carries the whole answer (true token streaming is
+  P2.4). **No web change** (backend-only slice).
+  - **Router (`agent/router.py`):** new `Router.run_events(...)` mirrors `Router.run` — router owns
+    `turn_start` + `route_decided`; the deterministic path emits `tool_start`/`tool_finish` around one
+    dispatch, a one-shot `token` (`_render(result)`), and a `Final` carrying the `ToolInvocation` (so
+    the adapter can build tiles/chart/sources); the LLM/`auto` path delegates to `run_agent_events`
+    (the same generator `run_agent` drains — can't drift) and stamps `turn_id` on its `Final`; the
+    `classify` path dispatches or escalates. `RouterError` (bad route / missing param) still raised.
+    It does **not** emit `tiles`/`chart`/`sources` (router must not import `ui`/`viz`, which would
+    cycle with Streamlit) — those are adapter-owned.
+  - **Adapter (`api/streaming.py`):** `adapt_events` weaves `tiles`/`chart`/`sources` in at the §5
+    positions (built from `Final.tool_results` via `ui.tiles.stat_tiles_from_tool_results` /
+    `viz.charts.charts_for` / `ui.state.sources_from_tool_results`) — buffers the token so tiles/chart
+    precede it and sources follow; empty tiles/sources omitted; `Error` discards buffered tokens.
+    `sse_frame` = `data: <json>\n\n`; `event_stream` converts a terminal `RouterError` into an
+    `error` frame (SSE already 200, so no mid-stream 500). Only the api layer imports `ui`/`viz`
+    (nothing imports `api` → no cycle).
+  - **Endpoint (`api/routes/chat.py` + `deps.router_dep` + `schemas.ChatStreamRequest`):**
+    `POST /chat/stream` → `StreamingResponse(text/event-stream)`; `router_dep` builds the hybrid
+    `Router` (overridden in tests with a `FakeToolLLM`/`FakeProvider` router).
+  - **Tests:** `tests/integration/test_router_events.py` (7 — ordering, `Final` payloads,
+    `run_events` text/tool_calls/structured ≡ `run`, classify dispatch+escalate, `RouterError`),
+    `tests/unit/test_streaming_adapter.py` (4 — §5 weave, builder byte-parity, empty-omission,
+    error-discard), `tests/integration/test_api_chat_stream.py` (3 — SSE frame shape + §5 order via
+    `TestClient`, `tiles`/`chart` byte-identical to builders, grounding-reject → `error` frame,
+    bad-route → `error` frame). `make check` green (969 passed / 3 skipped).
 - **P2.3 — React conversation.** `Stream`/`AssistantTurn` renders a real turn from the stream:
   `TileRow`, `ChartCard` (react-vega), `TraceRow` animating on `tool_start/finish`, `Sources`,
   provisional→final token handling. *Tests:* component tests with an MSW-mocked SSE fixture (no live

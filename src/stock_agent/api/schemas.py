@@ -7,9 +7,32 @@ cannot drift on what they show — both read the same underlying pure contracts.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, computed_field
+from typing import Any
+
+from pydantic import BaseModel, Field, computed_field
 
 from stock_agent.rag.status import CorpusStatus
+
+
+class ChatStreamRequest(BaseModel):
+    """Body for ``POST /chat/stream`` — one turn's request (mirrors ``Router.run_events`` params).
+
+    ``route`` selects the path: ``None``/``"auto"`` → LLM agent loop; a granular route name (e.g.
+    ``"forecast"``) → deterministic dispatch; ``"classify"`` → two-stage classifier. ``ticker``/
+    ``horizon``/``days``/``model`` are the structured params the deterministic routes consume;
+    ``thread_id``/``turn_id`` echo back on ``turn_start``/``final`` so the client can correlate
+    frames (threads are wired in P2.5). ``history`` is the prior transcript for the LLM path (P2.5).
+    """
+
+    message: str
+    route: str | None = None
+    ticker: str | None = None
+    horizon: int | None = None
+    days: int | None = None
+    model: str | None = None
+    thread_id: str = ""
+    turn_id: str = ""
+    history: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class KeyStatus(BaseModel):
