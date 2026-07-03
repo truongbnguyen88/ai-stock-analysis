@@ -54,9 +54,11 @@ def test_corpus_status_aggregates_embedder_collection_and_freshness(
     assert "fresh to 2025-02-02" in cs.one_line
 
 
-def test_corpus_status_store_unavailable_is_graceful(
+def test_corpus_status_store_unavailable_is_graceful_and_logged(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from structlog.testing import capture_logs
+
     class _BrokenStore:
         def count(self) -> int:
             raise RuntimeError("chromadb not installed")
@@ -64,10 +66,16 @@ def test_corpus_status_store_unavailable_is_graceful(
     monkeypatch.setattr(status_mod, "build_vector_store", lambda s: _BrokenStore())
     monkeypatch.setattr(status_mod, "DownloadManifest", _fake_manifest({}))
 
-    cs = corpus_status(Settings(_env_file=None, documents_dir=tmp_path))
+    with capture_logs() as logs:
+        cs = corpus_status(Settings(_env_file=None, documents_dir=tmp_path))
     assert cs.chunks == -1  # store failure -> sentinel, not an exception
     assert cs.filings == 0 and cs.earliest is None and cs.latest is None
     assert "unavailable" in cs.one_line
+    # Observability: the swallowed cause must be logged (not silent) so a red dot is diagnosable.
+    warnings = [e for e in logs if e["event"] == "corpus.store_unavailable"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert "chromadb not installed" in warnings[0]["error"]  # the real exception text is preserved
 
 
 def test_corpus_status_local_provider_namespace(

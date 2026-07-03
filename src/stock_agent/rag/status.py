@@ -13,9 +13,12 @@ from pydantic import BaseModel
 
 from stock_agent.documents.download import manifest_path
 from stock_agent.documents.manifest import DownloadManifest
+from stock_agent.logging_config import get_logger
 from stock_agent.rag.embeddings import embedding_namespace
 from stock_agent.rag.vector_store import build_vector_store, collection_name_for
 from stock_agent.settings import Settings
+
+log = get_logger(__name__)
 
 
 class CorpusStatus(BaseModel):
@@ -43,8 +46,18 @@ def corpus_status(settings: Settings) -> CorpusStatus:
     namespace = embedding_namespace(settings)
     try:
         chunks = build_vector_store(settings).count()
-    except Exception:  # noqa: BLE001 — a missing/unopened store must not break a status read
+    except Exception as exc:  # noqa: BLE001 — a missing/unopened store must not break a status read
+        # The store being unopenable is non-fatal (status must still report freshness), but the
+        # cause must not be silent: without this a red "store unavailable" dot gives no signal to
+        # diagnose whether it's a missing/locked store, a bad path, or an embedder-init failure.
         chunks = -1
+        log.warning(
+            "corpus.store_unavailable",
+            collection=collection_name_for(namespace),
+            provider=settings.embedding_provider,
+            vector_store_dir=str(settings.vector_store_dir),
+            error=repr(exc),
+        )
     entries = DownloadManifest.load(manifest_path(settings.documents_dir)).entries
     tickers = {e.ticker for e in entries.values()}
     dates = sorted(e.filing_date for e in entries.values())
