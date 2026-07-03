@@ -1,0 +1,11 @@
+# Streamlit native theme — the robust, version-stable layer of the UI redesign (R0).
+# Owns Streamlit's own chrome colors; the --sa-* design tokens for our components live
+# in src/stock_agent/ui/theme.py. Keep this palette in sync with that module's _DARK set.
+# See docs/APP_REDESIGN.md §5.1. All keys below are supported on streamlit>=1.35.
+[theme]
+base = "dark"                       # brass-on-ink: dark is the primary treatment
+primaryColor = "#E8A13A"            # brass/amber accent (active state, focus, links)
+backgroundColor = "#0E1116"         # --sa-bg
+secondaryBackgroundColor = "#161B22"  # --sa-surface (sidebar, cards, code blocks)
+textColor = "#E6EAF0"               # --sa-text
+font = "sans serif"                 # body in sans; code overridden to mono via theme.py CSS
