@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from stock_agent.ui.chart_theme import CATEGORY_PALETTE, MARK_COLOR, altair_config
+from stock_agent.ui.theme import mono_font_stack
 from stock_agent.viz.charts import ChartSpec
 from stock_agent.viz.render import to_altair, to_png
 
@@ -20,10 +22,58 @@ def _bar() -> ChartSpec:
     )
 
 
+def _grouped() -> ChartSpec:
+    return ChartSpec(
+        title="Forecast comparison",
+        kind="grouped_bar",
+        data=pd.DataFrame(
+            {
+                "ticker": ["NVDA", "NVDA", "AMD", "AMD"],
+                "metric": ["P(up)", "P(big move)", "P(up)", "P(big move)"],
+                "probability": [0.6, 0.3, 0.55, 0.28],
+            }
+        ),
+        x="ticker",
+        y="probability",
+        color="metric",
+        y_is_percent=True,
+    )
+
+
 def test_to_altair_carries_title_and_data() -> None:
     spec = to_altair(_bar()).to_dict()
     assert spec["title"] == "Forecast buckets"
     assert spec["mark"]["type"] == "bar"
+
+
+def test_single_bar_uses_brass_accent() -> None:
+    mark = to_altair(_bar()).to_dict()["mark"]
+    assert mark["color"] == MARK_COLOR  # brass single-series bar (semantic palette)
+
+
+def test_percent_axis_still_honored_under_theme() -> None:
+    # y_is_percent must survive the theme application (percent tick format on the y axis).
+    y_enc = to_altair(_bar()).to_dict()["encoding"]["y"]
+    assert y_enc["axis"]["format"] == "%"
+
+
+def test_theme_config_applied() -> None:
+    # The shared config (mono fonts, faint grid, no view border) rides on every chart.
+    # (Altair injects continuousWidth/Height defaults into config.view, so compare the
+    # sections we own rather than the whole dict.)
+    want = altair_config()
+    cfg = to_altair(_bar()).to_dict()["config"]
+    assert cfg["axis"] == want["axis"]
+    assert cfg["legend"] == want["legend"]
+    assert cfg["title"] == want["title"]
+    assert cfg["range"] == want["range"]
+    assert cfg["view"]["stroke"] is None
+    assert cfg["axis"]["labelFont"] == mono_font_stack()
+
+
+def test_grouped_bar_uses_semantic_palette() -> None:
+    color_enc = to_altair(_grouped()).to_dict()["encoding"]["color"]
+    assert color_enc["scale"]["range"] == list(CATEGORY_PALETTE)
 
 
 def test_to_png_renders_valid_png() -> None:

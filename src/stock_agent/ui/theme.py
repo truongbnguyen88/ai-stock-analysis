@@ -108,6 +108,21 @@ def _render_vars(tokens: dict[str, str], *, indent: str) -> str:
 _IFRAME_KEYS: tuple[str, ...] = ("--sa-text", "--sa-muted", "--sa-accent")
 
 
+def dark_token(name: str) -> str:
+    """Return the dark-theme value for a ``--sa-*`` token (single source for chart colors).
+
+    Used by ``stock_agent.ui.chart_theme`` (R5) so the Altair palette derives from the same
+    token hexes as the CSS — no drifting hardcoded chart colors. Raises ``KeyError`` on an
+    unknown token (a typo should fail loudly, not silently pick a wrong color).
+    """
+    return _DARK[name]
+
+
+def mono_font_stack() -> str:
+    """Return the monospace font stack (single source for CSS + the Altair chart theme, R5)."""
+    return _STRUCTURAL["--sa-font-mono"]
+
+
 def iframe_colors() -> dict[str, dict[str, str]]:
     """Return ``{"dark": {token: hex}, "light": {token: hex}}`` for the typewriter iframe.
 
@@ -242,6 +257,18 @@ _COMPONENTS = """
 .sa-src { display: flex; align-items: baseline; gap: var(--sa-space-2);
   margin-bottom: var(--sa-space-1); }
 .sa-src__label { font-size: 13px; color: var(--sa-muted); }
+/* Composer context chips (R5): 'on enter' lead + ticker/mode pills, above the input. */
+.sa-context { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sa-space-2);
+  margin: var(--sa-space-2) 0 var(--sa-space-1); }
+.sa-context__lead { font-family: var(--sa-font-mono); font-size: 10px;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--sa-faint); }
+/* Composer focus-within brass accent (R5). Enhancement targeting Streamlit's chat-input
+   container; if the selector stales on an upgrade the input still works (graceful #6). */
+[data-testid="stChatInput"] { transition: border-color 0.12s ease, box-shadow 0.12s ease; }
+[data-testid="stChatInput"]:focus-within {
+  border-color: var(--sa-accent-line);
+  box-shadow: 0 0 0 2px var(--sa-accent-weak);
+}
 """
 
 

@@ -48,3 +48,31 @@ def chat_input_placeholder(choice: RoutingChoice) -> str:
     if choice.domain is not None:
         return f"Press enter to run {choice.domain} on {choice.ticker or 'a ticker'}…"
     return "Ask anything about a stock…"
+
+
+def context_chips(choice: RoutingChoice) -> list[tuple[str, str]]:
+    """Chips summarizing what pressing enter will do — ticker + mode (+ params) (R5).
+
+    Pure: returns ``(label, tone)`` pairs the composer renders above the input ("on enter:
+    NVDA · Auto"), surfacing the same routing state the placeholder describes. Tones are the
+    allowed chip tones (``accent`` for the active ticker, ``neutral`` for the mode, ``muted``
+    for the optional horizon/lookback params); a missing ticker is flagged rather than hidden.
+    """
+    chips: list[tuple[str, str]] = []
+    ticker = choice.ticker.strip().upper() if choice.ticker else ""
+    chips.append((ticker, "accent") if ticker else ("no ticker", "muted"))
+
+    if choice.is_auto:
+        chips.append(("Auto", "neutral"))
+    else:
+        label = choice.domain or "route"
+        if choice.variant:
+            label = f"{label} · {choice.variant}"
+        chips.append((label, "neutral"))
+
+    # Only the domains that use them set horizon/days (see RoutingChoice); surface when present.
+    if choice.horizon is not None:
+        chips.append((f"{choice.horizon}d horizon", "muted"))
+    if choice.days is not None:
+        chips.append((f"{choice.days}d lookback", "muted"))
+    return chips

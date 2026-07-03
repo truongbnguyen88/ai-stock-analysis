@@ -32,6 +32,7 @@ st.set_page_config(
 
 import session
 from components.hero import render_capability_hero
+from components.inputs import render_chat_input
 from components.message import (
     render_chart,
     render_export,
@@ -52,7 +53,6 @@ from stock_agent.agent.tools import ToolExecutor
 from stock_agent.chat.history import ChatStore
 from stock_agent.llm.client import AnthropicClient
 from stock_agent.settings import get_settings
-from stock_agent.ui.routing import chat_input_placeholder
 from stock_agent.ui.state import sources_from_tool_results
 from stock_agent.ui.tiles import stat_tiles_from_tool_results
 from stock_agent.ui.theme import theme_style_tag
@@ -127,10 +127,8 @@ if not settings.anthropic_api_key:
     st.error("ANTHROPIC_API_KEY is not set. Add it to your .env file and restart.")
     st.stop()
 
-# Placeholder hints what to type for the active routing mode.
-_placeholder = chat_input_placeholder(choice)
-
-prompt = st.chat_input(_placeholder) or pending or force_auto_prompt
+# Composer: context chips ("on enter: NVDA · Auto") + the mode-tailored input (R5).
+prompt = render_chat_input(choice) or pending or force_auto_prompt
 # A forced-Auto retry runs the LLM router regardless of the sidebar mode; otherwise the
 # sidebar mode (Auto vs. a named domain) decides.
 run_auto = choice.is_auto or (

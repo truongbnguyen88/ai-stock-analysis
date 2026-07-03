@@ -14,6 +14,7 @@ from stock_agent.ui.html import (
     cap_card,
     cap_hue,
     chip,
+    context_row,
     corpus_freshness,
     eyebrow,
     keys_row,
@@ -221,3 +222,20 @@ def test_trace_bar_empty_is_empty_string() -> None:
 
 def test_trace_bar_escapes_names() -> None:
     assert "<script>" not in trace_bar(["<script>"])
+
+
+# ---- context_row (composer chips, R5) ---------------------------------------------
+def test_context_row_has_lead_and_pills() -> None:
+    frag = context_row([("NVDA", "accent"), ("Auto", "neutral")])
+    assert '<div class="sa-context">' in frag
+    assert "on enter" in frag
+    assert frag.count('class="sa-chip') == 2  # one pill per (label, tone) pair
+    assert "NVDA" in frag and "Auto" in frag
+
+
+def test_context_row_empty_is_empty_string() -> None:
+    assert context_row([]) == ""  # no stray 'on enter' lead
+
+
+def test_context_row_escapes_labels() -> None:
+    assert "<script>" not in context_row([("<script>", "accent")])
