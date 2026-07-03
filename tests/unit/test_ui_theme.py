@@ -65,6 +65,17 @@ def test_brass_accent_dark_only() -> None:
     assert "#B7791F" not in css  # light accent not emitted (data-only)
 
 
+def test_reduced_motion_and_responsive_rules_present() -> None:
+    # R6 a11y/responsive contract: motion is opt-out (honors prefers-reduced-motion) and the
+    # mono stat-tile value has a narrow-viewport guard so it stays legible if Streamlit keeps
+    # columns side-by-side on a phone. Both are graceful enhancements, but their absence is a
+    # regression, so pin the rules by presence (not by rendered layout, which we can't test here).
+    css = theme_style_tag()
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    assert "@media (max-width: 640px)" in css
+    assert "overflow-wrap: anywhere" in css  # tile value/label break rather than overflow
+
+
 def test_font_stacks_are_system_only() -> None:
     # No webfont: CSP blocks font CDNs and a silent fallback would break the look.
     css = theme_style_tag()

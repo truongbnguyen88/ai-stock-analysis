@@ -134,24 +134,24 @@ Single source of truth. Emits one `<style>` block injected once at app top; ligh
 
 ## 6. Content & behavior preservation checklist (hard contract)
 
-Must work identically after **every** phase. Existing tests (`test_capabilities`, `test_chat_history`, `test_viz_charts`, `test_viz_render`, `test_router`) stay green.
+Must work identically after **every** phase. Existing tests (`test_capabilities`, `test_chat_history`, `test_viz_charts`, `test_viz_render`, `test_router`) stay green. **Walked + verified at R6 (2026-07-03)** — evidence cited per item; R1 was a behavior-preserving move-only refactor, so the named tests remain the contract.
 
-- [ ] Sidebar: corpus/embedder status badge (`corpus_status`) + freshness.
-- [ ] Sidebar: 4 quick-starter buttons inject `pending_prompt`.
-- [ ] Sidebar: ticker input feeds quick-starters, hero, deterministic routes.
-- [ ] Sidebar: routing mode = Auto + all `DOMAIN_NAMES`; variant selector; horizon/lookback params only for domains that use them.
-- [ ] Sidebar: chat-thread list, active highlight, open, delete, `New chat`, retention caption.
-- [ ] Sidebar: API-key status (Anthropic required + optional providers).
-- [ ] Hero: typewriter (honors `prefers-reduced-motion`); 11 capability cards; card click → `pending_prompt` → submit.
-- [ ] Chat: user/assistant markdown; per-turn **Altair charts** re-render after reruns (persisted via `ChartSpec.to_dict`).
-- [ ] Chat: **SEC filing sources** expander (citations from tool output only).
-- [ ] Chat: **Export** PDF / Word / Markdown per answer (with chart PNGs; cached).
-- [ ] Chat: "tools used" trace (Auto) + "deterministic route" caption (domain).
-- [ ] Auto path (`run_agent`) + deterministic path (`router.run`) intact, incl. `AgentGroundingError` / `AgentError` / `RouterError` messages.
-- [ ] Bounce-to-Auto fallback (`fallback_prompt` → `force_auto_prompt`).
-- [ ] Thread persistence across restarts (`ChatStore`; serialize/deserialize incl. charts + sources).
-- [ ] Non-advisory disclaimer present; **no recommendation field** added.
-- [ ] Invariants intact: numbers-from-tools, citations-from-tool-output, dependency direction downward.
+- [x] Sidebar: corpus/embedder status badge (`corpus_status`) + freshness. — `ui/components/sidebar.py` + `rag.status.corpus_status`; `test_ui_html::status_card`, `corpus_freshness`.
+- [x] Sidebar: 4 quick-starter buttons inject `pending_prompt`. — `sidebar.py`; verified in `chat_app.py` pending-prompt plumbing (unchanged since R1).
+- [x] Sidebar: ticker input feeds quick-starters, hero, deterministic routes. — single `ticker` session key read by `hero.render_capability_hero` + routing.
+- [x] Sidebar: routing mode = Auto + all `DOMAIN_NAMES`; variant selector; horizon/lookback params only for domains that use them. — `test_ui_routing` (`context_chips` param surfacing); `router.ROUTES` needs-map.
+- [x] Sidebar: chat-thread list, active highlight, open, delete, `New chat`, retention caption. — `chat.history.ChatStore`; `test_chat_history` (round-trip/delete).
+- [x] Sidebar: API-key status (Anthropic required + optional providers). — `html.keys_row`; `test_ui_html`.
+- [x] Hero: typewriter (honors `prefers-reduced-motion`); 11 capability cards; card click → `pending_prompt` → submit. — `hero.py` iframe guards `prefers-reduced-motion`; `test_capabilities`; theme reduced-motion rule (`test_ui_theme::reduced_motion_and_responsive`).
+- [x] Chat: user/assistant markdown; per-turn **Altair charts** re-render after reruns (persisted via `ChartSpec.to_dict`). — `test_ui_state` (charts round-trip), `test_viz_render`.
+- [x] Chat: **SEC filing sources** expander (citations from tool output only). — `message.render_sources`; `test_ui_state` (sources round-trip).
+- [x] Chat: **Export** PDF / Word / Markdown per answer (with chart PNGs; cached). — `reports.export.export_summary`; `test_export` (3-format round-trip).
+- [x] Chat: "tools used" trace (Auto) + "deterministic route" caption (domain). — `html.trace_bar`/`tool_hue`; `test_ui_html`.
+- [x] Auto path (`run_agent`) + deterministic path (`router.run`) intact, incl. `AgentGroundingError` / `AgentError` / `RouterError` messages. — `test_router`, `test_agent_runtime` (untouched by the view-layer redesign).
+- [x] Bounce-to-Auto fallback (`fallback_prompt` → `force_auto_prompt`). — `chat_app.py` fallback path (unchanged since R1).
+- [x] Thread persistence across restarts (`ChatStore`; serialize/deserialize incl. charts + sources). — `test_chat_history` + `test_ui_state` serialize/deserialize.
+- [x] Non-advisory disclaimer present; **no recommendation field** added. — schema carries no recommendation field (invariant); disclaimer rendered in `chat_app.py`.
+- [x] Invariants intact: numbers-from-tools, citations-from-tool-output, dependency direction downward. — tiles/charts derive from tool results (`test_ui_tiles`, `test_viz_charts`); `ui/` pure layer has no Streamlit import (import-gated).
 
 ---
 
@@ -206,16 +206,25 @@ Independently mergeable; app works after each. Run `make check`; keep §6 green.
 - **ENGINEERING:** new **pure** module `src/stock_agent/ui/chart_theme.py` (typed, tested, **no Altair import**) — returns a Vega-Lite `config` dict + color constants **derived from the design tokens** (`theme.dark_token` / `theme.mono_font_stack`, two small accessors added) so the chart palette can never drift from the CSS (§5.2). `viz/render.py` applies it via `chart.configure(**altair_config())` and sets mark colors at the **mark/encoding level** (so they win Streamlit's Vega-theme merge in-app; the config's category range carries the palette to the PNG export too) — **`ChartSpec` unchanged**. Text *colors* are deliberately left unset so Streamlit's adaptive theme (in-app, AA both themes) / Vega's default (white export page) supply them. Chip logic added to the pure layer: `routing.context_chips` (ticker + mode + params → `(label, tone)` pairs) + `html.context_row` (markup); new thin view `ui/components/inputs.py` (`render_chat_input`) renders the chip row then `st.chat_input` — `chat_app.py` calls it. **Chips sit at the end of the content flow just above the bottom-docked composer** (the acknowledged Streamlit approximation of "attached" chips — §3 "last ~15%"); focus-within accent is CSS in `theme._COMPONENTS` (graceful-degrade enhancement). Up/down green-red stays reserved for direction marks (current specs carry no direction flag, by design — the LLM/heuristic must not assign financial semantics).
 - **TESTS:** `tests/unit/test_ui_chart_theme.py` (7, **new**) — config sections/determinism, mono fonts (no webfont), text-colors-unset (adaptive), **palette-derives-from-tokens drift guard**, palette well-formed/distinct, no red-green in the first two series. `test_viz_render.py` +4 (brass single bar, percent axis survives theme, config applied, grouped semantic palette). `test_ui_routing.py` +5 (`context_chips` across Auto/named-domain/variant/params/missing-ticker + all tones renderable by `html.chip`). `test_ui_html.py` +3 (`context_row` lead+pills, empty→"", escaping). View layer verified via import-check (`components.inputs`) + `chat_app.py` compile. `make check` green (ruff, mypy strict/288, check-math, **933 passed / 3 skips**). Chart look in-app (Streamlit Vega-theme merge) + focus-within accent need a **browser eyeball**; degrade to legible/native (principle #6).
 
-### Phase R6 — Polish, a11y, docs
-- **LOOK:** contrast/focus audit both themes; responsive (narrow → 1-col cards, sidebar behavior); reduced-motion verified.
-- **ENGINEERING:** before/after screenshots; update `README.md` launch notes if needed; final §6 walkthrough; `make check` green.
-- **TESTS:** full suite green; a11y checklist recorded here.
+### Phase R6 — Polish, a11y, docs — ✅ DONE (dark-only) (2026-07-03); light-mode items → Phase 2
+Scoped to **dark-only** after the light-mode decision (see R6.B below): the "both themes" audit and before/after screenshots are inherently blocked on light mode, which now lands in Phase 2 (React), so they move there rather than being built against a compromised Streamlit approximation.
+- **LOOK:** ✅ **responsive** — column *count* delegated to Streamlit `st.columns` (native reflow) + every custom row is `flex-wrap: wrap`; a narrow-viewport guard shrinks the mono tile value so it can't overflow if 3 tiles stay side-by-side on a phone (`@media (max-width: 640px)`, no fragile column-container selector per §10). ✅ **reduced-motion** — typewriter iframe + `.sa-cap` hover honor `prefers-reduced-motion: reduce`. ⏭️ **contrast/focus audit _both_ themes** → Phase 2 (needs light mode; dark-only contrast held to AA by the token palette in §5.2).
+- **ENGINEERING:** ✅ final §6 walkthrough (all 16 boxes ticked with per-item evidence above). ✅ `README.md` launch note added (app is dark-only until Phase 2). ✅ `make check` green. ⏭️ before/after screenshots (light + dark) → Phase 2 with light mode.
+- **TESTS:** ✅ full suite green; new `test_ui_theme::test_reduced_motion_and_responsive_rules_present` pins the a11y/responsive CSS. a11y checklist recorded below.
+
+**a11y checklist (dark-only, 2026-07-03):**
+- **Motion:** all transitions/animations opt-out via `prefers-reduced-motion` (typewriter falls back to a static first line; card hover nudges disabled). ✅
+- **Semantics:** headings/markdown from Streamlit native elements; sources use `<details>`/native expander; buttons are real `st.button`. ✅
+- **Labels:** icon-only affordances carry text (ticker `aria-label`, chat input placeholder, key chips labeled). ✅
+- **Contrast (dark):** text/muted/faint + semantic hues chosen to meet AA on the ink ground (§5.2 tokens); chart up/down red-green reserved for marks only, never as sole signal (§2). ✅
+- **Focus:** relies on native Streamlit focus rings (not suppressed); composer adds a *supplementary* focus-within accent, not a replacement. ✅
+- **Deferred to Phase 2:** AA re-audit in **light** mode; keyboard-only walkthrough of the thread list + export popover with a screen reader; visible focus-ring verification in both themes.
 
 #### R6 render-check findings (2026-07-03, headless Chrome vs. live app on Streamlit 1.58)
 The redesign CSS **is** applying (all `data-testid`/`sa-*` selectors resolve; injected `<style>` present; mono fonts computed; dark tokens active). The "look barely changes" perception is because the empty state was already card-heavy — the redesign's payload (stat tiles, per-tool trace, styled sources, themed charts, context chips) lives on the **conversation surface**, which the empty state never renders. One real bug found + fixed, one deferred:
 
 - **R6.A — theme-signal mismatch — ✅ DONE (2026-07-03).** Our `--sa-*` tokens switched on the browser/OS `prefers-color-scheme`, but Streamlit's chrome is pinned dark by `config.toml base=dark`, so a **light-preference viewer got dark chrome + light component tokens** (white cards on the dark ground; dark-on-dark brand text — confirmed via painted colors: app bg `rgb(14,17,22)` vs. card `rgb(255,255,255)`). Fix: `theme_style_tag()` emits **dark-only** (drop the `prefers-color-scheme: light` override); the hero typewriter iframe likewise goes dark-only. `_LIGHT` / `iframe_colors()`'s light half retained as the R6.B source. Regression guard: `test_ui_theme.test_dark_only_no_light_media`. `make check` green (933 passed / 3 skips).
-- **R6.B — first-class light mode (deferred, this phase).** Deliver real light mode by switching **both** Streamlit's theme and our `--sa-*` tokens off **one** signal (not the OS preference, which desyncs — the R6.A bug). Scope: (a) add a light `[theme]` variant + wire an in-app theme toggle (or detect Streamlit's active theme via `st.context.theme` / the app-root theme attribute); (b) inject the matching token set at runtime (dark vs. light) instead of a media query; (c) re-enable the hero iframe light palette off the same signal; (d) AA-contrast audit **both** themes (§2 rule) incl. the semantic hues, chart marks, and mono labels; (e) re-render check (headless Chrome, light + dark) to confirm chrome and tokens agree. Until R6.B lands, the app is intentionally dark-only.
+- **R6.B — first-class light mode → moved to Phase 2 (React), 2026-07-03.** Investigated in Streamlit and **deliberately not built there**: Streamlit **cannot switch its own chrome theme from Python** (`config.toml` is static; the only runtime switch is the user's native Settings-menu choice), and the sole read signal `st.context.theme.type` is **laggy at the switch moment** (inferred from background color; "may be incorrect during a change in theme" — Streamlit issue #11920). So a Streamlit light mode is necessarily a Settings-menu-driven, one-rerun-laggy *approximation* that re-introduces a transient version of the R6.A desync — and Phase 2 React does it properly (instant, lag-free, real in-app `◐` toggle). Rather than build throwaway work Phase 2 obsoletes, **the app stays intentionally dark-only** and real light mode is a Phase-2 deliverable (see [PHASE2_REACT_FASTAPI_PLAN.md](PHASE2_REACT_FASTAPI_PLAN.md) §6 token bridge; the retained `_LIGHT` / `iframe_colors()` light palette is its source). The "both themes" contrast audit + before/after screenshots (R6 LOOK/ENGINEERING) move with it.
 
 ---
 
