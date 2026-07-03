@@ -11,9 +11,13 @@ imports ``api``, so no cycle; the runtime/router must not, or they'd cycle with 
 Ordering (plan §5): ``turn_start → route_decided → (tool_start, tool_finish)* → tiles → chart* →
 token* → sources → final`` (or ``error``). Because tiles/chart/sources are functions of the *whole*
 invocation list, they can only be built once tools are done — so this adapter **buffers the
-token(s)** and flushes ``tiles → chart* → token* → sources → final`` together at ``Final``. In P2.2
-the answer is a single full-text token, so buffering costs nothing; true token streaming (P2.4) will
-refine this to flush tiles/chart at the last ``tool_finish`` and stream tokens live.
+token(s)** and flushes ``tiles → chart* → token* → sources → final`` together at ``Final``. Since
+P2.4 the runtime streams the answer as MULTIPLE ``token`` deltas (``AnthropicToolClient.stream``);
+they are emitted only *after* the grounding guard clears, so buffering them here to keep tiles/chart
+first (§5) costs no latency (the whole answer is already assembled before the first delta). Live-
+*during*-generation streaming (flush tiles/chart early, forward deltas as the model types) is
+deferred: it would require a provisional-reset frame + a §5 relaxation and would surface ungrounded
+figures pre-guard — see ``run_agent_events`` for the grounding-safe rationale.
 
 On ``Error`` (grounding rejection after retry, or a tool/LLM failure) the provisional tokens are
 dropped and only the ``error`` frame is emitted — the client never persists unguarded prose (§5).

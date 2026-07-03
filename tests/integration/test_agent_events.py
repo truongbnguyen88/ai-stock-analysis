@@ -43,6 +43,30 @@ class FakeToolLLM:
         return resp
 
 
+class FakeStreamingLLM:
+    """A streaming ToolLLM (P2.4): each turn is scripted as (text deltas, terminal ToolResponse).
+
+    ``stream`` yields the deltas in order then the ToolResponse — the real ``AnthropicToolClient``
+    contract. ``isinstance(FakeStreamingLLM(), StreamingToolLLM)`` is True (it has ``stream``), so
+    ``stream_turn`` forwards its deltas; ``create`` exists only to satisfy the ``ToolLLM`` type.
+    """
+
+    def __init__(self, turns: list[tuple[list[str], ToolResponse]]) -> None:
+        self._turns = turns
+        self.calls = 0
+
+    def stream(self, *, system, messages, tools, max_tokens):  # type: ignore[no-untyped-def]
+        deltas, resp = self._turns[min(self.calls, len(self._turns) - 1)]
+        self.calls += 1
+        yield from deltas
+        yield resp
+
+    def create(self, *, system, messages, tools, max_tokens) -> ToolResponse:  # type: ignore[no-untyped-def]
+        _, resp = self._turns[min(self.calls, len(self._turns) - 1)]
+        self.calls += 1
+        return resp
+
+
 def _executor(n_bars: int = 60) -> ToolExecutor:
     bars = [
         PriceBar(
@@ -194,3 +218,66 @@ def test_run_agent_is_a_faithful_drain_of_the_generator() -> None:
     assert [inv.name for inv in result.tool_results] == [inv.name for inv in final.tool_results]
     # messages include the final assistant turn for next-turn history (same as pre-refactor).
     assert any(m["role"] == "assistant" for m in result.messages)
+
+
+# --- P2.4: true token streaming (multiple Token deltas, still grounding-safe) -------------------
+
+
+def _stream_answer(deltas: list[str]) -> ToolResponse:
+    """A terminal answer ToolResponse whose text is the concatenation of its streamed deltas."""
+    return ToolResponse(
+        text="".join(deltas), tool_uses=[], stop_reason="end_turn", assistant_content=[]
+    )
+
+
+def test_streaming_answer_emits_one_token_per_delta_preserving_boundaries() -> None:
+    deltas = ["Over the next 20 ", "trading days the model ", "leans mildly up."]
+    llm = FakeStreamingLLM([(deltas, _stream_answer(deltas))])
+    events = list(run_agent_events("forecast NVDA", llm=llm, executor=_executor()))
+
+    assert _types(events) == ["token", "token", "token", "final"]
+    toks = [e.text for e in events if isinstance(e, Token)]
+    assert toks == deltas  # the model's own chunk boundaries are preserved (true streaming)
+    # Multi-chunk concatenation == the single-shot answer (the plan's P2.4 invariant).
+    assert "".join(toks) == "Over the next 20 trading days the model leans mildly up."
+
+
+def test_streaming_answer_still_grounds_on_the_full_text_no_ungrounded_delta_streams() -> None:
+    # First streamed answer is ungrounded (92.5%) → corrective retry, emitting NO tokens; the
+    # accepted second answer streams its own deltas. Grounding sees the WHOLE assembled attempt,
+    # so an ungrounded figure never escapes even split across deltas ("92." + "5%").
+    bad = ["There is a ", "92.", "5% chance."]
+    good = ["I cannot provide that ", "without running the forecast."]
+    llm = FakeStreamingLLM([(bad, _stream_answer(bad)), (good, _stream_answer(good))])
+    events = list(run_agent_events("will NVDA moon?", llm=llm, executor=_executor()))
+
+    assert _types(events) == ["token", "token", "final"]  # only the accepted answer's deltas
+    assert not any("92.5%" in e.text for e in events if isinstance(e, Token))
+    assert "".join(e.text for e in events if isinstance(e, Token)).startswith("I cannot provide")
+
+
+def test_streaming_tool_turn_discards_preamble_deltas() -> None:
+    # A tool turn may stream preamble text ("Let me check…") before the tool_use; that text is
+    # discarded (never a Token), exactly as create-turn text was. Only the final answer streams.
+    tool_turn = ToolResponse(
+        text="Let me check the forecast.",
+        tool_uses=[ToolUse(id="1", name="run_forecast", input={"ticker": "NVDA"})],
+        stop_reason="tool_use",
+        assistant_content=[],
+    )
+    answer = ["Analysis complete for NVDA ", "over twenty trading days."]
+    llm = FakeStreamingLLM(
+        [(["Let me check ", "the forecast."], tool_turn), (answer, _stream_answer(answer))]
+    )
+    events = list(run_agent_events("forecast NVDA", llm=llm, executor=_executor()))
+
+    assert _types(events) == ["tool_start", "tool_finish", "token", "token", "final"]
+    assert not any("check" in e.text for e in events if isinstance(e, Token))  # preamble dropped
+
+
+def test_run_agent_drains_streaming_deltas_into_the_full_answer() -> None:
+    # The synchronous drain concatenates the Token deltas → identical text to a single-shot answer.
+    deltas = ["Alpha ", "beta ", "gamma."]
+    llm = FakeStreamingLLM([(deltas, _stream_answer(deltas))])
+    result = run_agent("q", llm=llm, executor=_executor())
+    assert result.text == "Alpha beta gamma."
