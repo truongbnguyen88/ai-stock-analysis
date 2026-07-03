@@ -249,6 +249,15 @@ _COMPONENTS = """
   font-size: 22px; font-weight: 600; color: var(--sa-text); line-height: 1.25;
 }
 .sa-tile__sub { font-size: 11px; color: var(--sa-faint); }
+/* Narrow viewports (R6 responsive): Streamlit owns the column *count* (st.columns reflow) —
+   we don't force-stack via a column-container selector (that would stale on a version bump, §10).
+   We only guard the mono tile value from overflowing if 3 tiles stay side-by-side on a phone:
+   shrink the value + let long tokens break. Pure enhancement; no fragile Streamlit selector. */
+@media (max-width: 640px) {
+  .sa-tile { min-height: 64px; padding: var(--sa-space-2) var(--sa-space-3); }
+  .sa-tile__value { font-size: 18px; overflow-wrap: anywhere; }
+  .sa-tile__label { overflow-wrap: anywhere; }
+}
 /* Tool-trace chip row (Auto turn): one mono pill per tool, tinted by --tc-hue. */
 .sa-trace { display: flex; flex-wrap: wrap; gap: var(--sa-space-2); margin: var(--sa-space-2) 0; }
 .sa-tchip {

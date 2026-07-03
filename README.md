@@ -85,7 +85,7 @@ python -m stock_agent forecast --ticker MSFT --horizon 30           # default mo
 python -m stock_agent forecast --ticker MSFT --horizon 30 --model monte_carlo_garch  # or pick one
 python -m stock_agent backtest --ticker AAPL
 python -m stock_agent chat                 # conversational agent (CLI)
-make ui                                     # Streamlit chat frontend
+make ui                                     # Streamlit chat frontend (brass-on-ink, dark-only; light mode is Phase 2 — see docs/APP_REDESIGN.md)
 
 # 5. SEC-grounded research (RAG) — optional; needs the [rag] extra + SEC_USER_AGENT
 python -m stock_agent documents download-sec --all --years 3   # official EDGAR API (free)
