@@ -219,13 +219,15 @@ The redesign CSS **is** applying (all `data-testid`/`sa-*` selectors resolve; in
 
 ---
 
-## 9. Optional Phase 2 (documented, not now): React + FastAPI
+## 9. Optional Phase 2 (planned): React + FastAPI
 
-Trigger only if Streamlit's ceiling blocks a look/interaction you want after R0–R6.
-- **Backend:** expose the agent via FastAPI; SSE for streaming tool events + tokens (needs an event-emitting `run_agent` variant). Reuse `ChatStore`, `export`, `charts_for`, `corpus_status` as-is.
-- **Frontend:** Vite + React + Tailwind + a component kit; Vega-Lite in-browser for the same `ChartSpec` JSON; `/export` endpoint for document bytes.
-- **Why cheap by then:** the §4 contracts (`RoutingChoice`, `ChartSpec`, sources, export) are already the API; the port is incremental, not a rewrite.
-- **Cost:** re-implement session/thread state, streaming, persistence wiring, export UX; two-stack maintenance.
+**Plan of record → [PHASE2_REACT_FASTAPI_PLAN.md](PHASE2_REACT_FASTAPI_PLAN.md)** (ordered slices P2.0–P2.6, streaming event schema, API surface, tests). Summary below; that doc governs.
+
+Trigger: the four interactions above Streamlit's ceiling after R0–R6 — live per-tool trace, token streaming, instant client-side theme toggle, `Export ▾` popover + top-bar chips.
+- **Decisions (locked):** coexist with Streamlit (React primary, Streamlit as reference/fallback until parity); full streaming (live trace + tokens); local-dev only (no auth/containers); Vite + React + TS + Tailwind + shadcn/ui, Vega-Lite via `react-vega`.
+- **Backend:** new top-level `api/` (FastAPI); SSE streams `AgentEvent`s from a new event-emitting `run_agent_events` generator (`run_agent` becomes its drain — behavior-preserving). Reuse `ChatStore`, `export_summary`, `charts_for`, `tiles_for`, `corpus_status` as-is. Grounding guard still runs before the terminal `final` event.
+- **Why cheap:** the §4 contracts (`RoutingChoice`, `ChartSpec`, sources, tiles, export) are already the API; the only real new code is the streaming emission + the React app.
+- **Cost:** streaming refactor + adapter, React app, thread/export wiring, token bridge, two-stack maintenance until Streamlit is retired.
 
 ---
 
