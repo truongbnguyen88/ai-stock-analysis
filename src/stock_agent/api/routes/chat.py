@@ -15,7 +15,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
-from stock_agent.agent.router import Router
+from stock_agent.agent.router import DOMAIN_NAMES, Router, resolve_domain
 from stock_agent.api.deps import router_dep
 from stock_agent.api.schemas import ChatStreamRequest
 from stock_agent.api.streaming import event_stream
@@ -35,9 +35,15 @@ def post_chat_stream(
     flush incrementally (matters once P2.4 streams tokens).
     """
     turn_id = req.turn_id or uuid4().hex
+    # The sidebar routing select offers friendly DOMAIN names (from /config); run_events wants a
+    # granular route. Resolve a domain -> its default route here (thin api adaptation, same as the
+    # Streamlit UI's resolve_domain call) so routing logic stays in Python — the client only sends
+    # the selection. "auto"/"classify"/None and granular route names pass through untouched; an
+    # unknown value still falls through to run_events -> a terminal `error` frame (never a 500).
+    route = resolve_domain(req.route) if req.route in DOMAIN_NAMES else req.route
     events = router_obj.run_events(
         req.message,
-        route=req.route,
+        route=route,
         ticker=req.ticker,
         horizon=req.horizon,
         days=req.days,

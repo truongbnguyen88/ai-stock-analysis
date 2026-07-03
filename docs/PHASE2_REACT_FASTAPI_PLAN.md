@@ -249,10 +249,52 @@ Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` fo
     error-discard), `tests/integration/test_api_chat_stream.py` (3 — SSE frame shape + §5 order via
     `TestClient`, `tiles`/`chart` byte-identical to builders, grounding-reject → `error` frame,
     bad-route → `error` frame). `make check` green (969 passed / 3 skipped).
-- **P2.3 — React conversation.** `Stream`/`AssistantTurn` renders a real turn from the stream:
-  `TileRow`, `ChartCard` (react-vega), `TraceRow` animating on `tool_start/finish`, `Sources`,
-  provisional→final token handling. *Tests:* component tests with an MSW-mocked SSE fixture (no live
-  backend); trace fills in order; error event discards provisional text.
+- **P2.3 — React conversation — ✅ DONE (2026-07-03).** `Stream`/`AssistantTurn` renders a real
+  turn from the SSE stream: `TileRow`, `ChartCard` (react-vega), `TraceRow` animating on
+  `tool_start`/`tool_finish`, `Sources`, provisional→final token handling. First real agent turn in
+  React.
+  - **SSE client (`web/src/lib/stream.ts`):** `streamChat(req, {onEvent})` POSTs `/chat/stream` and
+    reads `response.body` as a `ReadableStream`, parsing `data: <json>\n\n` frames (buffered across
+    byte-chunk boundaries via the pure `parseSSEBuffer`). `fetch`+reader (not `EventSource`) so the
+    query body can be POSTed (§6). In-band failures (grounding/bad route) arrive as terminal `error`
+    *frames* (HTTP 200), not throws; only transport failures reject.
+  - **Event types (`lib/events.ts`):** the 10-variant `AgentEvent` TS union, a 1:1 mirror of the
+    Python `to_wire()` dicts (discriminant `type`). `hueName(hue_key)` reproduces `ui.html.tool_hue`
+    (`hue_key % 5` over the same 5-hue order) so a tool's trace-chip color matches Streamlit — pinned
+    by a cross-stack parity test using real `crc32` values.
+  - **Chart bridge (`lib/chartSpec.ts`):** `chartSpecToVegaLite` is the React twin of
+    `viz/render.to_altair` + `ui.chart_theme.altair_config` — the `chart` frame carries the render-
+    agnostic `ChartSpec` dict (NOT Vega-Lite), so the client translates it (bar / grouped_bar /
+    reliability) with the **dark-token mark palette hardcoded** (matching Python's single-palette-for-
+    both-themes rule) → identical charts across stacks. `ChartCard` renders it via react-vega v8's
+    `VegaEmbed` (SVG renderer, actions off).
+  - **Store (`store/conversation.ts`):** a Zustand store (`turns`, `streaming`, `send`) plus the
+    **pure** exported reducer `applyEvent(turn, ev)`: `tool_start` pushes a running chip,
+    `tool_finish` resolves the last-running one (handles a tool used twice), `token` appends
+    provisional prose, `final` commits (`grounded`), and **`error` discards provisional prose** (§5 —
+    never persist an unguarded answer). `send` folds each streamed event into the active turn
+    immutably (found by id) so React re-renders.
+  - **Components:** `Stream`→`{UserBubble, AssistantTurn}`; `AssistantTurn` composes
+    `TileRow`→`ChartCard*`→prose→`TraceRow`→`Sources` in §5 order (prose dim + caret while
+    provisional; error surface replaces prose on `error`). `Composer` (Enter sends, Shift+Enter
+    newline, disabled while streaming, context chips). `App` wires it: `mode===auto_mode → route
+    "auto"`, else the domain name (resolved server-side).
+  - **One thin backend change (`api/routes/chat.py`):** resolve a friendly **domain** name (from
+    `/config`) → its granular route via the existing `resolve_domain` (else pass through); unknown
+    values still fall through to a terminal `error` frame. Keeps routing logic in Python — the client
+    only sends the selection.
+  - **Tests (24 web / +1 Python):** `reducer.test.ts` (fold, trace-in-order, same-tool-twice,
+    error-discards-tokens), `stream.test.ts` (SSE parse incl. split-across-chunks, POST shape,
+    non-OK throws), `chartSpec.test.ts` (bar/grouped/reliability VL shape + `hueName` parity),
+    `conversation.test.tsx` (component: send→streamed forecast turn renders tiles/trace/chart/prose;
+    error frame → error surface, provisional prose discarded), shared golden `fixtures.ts`.
+    **Testing note (deviation from §9):** SSE is mocked by stubbing `fetch` with a `ReadableStream`
+    (exercises the real parser) rather than MSW — deterministic, no heavy dep, same no-live-backend
+    guarantee; the cross-stack golden fixture is retained. `make check` green (970 passed / 3 skip);
+    `make check-web` green (tsc + 24 vitest); `pnpm build` green.
+  - **Deps:** `zustand`, `react-vega` (v8 → `VegaEmbed`), `vega`, `vega-lite`, `vega-embed`.
+    react-vega/Zustand land here per P2.0's "defer to the consuming slice". Vega canvas probe in
+    jsdom silenced by a top-level `getContext` stub in the test setup (no chart is really rendered).
 - **P2.4 — True token streaming.** `AnthropicToolClient.stream`; adapter forwards deltas. *Tests:*
   streaming client unit test against a recorded/faked chunk sequence (no network); multi-chunk →
   concatenated == single-shot answer.
