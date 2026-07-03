@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import date
 from html import escape as _esc
+from zlib import crc32
 
 # Freshness states for the corpus status dot. "fresh" = corpus has a recent filing;
 # "stale" = corpus loaded but its latest filing is older than the quarterly window;
@@ -30,6 +31,11 @@ _CHIP_TONES: frozenset[str] = frozenset({"ok", "accent", "off", "muted", "neutra
 # Order matches the token family in theme.py (§5.2); "accent" (brass) is the fallback.
 _CAP_HUES: tuple[str, ...] = ("teal", "sky", "indigo", "violet", "rose")
 _HUE_TOKENS: frozenset[str] = frozenset(_CAP_HUES) | {"accent"}
+
+
+def _hue_token(tone: str) -> str:
+    """Resolve a caller-supplied tone to a valid ``--sa-*`` hue name (accent fallback)."""
+    return tone if tone in _HUE_TOKENS else "accent"
 
 
 def corpus_freshness(
@@ -89,7 +95,7 @@ def cap_card(*, icon: str, title: str, blurb: str, hue: str) -> str:
     back to the brass accent. The *action* is a sibling Streamlit button in the view
     (injected HTML can't fire a callback), so this fragment is presentation-only.
     """
-    hue_name = hue if hue in _HUE_TOKENS else "accent"
+    hue_name = _hue_token(hue)
     return (
         f'<div class="sa-cap" style="--cap-hue: var(--sa-{hue_name});">'
         f'<div class="sa-cap__badge">{_esc(icon)}</div>'
@@ -154,6 +160,60 @@ def chip(text: str, *, tone: str = "neutral", marker: str = "") -> str:
     tone_cls = tone if tone in _CHIP_TONES else "neutral"
     mk = f'<span class="sa-chip__mk">{_esc(marker)}</span>' if marker else ""
     return f'<span class="sa-chip sa-chip--{tone_cls}">{mk}{_esc(text)}</span>'
+
+
+def stat_tile(*, label: str, value: str, sub: str = "", tone: str = "accent") -> str:
+    """Metric tile: colored category stripe + mono uppercase label + big value + sub (R4).
+
+    ``value``/``sub`` are already-formatted display strings (the number formatting lives in
+    ``stock_agent.ui.tiles`` so this stays presentation-only). ``tone`` is a semantic hue
+    token (``teal|sky|indigo|violet|rose|accent``) driving the left stripe via ``--tile-hue``;
+    unknown tones fall back to brass. Up/down green-red is intentionally NOT a valid tone —
+    those colors are reserved for chart marks (APP_REDESIGN §2 signaling rule). Presentation
+    only: the numbers come from tool results upstream, never the LLM.
+    """
+    hue_name = _hue_token(tone)
+    sub_html = f'<div class="sa-tile__sub">{_esc(sub)}</div>' if sub else ""
+    return (
+        f'<div class="sa-tile" style="--tile-hue: var(--sa-{hue_name});">'
+        f'<div class="sa-tile__label">{_esc(label)}</div>'
+        f'<div class="sa-tile__value">{_esc(value)}</div>'
+        f"{sub_html}"
+        "</div>"
+    )
+
+
+def tool_hue(name: str) -> str:
+    """Deterministic, stable hue for a tool ``name`` in the trace chip row.
+
+    Hashing on the name (not call order) keeps a given tool the same color across turns.
+    Uses ``crc32`` (deterministic across processes — unlike salted ``hash()``) mod the hue
+    count, so it is unit-testable and spreads similar tool names across the hue family.
+    """
+    bucket = crc32(name.encode("utf-8")) % len(_CAP_HUES)
+    return _CAP_HUES[bucket]
+
+
+def trace_bar(tools: Sequence[str]) -> str:
+    """Per-tool colored chip row for an Auto turn's tool trace (empty -> empty string).
+
+    Each distinct tool becomes a mono chip tinted by :func:`tool_hue`. Order is preserved;
+    the caller is expected to have deduped (``dict.fromkeys``) already, but a defensive
+    dedup here keeps the row clean regardless.
+    """
+    seen: set[str] = set()
+    chips = []
+    for name in tools:
+        if name in seen:
+            continue
+        seen.add(name)
+        hue = tool_hue(name)
+        chips.append(
+            f'<span class="sa-tchip" style="--tc-hue: var(--sa-{hue});">{_esc(name)}</span>'
+        )
+    if not chips:
+        return ""
+    return '<div class="sa-trace">' + "".join(chips) + "</div>"
 
 
 def keys_row(keys: Sequence[tuple[str, bool, bool]]) -> str:

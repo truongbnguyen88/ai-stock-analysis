@@ -17,8 +17,11 @@ from stock_agent.ui.html import (
     corpus_freshness,
     eyebrow,
     keys_row,
+    stat_tile,
     status_card,
     status_dot,
+    tool_hue,
+    trace_bar,
 )
 
 _TODAY = date(2026, 7, 2)
@@ -168,3 +171,53 @@ def test_cap_card_renders_every_capability() -> None:
         frag = cap_card(icon=cap.icon, title=cap.title, blurb=cap.blurb, hue=cap_hue(i))
         assert frag.startswith('<div class="sa-cap"') and frag.endswith("</div>")
         assert cap.icon in frag
+
+
+# ---- stat_tile (R4) ---------------------------------------------------------------
+def test_stat_tile_renders_parts_and_hue() -> None:
+    frag = stat_tile(label="P(up)", value="58%", sub="20d · ensemble", tone="indigo")
+    assert 'class="sa-tile"' in frag
+    assert "--tile-hue: var(--sa-indigo)" in frag
+    assert "sa-tile__label" in frag and "P(up)" in frag
+    assert "sa-tile__value" in frag and "58%" in frag
+    assert "sa-tile__sub" in frag and "20d · ensemble" in frag
+
+
+def test_stat_tile_omits_empty_sub() -> None:
+    frag = stat_tile(label="Last close", value="$100.00", tone="sky")
+    assert "sa-tile__sub" not in frag
+
+
+def test_stat_tile_unknown_tone_falls_back_to_accent() -> None:
+    # Chart up/down are deliberately not valid tile tones (signaling rule) -> accent.
+    assert "var(--sa-accent)" in stat_tile(label="x", value="y", tone="up")
+
+
+def test_stat_tile_escapes_text() -> None:
+    frag = stat_tile(label="<b>", value="<i>", sub="<u>", tone="teal")
+    assert "<b>" not in frag and "<i>" not in frag and "<u>" not in frag
+    assert "&lt;b&gt;" in frag
+
+
+# ---- tool_hue / trace_bar (R4) ----------------------------------------------------
+def test_tool_hue_is_deterministic_and_in_family() -> None:
+    hues = {"teal", "sky", "indigo", "violet", "rose"}
+    for name in ("run_forecast", "get_news", "search_filings"):
+        assert tool_hue(name) in hues
+        assert tool_hue(name) == tool_hue(name)  # stable across calls (content hash)
+
+
+def test_trace_bar_one_chip_per_unique_tool_in_order() -> None:
+    frag = trace_bar(["run_forecast", "get_news", "run_forecast"])
+    assert frag.count("sa-tchip") == 2  # duplicate deduped
+    # Order preserved (forecast before news).
+    assert frag.index("run_forecast") < frag.index("get_news")
+    assert '<div class="sa-trace">' in frag
+
+
+def test_trace_bar_empty_is_empty_string() -> None:
+    assert trace_bar([]) == ""
+
+
+def test_trace_bar_escapes_names() -> None:
+    assert "<script>" not in trace_bar(["<script>"])
