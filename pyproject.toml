@@ -39,6 +39,11 @@ dependencies = [
     "arch>=8.0,<9",            # GJR-GARCH-t conditional-volatility forecaster (Task 9)
     # UI
     "streamlit>=1.35",   # browser-based chat frontend
+    # Phase 2 — React + FastAPI frontend (docs/PHASE2_REACT_FASTAPI_PLAN.md).
+    # Added here (not an extra) because `make check` runs the api/ contract tests via
+    # FastAPI's TestClient, so both must be importable in the default dev/test env.
+    "fastapi>=0.110",    # local-dev API surface for the React SPA (/config, /corpus, SSE later)
+    "uvicorn>=0.29",     # ASGI server to run the api/ app locally (not needed by tests)
     # Export (chat summary -> document)
     "fpdf2>=2.7",        # pure-Python PDF (no cairo/pango/LaTeX system deps)
     "python-docx>=1.1",  # pure-Python DOCX

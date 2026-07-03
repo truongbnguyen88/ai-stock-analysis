@@ -1,0 +1,20 @@
+/* Token bridge first (defines --sa-* on :root + [data-theme="light"]), then Tailwind. */
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* App ground + base type from the tokens. body bg/text follow the active theme's --sa-*. */
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--sa-bg);
+  color: var(--sa-text);
+  font-family: var(--sa-font-sans);
+  -webkit-font-smoothing: antialiased;
+}
