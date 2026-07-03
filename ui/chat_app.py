@@ -32,7 +32,13 @@ st.set_page_config(
 
 import session
 from components.hero import render_capability_hero
-from components.message import render_chart, render_export, render_sources
+from components.message import (
+    render_chart,
+    render_export,
+    render_sources,
+    render_stat_tiles,
+    render_trace,
+)
 from components.sidebar import render_sidebar
 from stock_agent.agent.router import Router, RouterError, resolve_domain
 from stock_agent.agent.runtime import (
@@ -48,6 +54,7 @@ from stock_agent.llm.client import AnthropicClient
 from stock_agent.settings import get_settings
 from stock_agent.ui.routing import chat_input_placeholder
 from stock_agent.ui.state import sources_from_tool_results
+from stock_agent.ui.tiles import stat_tiles_from_tool_results
 from stock_agent.ui.theme import theme_style_tag
 from stock_agent.viz.charts import ChartSpec, charts_for
 
@@ -95,6 +102,11 @@ if not st.session_state.messages:
 # ---- render history ----
 for idx, msg in enumerate(st.session_state.messages):
     with st.chat_message(msg["role"]):
+        # Stat tiles first (summary-before-detail); persisted with the turn so they
+        # re-render after a rerun/restart, like charts (R4). The tool-trace chip row is
+        # intentionally live-turn-only, so it is not re-rendered here.
+        if msg["role"] == "assistant":
+            render_stat_tiles(msg.get("tiles", []))
         st.markdown(msg["content"])
         # Re-render any charts captured with this turn (survives Streamlit reruns).
         for spec in msg.get("charts", []):
@@ -137,12 +149,13 @@ if prompt:
     with st.chat_message("assistant"):
         charts: list[ChartSpec] = []
         sources: list[dict] = []
-        spinner_msg = (
-            "Working on your request…" if run_auto else f"Running {choice.domain}…"
-        )
-        with st.spinner(spinner_msg):
-            if run_auto:
-                # ---- Auto: the LLM agent loop picks + composes tools. ----
+        tiles: list[dict] = []
+        tool_names: list[str] = []  # tools that ran (drives the live trace chip row)
+        if run_auto:
+            # ---- Auto: the LLM agent loop picks + composes tools. ----
+            # st.status gives a step-list surface (approximates a live per-tool trace;
+            # run_agent is a single blocking call, so it resolves to a done/error summary).
+            with st.status("Working on your request…", expanded=False) as status:
                 try:
                     result = run_agent(
                         prompt,
@@ -153,20 +166,30 @@ if prompt:
                     response = result.text
                     # Persist the full message history for the next turn.
                     st.session_state.agent_history = result.messages
-                    # Charts derived from the tool results (numbers the tools produced,
-                    # never the LLM) — rendered alongside the text below, not replacing it.
+                    # Charts + tiles derived from the tool results (numbers the tools
+                    # produced, never the LLM) — rendered alongside the text below.
                     charts = charts_for(result.tool_results)
+                    tiles = stat_tiles_from_tool_results(result.tool_results)
                     # Resolved SEC citations from the RAG tools (from tool output, not LLM).
                     sources = sources_from_tool_results(result.tool_results)
-                    if result.tool_calls:
-                        unique = list(dict.fromkeys(result.tool_calls))  # preserve order
-                        st.caption(f"🔧 Tools used: {', '.join(unique)}")
+                    tool_names = (
+                        list(dict.fromkeys(result.tool_calls))  # preserve order, dedup
+                        if result.tool_calls
+                        else []
+                    )
+                    status.update(
+                        label=(
+                            f"Done · {len(tool_names)} tool(s)" if tool_names else "Done"
+                        ),
+                        state="complete",
+                    )
                 except AgentGroundingError as exc:
                     response = (
                         f"⚠️ The agent produced unverifiable figures and was stopped.\n\n"
                         f"Details: {exc}\n\n"
                         "Please rephrase your question or ask the agent to call a specific tool."
                     )
+                    status.update(label="Stopped (unverifiable figures)", state="error")
                 except AgentError as exc:
                     low = str(exc).lower()
                     if "tim" in low or "connection" in low or "interrupt" in low:
@@ -176,11 +199,13 @@ if prompt:
                         )
                     else:
                         response = f"⚠️ Agent error: {exc}"
-            else:
-                # ---- Deterministic: dispatch the chosen domain (no routing LLM call). ----
-                # A deterministic turn is standalone (not part of the LLM dialogue), so
-                # agent_history is left untouched. We wrap the single tool result in a
-                # ToolInvocation to reuse the SAME chart + citation rendering as Auto.
+                    status.update(label="Agent error", state="error")
+        else:
+            # ---- Deterministic: dispatch the chosen domain (no routing LLM call). ----
+            # A deterministic turn is standalone (not part of the LLM dialogue), so
+            # agent_history is left untouched. We wrap the single tool result in a
+            # ToolInvocation to reuse the SAME chart + tile + citation rendering as Auto.
+            with st.spinner(f"Running {choice.domain}…"):
                 try:
                     route = resolve_domain(choice.domain, choice.variant)
                     rr = router.run(
@@ -194,7 +219,9 @@ if prompt:
                     tool_name = rr.tool_calls[0] if rr.tool_calls else route
                     invs = [ToolInvocation(name=tool_name, input={}, result=structured)]
                     charts = charts_for(invs)
+                    tiles = stat_tiles_from_tool_results(invs)
                     sources = sources_from_tool_results(invs)
+                    tool_names = [tool_name]  # the single deterministic route
                     if "error" in structured:
                         response = f"⚠️ {structured['error']}"
                         # LLM router may handle what this route couldn't — offer the bounce.
@@ -207,21 +234,29 @@ if prompt:
                             f"**{choice.domain} · {choice.variant}** "
                             f"(`{tool_name}`)\n\n```json\n{rr.text}\n```"
                         )
-                    st.caption(f"🎯 Deterministic route: {tool_name} (no LLM routing call)")
                 except RouterError as exc:
                     response = f"⚠️ {exc}"
                     # e.g. a missing ticker/param the LLM router can infer from the text.
                     st.session_state["fallback_prompt"] = prompt
+        # ---- render: tiles first (summary), then answer, chart, trace, sources, export ----
+        render_stat_tiles(tiles)
         st.markdown(response)
         for spec in charts:
             render_chart(spec)
+        render_trace(tool_names, is_auto=run_auto)
         render_sources(sources)
         # Export buttons for this answer (idx = the index it gets once appended below).
         render_export(response, charts, len(st.session_state.messages))
 
-    # Persist text + charts + filing sources so the turn re-renders intact on reruns.
+    # Persist text + tiles + charts + filing sources so the turn re-renders intact on reruns.
     st.session_state.messages.append(
-        {"role": "assistant", "content": response, "charts": charts, "sources": sources}
+        {
+            "role": "assistant",
+            "content": response,
+            "charts": charts,
+            "sources": sources,
+            "tiles": tiles,
+        }
     )
     # Save the thread to disk so it survives restarts and shows in the sidebar.
     session.save_current_thread(store)

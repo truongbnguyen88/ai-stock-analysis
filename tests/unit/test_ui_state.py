@@ -61,6 +61,20 @@ def test_deserialize_defaults_for_missing_keys() -> None:
     restored = deserialize_messages([{"role": "assistant", "content": "a"}])
     assert restored[0]["charts"] == []
     assert restored[0]["sources"] == []
+    assert restored[0]["tiles"] == []  # R4: tolerant of pre-tiles threads
+
+
+def test_tiles_round_trip_and_empty_omitted() -> None:
+    tiles = [{"label": "P(up)", "value": "58%", "sub": "20d", "tone": "indigo"}]
+    msgs: list[dict[str, Any]] = [
+        {"role": "user", "content": "hi", "tiles": []},  # empty -> omitted on disk
+        {"role": "assistant", "content": "a", "tiles": tiles},
+    ]
+    ser = serialize_messages(msgs)
+    assert "tiles" not in ser[0]  # empty tiles not persisted (like charts/sources)
+    assert ser[1]["tiles"] == tiles  # plain dicts survive verbatim
+    restored = deserialize_messages(ser)
+    assert restored[1]["tiles"] == tiles
 
 
 @dataclass

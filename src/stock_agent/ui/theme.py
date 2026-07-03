@@ -214,6 +214,34 @@ _COMPONENTS = """
 /* Subtle hover nudge on sidebar buttons (enhancement; native styling if selector stales). */
 [data-testid="stSidebar"] .stButton > button { transition: transform 0.06s ease; }
 [data-testid="stSidebar"] .stButton > button:hover { transform: translateX(2px); }
+/* Stat tile (chat message header): colored category stripe + mono label + big value (R4).
+   --tile-hue is set inline per tile; the left stripe + label derive their color from it. */
+.sa-tile {
+  border: 1px solid var(--sa-border); border-left: 3px solid var(--tile-hue);
+  border-radius: var(--sa-r-sm); background: var(--sa-surface-2);
+  padding: var(--sa-space-3) var(--sa-space-4); min-height: 74px;
+}
+.sa-tile__label {
+  font-family: var(--sa-font-mono); font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--tile-hue);
+}
+.sa-tile__value {
+  font-family: var(--sa-font-mono); font-variant-numeric: tabular-nums;
+  font-size: 22px; font-weight: 600; color: var(--sa-text); line-height: 1.25;
+}
+.sa-tile__sub { font-size: 11px; color: var(--sa-faint); }
+/* Tool-trace chip row (Auto turn): one mono pill per tool, tinted by --tc-hue. */
+.sa-trace { display: flex; flex-wrap: wrap; gap: var(--sa-space-2); margin: var(--sa-space-2) 0; }
+.sa-tchip {
+  display: inline-flex; align-items: center; font-family: var(--sa-font-mono);
+  font-size: 11px; line-height: 1; padding: 4px 9px; border-radius: 999px;
+  color: var(--tc-hue); border: 1px solid var(--tc-hue);
+  background: color-mix(in srgb, var(--tc-hue) 12%, transparent);
+}
+/* Filing source row: mono marker badge + citation label (R4). */
+.sa-src { display: flex; align-items: baseline; gap: var(--sa-space-2);
+  margin-bottom: var(--sa-space-1); }
+.sa-src__label { font-size: 13px; color: var(--sa-muted); }
 """
 
 

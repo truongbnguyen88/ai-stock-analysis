@@ -28,6 +28,11 @@ def serialize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             sm["charts"] = [c.to_dict() for c in m["charts"]]
         if m.get("sources"):
             sm["sources"] = m["sources"]  # plain dicts already; survive a restart
+        # R4: stat tiles are display-ready plain dicts — persist so history re-renders
+        # them intact after a rerun/restart (like charts/sources; the tool-trace chip row
+        # stays ephemeral/live-turn-only, matching the pre-R4 "tools used" caption).
+        if m.get("tiles"):
+            sm["tiles"] = m["tiles"]
         out.append(sm)
     return out
 
@@ -42,6 +47,8 @@ def deserialize_messages(raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "content": m["content"],
                 "charts": [ChartSpec.from_dict(c) for c in m.get("charts", [])],
                 "sources": m.get("sources", []),
+                # R4: tolerant of older threads that predate this key (default empty).
+                "tiles": m.get("tiles", []),
             }
         )
     return out
