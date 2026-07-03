@@ -201,10 +201,27 @@ Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` fo
   - *DoD:* ✅ React shell renders the top bar + sidebar from live `/config`/`/corpus`; theme
     toggle works (unit-tested); API + Vite dev run together (live-smoked). Browser eyeball of the
     styled shell is the one manual confirmation left (consistent with Phase-1's render-check notes).
-- **P2.1 — Event-emitting runtime (backend, no UI).** `agent/events.py`, `run_agent_events`,
-  `run_agent` re-expressed as its drain. *Tests:* event-ordering test (§5) with `FakeLLM`+fake tools;
-  regression — existing `run_agent` tests unchanged and green; grounding still rejects → `error` not
-  `final`. **No web change.**
+- **P2.1 — Event-emitting runtime (backend, no UI) — ✅ DONE (2026-07-03).** `agent/events.py`,
+  `run_agent_events`, `run_agent` re-expressed as its drain. **No web change.**
+  - **Event schema (`agent/events.py`):** the full 10-type `AgentEvent` union (frozen dataclasses,
+    JSON-serializable via `to_wire()` — the §4 SSE frame contract) + `hue_for(tool)` (`crc32`,
+    palette-agnostic). `Final.to_wire()` projects to the §4 subset `{turn_id, tool_calls,
+    iterations, grounded}`; in-process it still carries `messages`/`tool_results` for the drain.
+  - **Runtime split (`agent/runtime.py`):** loop extracted into the generator `run_agent_events`,
+    which yields only the **runtime-owned** subset — `tool_start`/`tool_finish` around each
+    execution, one `token` delta for the (post-guard) answer, then terminal `final` **or**
+    `error`. It does **not** emit `tiles`/`chart`/`sources` (adapter builds those from
+    `tool_results` via `ui.tiles`/`viz.charts`/`ui.state` — the runtime must not import `ui/`/`viz/`,
+    which would cycle with Streamlit) nor `turn_start`/`route_decided` (router-owned, P2.2).
+    `run_agent = _collect(run_agent_events)` — concatenates `token`s, reads the transcript off
+    `final`, re-raises `AgentGroundingError`/`AgentError` on `error` → callers + `pytest.raises`
+    tests unchanged. No LLM-call change (single delta from the existing `create()`); `ToolLLM.stream`
+    and true multi-delta streaming are **deferred to P2.4**.
+  - **Tests:** `tests/unit/test_agent_events_schema.py` (4 — `to_wire` shapes, `Final` wire-omits
+    server-only fields, `hue_for` determinism, JSON-serializability) + `tests/integration/
+    test_agent_events.py` (7 — ordering, multi-tool pairing, grounding-reject→`error`-not-`final`
+    with no tokens, retry→success emits only the accepted answer, tool-error→`ok=False`, `run_agent`
+    ≡ drain). Existing runtime/router tests unchanged. `make check` green (955 passed / 3 skipped).
 - **P2.2 — `POST /chat/stream` (non-token).** Adapter emits everything except real `token` streaming
   (single `token` with full text). *Tests:* SSE frame-shape + ordering via FastAPI test client;
   `tiles`/`chart`/`sources` are byte-identical to `tiles_for`/`charts_for`/citation builders.
