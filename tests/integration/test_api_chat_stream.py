@@ -106,6 +106,28 @@ def test_chat_stream_deterministic_order_and_builder_parity() -> None:
     assert chart_frame["spec"] == charts_for(invs)[0].to_dict()
 
 
+def test_chat_stream_resolves_domain_name_to_granular_route() -> None:
+    # The sidebar sends a friendly DOMAIN ("predictions"); the endpoint resolves it to the granular
+    # route ("forecast") via resolve_domain, so it streams a forecast turn (tiles + chart), not an
+    # "unknown route" error. Keeps routing logic in Python (the client only sends the selection).
+    router = Router(_executor())
+    resp = _client(router).post(
+        "/chat/stream",
+        json={"message": "outlook", "route": "predictions", "ticker": "NVDA", "horizon": 20},
+    )
+    assert resp.status_code == 200
+    frames = _parse_sse(resp.text)
+    types = [f["type"] for f in frames]
+    assert "error" not in types
+    assert [f["type"] for f in frames] == [
+        "turn_start", "route_decided", "tool_start", "tool_finish",
+        "tiles", "chart", "token", "final",
+    ]
+    # route_decided reflects the resolved granular route, not the domain name.
+    rd = next(f for f in frames if f["type"] == "route_decided")
+    assert rd["route_name"] == "forecast"
+
+
 def test_chat_stream_grounding_rejection_emits_error_not_final() -> None:
     # Persistent fabrication on the LLM path → terminal `error` (grounding), no `final`, no `token`.
     script = [_final("A 92.5% chance."), _final("Still 92.5% likely.")]

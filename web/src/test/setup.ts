@@ -27,6 +27,14 @@ class MemoryStorage implements Storage {
   }
 }
 
+// jsdom has no canvas backend; importing vega (via react-vega) probes HTMLCanvasElement.getContext
+// and jsdom throws "Not implemented". No test renders a real chart (charts are mocked / the spec
+// translation is tested purely), so stub getContext to null. Done at module top-level (not in
+// beforeAll) so it lands before the test files import vega, silencing the import-time probe.
+if (typeof HTMLCanvasElement !== "undefined") {
+  HTMLCanvasElement.prototype.getContext = (() => null) as never;
+}
+
 beforeAll(() => {
   const storage = new MemoryStorage();
   Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
