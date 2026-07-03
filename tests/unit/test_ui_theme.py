@@ -9,6 +9,7 @@ from __future__ import annotations
 from stock_agent.ui.theme import (
     COLOR_TOKENS,
     STRUCTURAL_TOKENS,
+    iframe_colors,
     theme_style_tag,
 )
 
@@ -67,3 +68,19 @@ def test_font_stacks_are_system_only() -> None:
     assert "@import" not in css
     assert "url(" not in css
     assert "googleapis" not in css
+
+
+def test_iframe_colors_both_themes_and_synced_to_tokens() -> None:
+    # The typewriter iframe can't inherit --sa-* vars, so it embeds literal hex; this
+    # accessor is the single source. Both themes carry the same 3 keys, and the values
+    # must equal the real token hex (no drift) — check via presence in the CSS block.
+    colors = iframe_colors()
+    keys = {"--sa-text", "--sa-muted", "--sa-accent"}
+    assert set(colors["dark"]) == keys
+    assert set(colors["light"]) == keys
+    css = theme_style_tag()
+    for theme in ("dark", "light"):
+        for value in colors[theme].values():
+            assert value in css  # the exposed hex is a real token value used in the CSS
+    # Brass accent differs across themes (dark brass vs. AA-safe light brass).
+    assert colors["dark"]["--sa-accent"] != colors["light"]["--sa-accent"]

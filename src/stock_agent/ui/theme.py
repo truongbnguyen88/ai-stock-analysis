@@ -101,6 +101,25 @@ def _render_vars(tokens: dict[str, str], *, indent: str) -> str:
     return "\n".join(f"{indent}{name}: {value};" for name, value in tokens.items())
 
 
+# Tokens the empty-state typewriter iframe needs as literal hex. A sandboxed
+# ``components.html`` iframe does NOT inherit the app's ``--sa-*`` custom properties, so
+# the hero must embed real hex; sourcing them here keeps a single source of truth (no
+# re-hardcoded colors drifting from the token set). See ui/components/hero.py.
+_IFRAME_KEYS: tuple[str, ...] = ("--sa-text", "--sa-muted", "--sa-accent")
+
+
+def iframe_colors() -> dict[str, dict[str, str]]:
+    """Return ``{"dark": {token: hex}, "light": {token: hex}}`` for the typewriter iframe.
+
+    Pure. Only the subset in :data:`_IFRAME_KEYS` (text / muted / brass accent), for both
+    themes, so the iframe can switch via its own ``prefers-color-scheme`` block.
+    """
+    return {
+        "dark": {k: _DARK[k] for k in _IFRAME_KEYS},
+        "light": {k: _LIGHT[k] for k in _IFRAME_KEYS},
+    }
+
+
 # Conservative base styling. Rules that reference Streamlit's internal DOM are grouped
 # here and commented; they are enhancements, not load-bearing (graceful degradation).
 _BASE = """
@@ -121,6 +140,80 @@ _BASE = """
 
 /* Captions read as secondary text. */
 [data-testid="stCaptionContainer"] { color: var(--sa-muted); }
+"""
+
+# Redesign component styling (R2+). Classes consumed by ``stock_agent.ui.html`` builders,
+# injected via ``st.markdown(unsafe_allow_html=True)``. All rules reference --sa-* tokens
+# so the two themes stay in sync; if a class ever goes unstyled the fragment still reads
+# (graceful degradation, principle #6). No ``url(...)`` here (keeps the webfont test green).
+_COMPONENTS = """
+/* Section eyebrow: the redesign's mono uppercase structural marker (replaces headings). */
+.sa-eyebrow {
+  font-family: var(--sa-font-mono);
+  font-size: 11px; letter-spacing: 0.09em; text-transform: uppercase;
+  color: var(--sa-muted); margin: var(--sa-space-4) 0 var(--sa-space-2);
+}
+/* Brand block: product mark + name (mono) + faint tagline. */
+.sa-brand { display: flex; align-items: center; gap: var(--sa-space-3);
+  padding: var(--sa-space-2) 0 var(--sa-space-3); }
+.sa-brand__mark { font-size: 22px; line-height: 1; }
+.sa-brand__text { display: flex; flex-direction: column; }
+.sa-brand__name { font-family: var(--sa-font-mono); font-weight: 600;
+  font-size: 15px; letter-spacing: -0.01em; color: var(--sa-text); }
+.sa-brand__tag { font-size: 11px; color: var(--sa-faint); }
+/* Surface card + corpus status card. */
+.sa-card { background: var(--sa-surface-2); border: 1px solid var(--sa-border);
+  border-radius: var(--sa-r-sm); padding: var(--sa-space-3); box-shadow: var(--sa-shadow); }
+.sa-status { display: flex; align-items: flex-start; gap: var(--sa-space-2); }
+.sa-status__body { font-size: 12px; color: var(--sa-muted); line-height: 1.5; }
+.sa-status__label { font-family: var(--sa-font-mono); text-transform: uppercase;
+  letter-spacing: 0.06em; font-size: 10px; color: var(--sa-faint); }
+.sa-status__embedder { font-family: var(--sa-font-mono); color: var(--sa-text); font-size: 12px; }
+.sa-status__cov { color: var(--sa-faint); }
+/* Status dot: green fresh / brass stale / red unavailable, each with a soft halo. */
+.sa-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px;
+  flex: 0 0 auto; background: var(--sa-faint); }
+.sa-dot--fresh { background: var(--sa-up); box-shadow: 0 0 0 3px rgba(63,185,80,0.16); }
+.sa-dot--stale { background: var(--sa-accent); box-shadow: 0 0 0 3px var(--sa-accent-weak); }
+.sa-dot--unavailable { background: var(--sa-down); box-shadow: 0 0 0 3px rgba(229,83,75,0.16); }
+/* Chip row (keys, tags): mono pills; tone carries meaning, marker gives a redundant glyph. */
+.sa-chips { display: flex; flex-wrap: wrap; gap: var(--sa-space-2); margin-top: var(--sa-space-1); }
+.sa-chip { display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--sa-font-mono); font-size: 11px; line-height: 1;
+  padding: 4px 8px; border-radius: 999px; border: 1px solid var(--sa-border-strong);
+  color: var(--sa-muted); background: var(--sa-surface-3); }
+.sa-chip__mk { font-weight: 700; }
+.sa-chip--ok { color: var(--sa-teal); border-color: var(--sa-teal); }
+.sa-chip--accent { color: var(--sa-accent); border-color: var(--sa-accent-line); }
+.sa-chip--off { color: var(--sa-down); border-color: var(--sa-down); }
+.sa-chip--muted { color: var(--sa-faint); }
+/* Hero eyebrow variant: brass instead of muted (empty-state section label). */
+.sa-eyebrow--accent { color: var(--sa-accent); }
+/* Capability card (empty-state hero): hue top-rail + tinted icon badge; hover lift.
+   --cap-hue is set inline per card; children derive their color from it. */
+.sa-cap {
+  border: 1px solid var(--sa-border); border-top: 2px solid var(--cap-hue);
+  border-radius: var(--sa-r); background: var(--sa-surface);
+  padding: var(--sa-space-4); min-height: 118px;
+  transition: transform 0.08s ease, box-shadow 0.08s ease, border-color 0.08s ease;
+}
+.sa-cap:hover { transform: translateY(-2px); box-shadow: var(--sa-shadow);
+  border-color: var(--sa-border-strong); }
+.sa-cap__badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: var(--sa-r-sm); font-size: 18px;
+  margin-bottom: var(--sa-space-2);
+  background: color-mix(in srgb, var(--cap-hue) 16%, transparent);
+}
+.sa-cap__title { font-weight: 600; font-size: 15px; color: var(--sa-text); margin-bottom: 2px; }
+.sa-cap__blurb { font-size: 12px; color: var(--sa-muted); line-height: 1.45; }
+@media (prefers-reduced-motion: reduce) {
+  .sa-cap { transition: none; }
+  .sa-cap:hover { transform: none; }
+}
+/* Subtle hover nudge on sidebar buttons (enhancement; native styling if selector stales). */
+[data-testid="stSidebar"] .stButton > button { transition: transform 0.06s ease; }
+[data-testid="stSidebar"] .stButton > button:hover { transform: translateX(2px); }
 """
 
 
@@ -145,5 +238,6 @@ def theme_style_tag() -> str:
         "  }\n"
         "}\n"
         f"{_BASE}"
+        f"{_COMPONENTS}"
     )
     return f"<style>\n{css}\n</style>"

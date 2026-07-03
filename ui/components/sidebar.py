@@ -1,12 +1,16 @@
-"""Sidebar: brand, corpus status, quick starters, routing, chats, keys (redesign R1).
+"""Sidebar: brand, corpus status, quick starters, routing, chats, keys (redesign R2).
 
-Extracted verbatim from ``ui/chat_app.py`` — behavior-preserving. Renders the whole
-sidebar and returns the resolved :class:`RoutingChoice` for the turn handler + input bar.
-Thread actions (new/open/delete) delegate to ``ui.session``.
+Composition only — the visual language (brand block, status card + dot, mono section
+eyebrows, chip row, brass active-chat) comes from the pure builders in
+``stock_agent.ui.html`` + the CSS in ``stock_agent.ui.theme``. Every interactive widget
+and handler (``pending_prompt``, ticker, routing, open/delete/new) is unchanged from R1 —
+this phase is presentation only (docs/APP_REDESIGN.md §6 contract). Returns the resolved
+:class:`RoutingChoice`; thread actions delegate to ``ui.session``.
 """
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import streamlit as st
@@ -16,6 +20,13 @@ from stock_agent.agent.router import DOMAIN_NAMES, DOMAINS
 from stock_agent.chat.history import ChatStore
 from stock_agent.rag.status import corpus_status
 from stock_agent.settings import Settings, get_settings
+from stock_agent.ui.html import (
+    brand_block,
+    corpus_freshness,
+    eyebrow,
+    keys_row,
+    status_card,
+)
 from stock_agent.ui.routing import AUTO_MODE, RoutingChoice
 
 _QUICK_STARTERS = {
@@ -24,6 +35,11 @@ _QUICK_STARTERS = {
     "🔮 Forecast 20 days": "What does the historical model forecast for {ticker} over the next 20 trading days?",
     "🔍 Full analysis": "Analyze {ticker} over the last 30 days — technicals, news summary, and 20-day forecast.",
 }
+
+
+def _html(fragment: str) -> None:
+    """Inject a pure HTML fragment (thin wrapper to keep call sites readable)."""
+    st.markdown(fragment, unsafe_allow_html=True)
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -35,26 +51,37 @@ def _corpus_status() -> dict[str, Any]:
 def render_sidebar(*, settings: Settings, store: ChatStore) -> RoutingChoice:
     """Render the sidebar and return the routing selection for this turn."""
     with st.sidebar:
-        st.title("📈 Stock Research Agent")
-        st.caption("Research / education only — **not financial advice**.")
-        # Which embeddings filing questions are answered from (e.g. voyage-4) + freshness.
+        # ---- brand + non-advisory line ----
+        _html(
+            brand_block(
+                mark="📈",
+                name="Stock Research Agent",
+                tagline="Research / education — not financial advice",
+            )
+        )
+
+        # ---- corpus status card: which embeddings answer filing questions + freshness ----
         _cs = _corpus_status()
-        _chunks = "unavailable" if _cs["chunks"] < 0 else f"{_cs['chunks']:,} chunks"
-        st.caption(f"📚 **Filing search:** `{_cs['embedder']}` — {_chunks}")
-        if _cs["latest"]:
-            st.caption(f"{_cs['tickers']} tickers · fresh to {_cs['latest']}")
-        st.divider()
+        state = corpus_freshness(_cs["latest"], _cs["chunks"], today=date.today())
+        _html(
+            status_card(
+                state=state,
+                embedder=_cs["embedder"],
+                chunks=_cs["chunks"],
+                tickers=_cs["tickers"],
+                latest=_cs["latest"],
+            )
+        )
 
-        st.subheader("Quick starters")
+        # ---- quick starters ----
+        _html(eyebrow("Quick starters"))
         ticker_input = st.text_input("Ticker", value="NVDA", max_chars=10).upper().strip()
-
         for label, template in _QUICK_STARTERS.items():
             if st.button(label, use_container_width=True):
                 st.session_state.pending_prompt = template.replace("{ticker}", ticker_input)
 
-        st.divider()
         # ---- Hybrid routing: Auto (LLM picks tools) vs. a deterministic domain ----
-        st.subheader("Routing")
+        _html(eyebrow("Routing"))
         route_mode = st.selectbox(
             "Mode",
             [AUTO_MODE, *DOMAIN_NAMES],
@@ -84,8 +111,8 @@ def render_sidebar(*, settings: Settings, store: ChatStore) -> RoutingChoice:
             _target = dom.variants[selected_variant]
             st.caption(f"🎯 Deterministic — runs `{_target}`, skips LLM routing.")
 
-        st.divider()
-        st.subheader("💬 Chats")
+        # ---- chats ----
+        _html(eyebrow("Chats"))
         if st.button("➕ New chat", use_container_width=True):
             session.save_current_thread(store)  # keep the one we're leaving
             session.start_new_thread()
@@ -94,8 +121,14 @@ def render_sidebar(*, settings: Settings, store: ChatStore) -> RoutingChoice:
         for meta in store.list_threads():
             is_current = meta.id == st.session_state.thread_id
             row, trash = st.columns([0.82, 0.18])
-            label = ("🟢 " if is_current else "") + meta.title
-            if row.button(label, key=f"open_{meta.id}", use_container_width=True):
+            # Active thread rendered as a brass `primary` button (the accent active-state)
+            # instead of a text marker — native theming, robust across Streamlit versions.
+            if row.button(
+                meta.title,
+                key=f"open_{meta.id}",
+                use_container_width=True,
+                type="primary" if is_current else "secondary",
+            ):
                 session.save_current_thread(store)
                 session.open_thread(store, meta.id)
                 st.rerun()
@@ -106,13 +139,17 @@ def render_sidebar(*, settings: Settings, store: ChatStore) -> RoutingChoice:
                 st.rerun()
         st.caption(f"Saved for {settings.chat_history_retention_days} days.")
 
-        st.divider()
-        st.caption(
-            "**Keys configured:**\n"
-            + ("✅ Anthropic\n" if settings.anthropic_api_key else "❌ Anthropic (required)\n")
-            + ("✅ Finnhub\n" if settings.finnhub_api_key else "⬜ Finnhub\n")
-            + ("✅ Marketaux\n" if settings.marketaux_api_key else "⬜ Marketaux\n")
-            + ("✅ Alpha Vantage" if settings.alpha_vantage_api_key else "⬜ Alpha Vantage")
+        # ---- keys as a chip row (present ✓ / required ✕ / optional ·) ----
+        _html(eyebrow("Keys configured"))
+        _html(
+            keys_row(
+                [
+                    ("Anthropic", bool(settings.anthropic_api_key), True),
+                    ("Finnhub", bool(settings.finnhub_api_key), False),
+                    ("Marketaux", bool(settings.marketaux_api_key), False),
+                    ("Alpha Vantage", bool(settings.alpha_vantage_api_key), False),
+                ]
+            )
         )
 
     return RoutingChoice(
