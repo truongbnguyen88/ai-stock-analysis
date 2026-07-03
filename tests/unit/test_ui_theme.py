@@ -26,20 +26,23 @@ def test_pure_and_deterministic() -> None:
     assert theme_style_tag() == theme_style_tag()
 
 
-def test_both_theme_blocks_present() -> None:
+def test_dark_only_no_light_media() -> None:
     css = theme_style_tag()
     assert ":root {" in css
-    assert "@media (prefers-color-scheme: light)" in css
     assert "color-scheme: dark;" in css
-    assert "color-scheme: light;" in css
+    # Regression guard (render-check finding): our --sa-* tokens keyed off the OS
+    # `prefers-color-scheme` while Streamlit's chrome is pinned dark by config.toml, so a
+    # light-preference viewer got dark chrome + light tokens (white cards, dark-on-dark
+    # text). The override must NOT be emitted; real light mode is R6 (Streamlit's signal).
+    assert "prefers-color-scheme: light" not in css
+    assert "color-scheme: light;" not in css
 
 
-def test_color_tokens_defined_in_both_themes() -> None:
-    # Every color token must be redefined under BOTH dark (:root) and light (media) —
-    # a token missing from one theme would render with the wrong value there.
+def test_color_tokens_defined_dark() -> None:
+    # Every color token is defined once, in the dark :root block (dark-only emission).
     css = theme_style_tag()
     for name in COLOR_TOKENS:
-        assert css.count(f"{name}:") >= 2, f"{name} not defined in both themes"
+        assert f"{name}:" in css, f"{name} missing from the dark token set"
 
 
 def test_structural_tokens_declared_once() -> None:
@@ -54,11 +57,12 @@ def test_braces_balanced() -> None:
     assert css.count("{") == css.count("}")
 
 
-def test_brass_accent_in_both_themes() -> None:
-    # The signature accent: brass in dark, its darker AA-safe variant in light.
+def test_brass_accent_dark_only() -> None:
+    # The signature accent is emitted in its dark form; the AA-safe light brass is retained
+    # as data (_LIGHT / iframe_colors) for R6 but is NOT emitted in the dark-only style tag.
     css = theme_style_tag()
-    assert "#E8A13A" in css  # dark accent
-    assert "#B7791F" in css  # light accent
+    assert "#E8A13A" in css  # dark accent emitted
+    assert "#B7791F" not in css  # light accent not emitted (data-only)
 
 
 def test_font_stacks_are_system_only() -> None:
@@ -70,17 +74,16 @@ def test_font_stacks_are_system_only() -> None:
     assert "googleapis" not in css
 
 
-def test_iframe_colors_both_themes_and_synced_to_tokens() -> None:
+def test_iframe_colors_expose_palette_dark_emitted() -> None:
     # The typewriter iframe can't inherit --sa-* vars, so it embeds literal hex; this
-    # accessor is the single source. Both themes carry the same 3 keys, and the values
-    # must equal the real token hex (no drift) — check via presence in the CSS block.
+    # accessor is the single source. It still exposes both palettes (light = R6 source),
+    # but only the DARK values are the ones actually emitted / rendered (dark-only).
     colors = iframe_colors()
     keys = {"--sa-text", "--sa-muted", "--sa-accent"}
     assert set(colors["dark"]) == keys
-    assert set(colors["light"]) == keys
+    assert set(colors["light"]) == keys  # retained for R6 light mode
     css = theme_style_tag()
-    for theme in ("dark", "light"):
-        for value in colors[theme].values():
-            assert value in css  # the exposed hex is a real token value used in the CSS
-    # Brass accent differs across themes (dark brass vs. AA-safe light brass).
+    for value in colors["dark"].values():
+        assert value in css  # the exposed dark hex is a real token value used in the CSS
+    # Brass accent differs across the two palettes (dark brass vs. AA-safe light brass).
     assert colors["dark"]["--sa-accent"] != colors["light"]["--sa-accent"]

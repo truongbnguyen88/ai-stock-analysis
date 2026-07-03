@@ -211,6 +211,12 @@ Independently mergeable; app works after each. Run `make check`; keep §6 green.
 - **ENGINEERING:** before/after screenshots; update `README.md` launch notes if needed; final §6 walkthrough; `make check` green.
 - **TESTS:** full suite green; a11y checklist recorded here.
 
+#### R6 render-check findings (2026-07-03, headless Chrome vs. live app on Streamlit 1.58)
+The redesign CSS **is** applying (all `data-testid`/`sa-*` selectors resolve; injected `<style>` present; mono fonts computed; dark tokens active). The "look barely changes" perception is because the empty state was already card-heavy — the redesign's payload (stat tiles, per-tool trace, styled sources, themed charts, context chips) lives on the **conversation surface**, which the empty state never renders. One real bug found + fixed, one deferred:
+
+- **R6.A — theme-signal mismatch — ✅ DONE (2026-07-03).** Our `--sa-*` tokens switched on the browser/OS `prefers-color-scheme`, but Streamlit's chrome is pinned dark by `config.toml base=dark`, so a **light-preference viewer got dark chrome + light component tokens** (white cards on the dark ground; dark-on-dark brand text — confirmed via painted colors: app bg `rgb(14,17,22)` vs. card `rgb(255,255,255)`). Fix: `theme_style_tag()` emits **dark-only** (drop the `prefers-color-scheme: light` override); the hero typewriter iframe likewise goes dark-only. `_LIGHT` / `iframe_colors()`'s light half retained as the R6.B source. Regression guard: `test_ui_theme.test_dark_only_no_light_media`. `make check` green (933 passed / 3 skips).
+- **R6.B — first-class light mode (deferred, this phase).** Deliver real light mode by switching **both** Streamlit's theme and our `--sa-*` tokens off **one** signal (not the OS preference, which desyncs — the R6.A bug). Scope: (a) add a light `[theme]` variant + wire an in-app theme toggle (or detect Streamlit's active theme via `st.context.theme` / the app-root theme attribute); (b) inject the matching token set at runtime (dark vs. light) instead of a media query; (c) re-enable the hero iframe light palette off the same signal; (d) AA-contrast audit **both** themes (§2 rule) incl. the semantic hues, chart marks, and mono labels; (e) re-render check (headless Chrome, light + dark) to confirm chrome and tokens agree. Until R6.B lands, the app is intentionally dark-only.
+
 ---
 
 ## 9. Optional Phase 2 (documented, not now): React + FastAPI
