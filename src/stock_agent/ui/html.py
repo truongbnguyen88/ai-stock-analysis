@@ -216,6 +216,24 @@ def trace_bar(tools: Sequence[str]) -> str:
     return '<div class="sa-trace">' + "".join(chips) + "</div>"
 
 
+def context_row(chips: Sequence[tuple[str, str]]) -> str:
+    """Composer context-chip row from ``(label, tone)`` pairs — 'on enter' lead + pills (R5).
+
+    Renders what pressing enter will do (from :func:`stock_agent.ui.routing.context_chips`).
+    Reuses :func:`chip` for each pill (tone falls back to ``neutral`` on a typo). Empty input
+    yields an empty string (no stray lead label).
+    """
+    if not chips:
+        return ""
+    pills = "".join(chip(text, tone=tone) for text, tone in chips)
+    return (
+        '<div class="sa-context">'
+        '<span class="sa-context__lead">on enter</span>'
+        f"{pills}"
+        "</div>"
+    )
+
+
 def keys_row(keys: Sequence[tuple[str, bool, bool]]) -> str:
     """Render API-key status as a chip row from ``(label, present, required)`` tuples.
 

@@ -10,11 +10,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from stock_agent.ui.chart_theme import (
+    CATEGORY_PALETTE,
+    MARK_COLOR,
+    POINT_COLOR,
+    REFERENCE_COLOR,
+    altair_config,
+)
 from stock_agent.viz.charts import ChartSpec
 
 
 def to_altair(spec: ChartSpec) -> Any:
-    """Build the Altair chart for a ChartSpec (title included; size left to the caller)."""
+    """Build the themed Altair chart for a ChartSpec (title included; size left to the caller).
+
+    Applies the shared brass-on-ink chart theme (``stock_agent.ui.chart_theme``): brass single
+    bars, the semantic secondary palette for grouped series, faint grid, and mono labels. Mark
+    colors are set at the mark/encoding level so they survive Streamlit's Vega-theme merge in
+    the app; text colors are left to that adaptive theme (AA both themes) and to Vega's default
+    on the white export page. ``ChartSpec`` is unchanged (view-only theming).
+    """
     import altair as alt
     import pandas as pd
 
@@ -24,31 +38,37 @@ def to_altair(spec: ChartSpec) -> Any:
 
     if spec.kind == "reliability":
         # Predicted vs realized, with the y=x ideal as a dashed reference line.
-        pts = alt.Chart(spec.data).mark_circle(size=90, color="#4c78a8").encode(
+        pts = alt.Chart(spec.data).mark_circle(size=90, color=POINT_COLOR).encode(
             x=alt.X("predicted:Q", scale=alt.Scale(domain=[0, 1]), title="Predicted"),
             y=alt.Y("realized:Q", scale=alt.Scale(domain=[0, 1]), title="Realized"),
         )
         ideal = (
             alt.Chart(pd.DataFrame({"x": [0, 1], "y": [0, 1]}))
-            .mark_line(strokeDash=[5, 5], color="gray")
+            .mark_line(strokeDash=[5, 5], color=REFERENCE_COLOR)
             .encode(x="x:Q", y="y:Q")
         )
         chart = ideal + pts
     elif spec.kind == "grouped_bar":
+        # Series colored by the semantic secondary palette (scale range set here so it wins
+        # over Streamlit's theme merge in-app; config carries the same range for export).
         chart = alt.Chart(spec.data).mark_bar().encode(
             x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
             y=y_enc,
-            color=alt.Color(f"{spec.color}:N", title=None),
+            color=alt.Color(
+                f"{spec.color}:N",
+                title=None,
+                scale=alt.Scale(range=list(CATEGORY_PALETTE)),
+            ),
             xOffset=f"{spec.color}:N",
             tooltip=list(spec.data.columns),
         )
     else:  # "bar"
-        chart = alt.Chart(spec.data).mark_bar(color="#4c78a8").encode(
+        chart = alt.Chart(spec.data).mark_bar(color=MARK_COLOR).encode(
             x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
             y=y_enc,
             tooltip=list(spec.data.columns),
         )
-    return chart.properties(title=spec.title)
+    return chart.properties(title=spec.title).configure(**altair_config())
 
 
 def to_png(spec: ChartSpec, *, scale: float = 2.0) -> bytes:
