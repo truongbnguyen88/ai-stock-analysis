@@ -25,15 +25,15 @@ def render_typewriter() -> None:
 
     Rendered in an iframe via ``components.html`` so it never triggers a server rerun or
     blocks the chat. The iframe does NOT inherit Streamlit's theme or our ``--sa-*`` vars,
-    so colors are injected as literal hex from ``theme.iframe_colors`` (single source) and
-    swap via the iframe's own ``prefers-color-scheme``; the typed phrase + caret use the
-    brass accent. Motion honors ``prefers-reduced-motion`` (static first line). Fixed
-    height reserves space so typed text never clips. The cards below are the actionable
-    layer — this is the visual only.
+    so colors are injected as literal hex from ``theme.iframe_colors`` (single source). It is
+    **dark-only**, matching the config-pinned dark chrome — a ``prefers-color-scheme`` swap
+    would desync from Streamlit's theme (the same bug fixed in ``theme_style_tag``; proper
+    light mode is R6). The typed phrase + caret use the brass accent. Motion honors
+    ``prefers-reduced-motion`` (static first line). Fixed height reserves space so typed text
+    never clips. The cards below are the actionable layer — this is the visual only.
     """
     phrases = [f"{cap.title}  {cap.icon}" for cap in CAPABILITIES]
-    colors = iframe_colors()
-    dark, light = colors["dark"], colors["light"]
+    dark = iframe_colors()["dark"]
     html = """
 <div class="tw-wrap">
   <span class="tw-prefix">You can ask about&nbsp;</span><span id="tw-text"></span><span class="tw-caret">▌</span>
@@ -48,12 +48,6 @@ def render_typewriter() -> None:
   #tw-text { color: __D_ACCENT__; }
   .tw-caret { color: __D_ACCENT__; animation: tw-blink 1s step-end infinite; }
   @keyframes tw-blink { 50% { opacity: 0; } }
-  @media (prefers-color-scheme: light) {
-    .tw-wrap { color: __L_TEXT__; }
-    .tw-prefix { color: __L_MUTED__; }
-    #tw-text { color: __L_ACCENT__; }
-    .tw-caret { color: __L_ACCENT__; }
-  }
   @media (prefers-reduced-motion: reduce) { .tw-caret { animation: none; } }
 </style>
 <script>
@@ -82,9 +76,6 @@ def render_typewriter() -> None:
         .replace("__D_TEXT__", dark["--sa-text"])
         .replace("__D_MUTED__", dark["--sa-muted"])
         .replace("__D_ACCENT__", dark["--sa-accent"])
-        .replace("__L_TEXT__", light["--sa-text"])
-        .replace("__L_MUTED__", light["--sa-muted"])
-        .replace("__L_ACCENT__", light["--sa-accent"])
     )
     components.html(html, height=58)
 

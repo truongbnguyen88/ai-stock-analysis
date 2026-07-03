@@ -7,9 +7,9 @@ so it is type-checked and unit-tested like the rest of the package. The repo-roo
 
 Design direction — "brass on ink" (see docs/APP_REDESIGN.md §2/§5): a cool near-black
 slate ground with one restrained brass/amber primary accent and a secondary hue family
-used *semantically*. Dark is the primary treatment (matches ``.streamlit/config.toml``
-``base = "dark"``); a ``prefers-color-scheme: light`` block provides a coherent light
-palette for users whose OS/Streamlit theme is light.
+used *semantically*. **Dark-only**, matching the ``.streamlit/config.toml`` ``base = "dark"``
+pin (an OS ``prefers-color-scheme`` swap would desync from Streamlit's config-pinned chrome —
+see :func:`theme_style_tag`). First-class light mode is R6 (``_LIGHT`` is retained for it).
 
 Separation of concerns:
 - ``.streamlit/config.toml`` owns Streamlit's *native* chrome colors (background, text,
@@ -49,8 +49,10 @@ _DARK: dict[str, str] = {
     "--sa-shadow": "0 1px 2px rgba(0,0,0,0.40), 0 8px 24px rgba(0,0,0,0.28)",
 }
 
-# Light overrides — only the tokens whose value changes between themes. Structural
-# tokens (fonts, radii, spacing) are theme-independent and declared once in _BASE.
+# Light palette — RETAINED AS DATA, not currently emitted (see theme_style_tag). It is the
+# single source for the proper R6 light mode (which must switch on Streamlit's own theme
+# signal, not the OS preference). Only the tokens whose value changes between themes; the
+# structural tokens (fonts, radii, spacing) are theme-independent (declared once in _BASE).
 _LIGHT: dict[str, str] = {
     "--sa-bg": "#F5F6F8",
     "--sa-surface": "#FFFFFF",
@@ -126,8 +128,10 @@ def mono_font_stack() -> str:
 def iframe_colors() -> dict[str, dict[str, str]]:
     """Return ``{"dark": {token: hex}, "light": {token: hex}}`` for the typewriter iframe.
 
-    Pure. Only the subset in :data:`_IFRAME_KEYS` (text / muted / brass accent), for both
-    themes, so the iframe can switch via its own ``prefers-color-scheme`` block.
+    Pure. Only the subset in :data:`_IFRAME_KEYS` (text / muted / brass accent). The hero
+    currently renders the iframe **dark-only** (consistent with the config-pinned dark
+    chrome); the ``light`` half is retained as the R6 light-mode source (same rationale as
+    :func:`theme_style_tag`).
     """
     return {
         "dark": {k: _DARK[k] for k in _IFRAME_KEYS},
@@ -275,22 +279,22 @@ _COMPONENTS = """
 def theme_style_tag() -> str:
     """Return the full ``<style>…</style>`` block to inject once at the top of the app.
 
-    Pure and deterministic (same output every call). Emits the dark ``:root`` token set
-    (primary treatment) + structural tokens, a ``prefers-color-scheme: light`` override
-    that redefines every color token for parity, and conservative base typography.
+    Pure and deterministic. Emits the **dark** ``:root`` token set + structural tokens and
+    conservative base typography — dark-only, matching the ``base = "dark"`` pin in
+    ``.streamlit/config.toml``.
+
+    Deliberately does **not** emit a ``prefers-color-scheme: light`` override. Our ``--sa-*``
+    tokens would switch on the *OS/browser* preference while Streamlit's own chrome is pinned
+    by config, so a light-preference viewer got dark chrome + light component tokens (white
+    cards on the dark ground, dark-on-dark brand text). Real light mode must switch on the
+    *same* signal Streamlit uses — deferred to R6 (see docs/APP_REDESIGN.md); ``_LIGHT`` is
+    retained as that work's single source.
     """
     dark_vars = _render_vars({**_DARK, **_STRUCTURAL}, indent="  ")
-    light_vars = _render_vars(_LIGHT, indent="    ")
     css = (
         ":root {\n"
         "  color-scheme: dark;\n"
         f"{dark_vars}\n"
-        "}\n"
-        "@media (prefers-color-scheme: light) {\n"
-        "  :root {\n"
-        "    color-scheme: light;\n"
-        f"{light_vars}\n"
-        "  }\n"
         "}\n"
         f"{_BASE}"
         f"{_COMPONENTS}"
