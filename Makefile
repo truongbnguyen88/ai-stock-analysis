@@ -1,4 +1,4 @@
-.PHONY: install check test lint typecheck check-math format clean ui pull-models verify-models refresh-filings rag-eval
+.PHONY: install check test lint typecheck check-math format clean ui api web-install check-web gen-tokens pull-models verify-models refresh-filings rag-eval
 
 install:  ## editable install with dev tooling
 	pip install -e ".[dev]"
@@ -23,6 +23,19 @@ format:  ## auto-format and apply safe lint fixes
 
 ui:  ## launch the Streamlit chat frontend (browser opens automatically)
 	PYTHONPATH=src streamlit run ui/chat_app.py
+
+api:  ## launch the Phase-2 FastAPI dev server (React frontend backend) on :8000
+	PYTHONPATH=src uvicorn stock_agent.api.app:app --reload --port 8000
+
+gen-tokens:  ## regenerate web/src/tokens.css from the Python design tokens (token bridge)
+	python scripts/gen_web_tokens.py
+
+web-install:  ## install the React app's node deps (pnpm)
+	cd web && pnpm install
+
+check-web:  ## web gate: token bridge fresh + tsc + vitest (kept separate from `make check` until the app is real)
+	python scripts/gen_web_tokens.py --check
+	cd web && pnpm typecheck && pnpm test
 
 pull-models:  ## download the latest CI-trained models + conformal.json into outputs/models/
 	@mkdir -p outputs/models

@@ -309,3 +309,39 @@ def theme_style_tag() -> str:
         f"{_COMPONENTS}"
     )
     return f"<style>\n{css}\n</style>"
+
+
+# Header stamped on the generated web token file so it's obviously not hand-edited.
+_WEB_TOKENS_HEADER = (
+    "/* AUTO-GENERATED — do not edit by hand.\n"
+    "   Source: src/stock_agent/ui/theme.py :: web_tokens_css()\n"
+    "   Regenerate: python scripts/gen_web_tokens.py\n"
+    "   (drift-guarded by tests/unit/test_token_bridge.py)\n"
+    "   Single source of truth for the --sa-* tokens shared by Streamlit + the React SPA. */\n"
+)
+
+
+def web_tokens_css() -> str:
+    """Return the full contents of ``web/src/tokens.css`` for the React SPA (Phase 2).
+
+    Pure and deterministic — the token bridge (PHASE2 plan §6). Emits both theme sets so the
+    React app gets the **real** light/dark toggle Streamlit R6.B only approximated:
+    ``:root`` carries the dark tokens (default) + the theme-independent structural tokens;
+    ``:root[data-theme="light"]`` overrides only the color tokens that differ. The toggle
+    flips ``document.documentElement.dataset.theme`` between ``"dark"``/``"light"``.
+
+    Trailing newline included so the file is POSIX-clean and byte-stable across regenerations.
+    """
+    dark_vars = _render_vars({**_DARK, **_STRUCTURAL}, indent="  ")
+    light_vars = _render_vars(_LIGHT, indent="  ")
+    return (
+        f"{_WEB_TOKENS_HEADER}\n"
+        ":root {\n"
+        "  color-scheme: dark;\n"
+        f"{dark_vars}\n"
+        "}\n\n"
+        ':root[data-theme="light"] {\n'
+        "  color-scheme: light;\n"
+        f"{light_vars}\n"
+        "}\n"
+    )

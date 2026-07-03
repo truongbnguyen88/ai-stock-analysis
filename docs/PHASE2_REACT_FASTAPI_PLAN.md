@@ -174,11 +174,33 @@ lockdown/containers are **out of scope** (a later phase if ever deployed).
 
 Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` for web) before the next.
 
-- **P2.0 — Scaffolding.** `web/` (Vite+TS+Tailwind+shadcn init, token bridge, theme toggle on a
-  static shell) and `src/stock_agent/api/` (FastAPI app, `/config` + `/corpus` only). No agent calls
-  yet. *Tests:* token-bridge parity test (web tokens == Python tokens); FastAPI `/config`,`/corpus`
-  contract tests (mocked settings). *DoD:* React shell renders the top bar + sidebar from live
-  `/config`/`/corpus`, theme toggle works.
+- **P2.0 — Scaffolding — ✅ DONE (2026-07-03).** `web/` (Vite + React + TS + Tailwind, token
+  bridge, `data-theme` toggle on a static shell) and `src/stock_agent/api/` (FastAPI app,
+  `/config` + `/corpus` only, CORS to the Vite origin). No agent calls yet.
+  - **Backend:** `api/{app,deps,schemas}.py` + `api/routes/meta.py` — thin adapters over
+    `corpus_status` + `DOMAIN_NAMES`/`AUTO_MODE`/settings key state (mirrors the Streamlit
+    sidebar, so the two frontends can't drift on what they show). `fastapi`+`uvicorn` added to
+    core deps (this is the phase that first needs them). Settings injected via
+    `dependency_overrides` in tests (no real `.env`).
+  - **Token bridge (decision (a) — generated):** CSS generation lives in the gated pure layer
+    (`theme.web_tokens_css()`, emits `:root` dark + `:root[data-theme="light"]`); thin writer
+    `scripts/gen_web_tokens.py`; `web/src/tokens.css` committed. `tailwind.config.ts` maps every
+    color to a `--sa-*` var → no hardcoded hex on the React side.
+  - **Web:** `TopBar` + `Sidebar` render from live `/config`+`/corpus`; `useTheme` flips
+    `document.documentElement.dataset.theme` (the instant toggle Streamlit R6.B only
+    approximated). pnpm; `make check-web` = token-bridge `--check` + `tsc --noEmit` + Vitest
+    (kept **separate** from `make check` until the app is real, per the Phase-2 decision).
+  - **Tests:** Python `tests/unit/test_api_meta.py` (5) + `test_token_bridge.py` (5, drift guard);
+    web `src/test/{tokens,shell}.test.tsx` (7 — render-from-API + instant toggle + API-error
+    surface). `make check` green (Python), `make check-web` green (tsc + 7 vitest).
+  - **Scope note:** shadcn/ui is **not** fully `init`-ed here (no `components.json` / component
+    fetch) — only its foundation (the `cn` util + the token-driven Tailwind theme). Radix/shadcn
+    components (`Popover`, etc.) are installed in the slice that first consumes them (P2.5),
+    avoiding dead deps (same "defer to the consuming phase" rule R0 used). `react-vega`/`Zustand`
+    likewise land in P2.3.
+  - *DoD:* ✅ React shell renders the top bar + sidebar from live `/config`/`/corpus`; theme
+    toggle works (unit-tested); API + Vite dev run together (live-smoked). Browser eyeball of the
+    styled shell is the one manual confirmation left (consistent with Phase-1's render-check notes).
 - **P2.1 — Event-emitting runtime (backend, no UI).** `agent/events.py`, `run_agent_events`,
   `run_agent` re-expressed as its drain. *Tests:* event-ordering test (§5) with `FakeLLM`+fake tools;
   regression — existing `run_agent` tests unchanged and green; grounding still rejects → `error` not

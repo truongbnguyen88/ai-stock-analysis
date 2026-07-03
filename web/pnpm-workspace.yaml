@@ -1,0 +1,4 @@
+# pnpm 11 gates package build scripts by default. esbuild (bundled by Vite/Vitest) needs its
+# install script to link the platform binary; allow it so the install doesn't abort.
+allowBuilds:
+  esbuild: true
