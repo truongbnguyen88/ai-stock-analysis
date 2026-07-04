@@ -38,12 +38,15 @@ def test_config_surfaces_domains_auto_and_default_ticker() -> None:
 
 def test_config_key_status_encodes_present_and_required() -> None:
     # Anthropic present + required; Finnhub present + optional; others missing + optional.
-    # All four set explicitly so a dev machine's real .env can't leak keys into the assertion.
+    # ``_env_file=None`` + explicit fields so a dev machine's real .env can't leak keys.
     settings = Settings(
+        _env_file=None,
         anthropic_api_key="sk-test",
         finnhub_api_key="fk",
         marketaux_api_key=None,
         alpha_vantage_api_key=None,
+        sec_user_agent="Tester test@example.com",
+        embedding_provider="local",
     )
     body = _client(settings).get("/config").json()
     keys = {k["label"]: k for k in body["keys"]}
@@ -52,10 +55,24 @@ def test_config_key_status_encodes_present_and_required() -> None:
     assert keys["Finnhub"] == {"label": "Finnhub", "present": True, "required": False}
     assert keys["Marketaux"]["present"] is False and keys["Marketaux"]["required"] is False
     assert keys["Alpha Vantage"]["present"] is False
+    # SEC EDGAR gates filing downloads — surfaced (optional); Voyage hidden under a local embedder.
+    assert keys["SEC EDGAR"] == {"label": "SEC EDGAR", "present": True, "required": False}
+    assert "Voyage" not in keys
+
+
+def test_config_shows_voyage_key_only_when_voyage_is_the_embedder() -> None:
+    voyage = _client(
+        Settings(_env_file=None, embedding_provider="voyage", voyage_api_key="vk")
+    ).get("/config").json()
+    vrow = next(k for k in voyage["keys"] if k["label"] == "Voyage")
+    assert vrow == {"label": "Voyage", "present": True, "required": False}
+
+    local = _client(Settings(_env_file=None, embedding_provider="local")).get("/config").json()
+    assert all(k["label"] != "Voyage" for k in local["keys"])
 
 
 def test_config_anthropic_missing_flags_required_key_absent() -> None:
-    body = _client(Settings(anthropic_api_key=None)).get("/config").json()
+    body = _client(Settings(_env_file=None, anthropic_api_key=None)).get("/config").json()
     anthropic = next(k for k in body["keys"] if k["label"] == "Anthropic")
     assert anthropic == {"label": "Anthropic", "present": False, "required": True}
 

@@ -20,6 +20,7 @@ from stock_agent.agent.router import DOMAIN_NAMES, DOMAINS
 from stock_agent.chat.history import ChatStore
 from stock_agent.rag.status import corpus_status
 from stock_agent.settings import Settings, get_settings
+from stock_agent.ui.keys import key_statuses
 from stock_agent.ui.html import (
     brand_block,
     corpus_freshness,
@@ -140,17 +141,9 @@ def render_sidebar(*, settings: Settings, store: ChatStore) -> RoutingChoice:
         st.caption(f"Saved for {settings.chat_history_retention_days} days.")
 
         # ---- keys as a chip row (present ✓ / required ✕ / optional ·) ----
+        # Set shared with the React /config endpoint via ui.keys.key_statuses (no drift).
         _html(eyebrow("Keys configured"))
-        _html(
-            keys_row(
-                [
-                    ("Anthropic", bool(settings.anthropic_api_key), True),
-                    ("Finnhub", bool(settings.finnhub_api_key), False),
-                    ("Marketaux", bool(settings.marketaux_api_key), False),
-                    ("Alpha Vantage", bool(settings.alpha_vantage_api_key), False),
-                ]
-            )
-        )
+        _html(keys_row(key_statuses(settings)))
 
     return RoutingChoice(
         ticker=ticker_input,

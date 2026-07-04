@@ -17,6 +17,7 @@ from stock_agent.api.deps import settings_dep
 from stock_agent.api.schemas import ConfigResponse, CorpusResponse, KeyStatus
 from stock_agent.rag.status import corpus_status
 from stock_agent.settings import Settings
+from stock_agent.ui.keys import key_statuses
 from stock_agent.ui.routing import AUTO_MODE
 
 # Default seed ticker for the sidebar field — matches the Streamlit sidebar's value="NVDA".
@@ -26,15 +27,14 @@ router = APIRouter()
 
 
 def _key_rows(settings: Settings) -> list[KeyStatus]:
-    """API-key availability, mirroring the Streamlit sidebar's ``keys_row`` set/order."""
-    # (label, present, required) — Anthropic required (LLM), the rest optional providers.
-    rows: list[tuple[str, bool, bool]] = [
-        ("Anthropic", bool(settings.anthropic_api_key), True),
-        ("Finnhub", bool(settings.finnhub_api_key), False),
-        ("Marketaux", bool(settings.marketaux_api_key), False),
-        ("Alpha Vantage", bool(settings.alpha_vantage_api_key), False),
+    """API-key availability — the same set/order the Streamlit sidebar shows.
+
+    Derived from ``ui.keys.key_statuses`` (single source of truth → the two frontends can't drift).
+    """
+    return [
+        KeyStatus(label=lbl, present=present, required=req)
+        for lbl, present, req in key_statuses(settings)
     ]
-    return [KeyStatus(label=lbl, present=present, required=req) for lbl, present, req in rows]
 
 
 @router.get("/config", response_model=ConfigResponse)
