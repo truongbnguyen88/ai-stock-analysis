@@ -52,7 +52,7 @@ Key choices:
 - **Providers normalize raw JSON → domain objects** at the boundary; business logic is provider-agnostic.
 - **Indicators / feature engineering are pure functions** over DataFrames → testable, leakage-free by construction when point-in-time discipline holds.
 - **Forecasting models share one interface** (`ForecastModel` Protocol: a `name` + `forecast(series, *, horizon_days, as_of) -> ScenarioForecast`) so baseline, Monte Carlo, and ML are swappable and directly comparable in backtests.
-- **Two front-ends, one core.** The CLI and the chat agent are independent entry points over the *same* `pipelines/` and `forecasting/` logic.
+- **Three front-ends, one core.** The CLI, the Streamlit app, and the **React SPA over a FastAPI streaming API** (`api/` + `web/`) are independent entry points over the *same* `pipelines/`, `agent/`, and `forecasting/` logic. All render the tools' numbers; none computes its own. Full frontend + streaming design in **§14**.
 - **A parallel RAG stack** (SEC filings → grounded research memo) follows the same downward-only dependency rule and the same numbers-vs-narrative invariant; it is reachable from both front-ends (`research` CLI; `search_filings` / `research_summary` agent tools). Full design in **§13**.
 
 ## 3. Three LLM roles (keep separate)
@@ -72,12 +72,18 @@ The chat agent is a **router, not a calculator**. Its only job: **intent → too
 
 ```
 src/stock_agent/agent/
-├── runtime.py    # tool-use loop (Anthropic SDK; prompt caching) — the LLM router/supervisor
-├── router.py     # hybrid routing: deterministic fast-path + delegate to runtime (no new LLM call)
+├── runtime.py    # tool-use loop (Anthropic SDK; prompt caching) — the LLM router/supervisor;
+│                 #   also `run_agent_events` (streaming generator) + `AnthropicToolClient.stream`
+├── events.py     # `AgentEvent` discriminated union + `to_wire()` (the SSE frame contract; see §14)
+├── router.py     # hybrid routing: deterministic fast-path + delegate to runtime (no new LLM call);
+│                 #   `Router.run_events` mirrors `run` for the streaming API
+├── classifier.py # domain/route classification helper
 ├── tools.py      # tool schemas → thin wrappers over pipelines/forecasting/backtesting
 ├── prompts/      # system prompt + numbers-vs-narrative rules
 └── guards.py     # numeric-grounding check on agent output
 ```
+
+`run_agent` is now the **drain** of `run_agent_events` (one loop, two callers) — the synchronous CLI/Streamlit path and the streaming API path can't diverge in behavior. See §14.
 
 ### Exposed tools (thin wrappers; no logic duplication)
 
@@ -167,17 +173,20 @@ ai-stock-analysis/
 │   │                            #   ensemble · quantiles · conformal(+_calibrate · train_conformal) · large_move · verify · regime
 │   ├── backtesting/             # splitter · runner · metrics · calibration
 │   ├── reports/                 # builder · render_md
-│   ├── agent/                   # runtime · tools · prompts · guards
+│   ├── agent/                   # runtime (+ run_agent_events streaming generator · AnthropicToolClient.stream) · events (AgentEvent union) · router (+ run_events) · classifier · tools · prompts · guards
 │   ├── pipelines/               # analyze · forecast · backtest · research (SEC memo)
+│   ├── ui/                       # PURE view layer (typed, gate-tested, no Streamlit import): theme (design tokens + web_tokens_css) · html · tiles · chart_theme · state · routing · capabilities
+│   ├── api/                      # FastAPI streaming backend (thin, downward-only): app · deps · schemas · streaming (AgentEvent→SSE) · routes/{chat,threads,export,meta}
 │   └── cli/                     # app.py (analyze · forecast · backtest · train · conformal-calibrate · verify-models · ingest-news · chat · documents download-sec/ingest · rag query/eval · research)
 ├── configs/  (default.yaml · models.yaml · providers.yaml · universe.txt · ticker_aliases.json)
-├── ui/                          # chat_app.py (Streamlit frontend)
-├── scripts/                     # one-off tools (cost est. · validate_news/ensemble/xgboost experiments)
+├── ui/                          # Streamlit frontend (view code, ungated): chat_app.py · session.py · components/{sidebar,hero,message,inputs}.py  (imports the pure src/stock_agent/ui layer)
+├── web/                         # React SPA (Vite + TS + Tailwind + shadcn/ui): src/{components,lib,store,styles} · tokens.css (generated from ui.theme) — talks only to api/ over HTTP/SSE
+├── scripts/                     # one-off tools (cost est. · gen_web_tokens.py [token bridge] · validate_news/ensemble/xgboost experiments)
 ├── tests/  (unit · integration · data · fixtures)
 ├── notebooks/                   # exploration only — no core logic
 ├── outputs/  (reports · experiments · models [+conformal.json] · news_sentiment — gitignored)
 ├── data/     (raw [SEC filings] · processed · vectorstore [Chroma] — gitignored; the RAG corpus)
-└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST · app_enhancements · RAG_TODO · RAG_IMPLEMENTATION_PLAN · rag_concepts · rag_implementation_notes)
+└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST · app_enhancements · APP_REDESIGN · PHASE2_REACT_FASTAPI_PLAN · RAG_TODO · RAG_IMPLEMENTATION_PLAN · rag_concepts · rag_implementation_notes)
 ```
 
 ## 6. Module responsibilities
@@ -202,6 +211,8 @@ ai-stock-analysis/
 | `agent` | NL → tool calls → grounded narration | Router not calculator; numeric-grounding guard |
 | `pipelines` | Compose modules into use-cases | Thin; no business logic |
 | `cli` | Args → pipeline dispatch | Thin; validation in schemas |
+| `ui` (pure) | Design tokens + display transforms (tiles, chart theme, routing chips, (de)serialize) | No Streamlit/HTTP import; typed + gate-tested; single token source for both web apps |
+| `api` | HTTP/SSE surface: validate request → run router/streaming runtime → adapt `AgentEvent` → SSE frames | Thin like `cli`; depends downward only; grounding guard runs before terminal event |
 
 ## 7. Provider abstraction
 
@@ -408,3 +419,78 @@ corpus = SEC filings only (transcripts / decks / GraphRAG (A5) / retrieval-RL (A
 As shipped: ~3 years of 10-K/10-Q/8-K across the universe (≈93k chunks, with a backfilled BM25 index)
 embedded with **voyage-4** in production (local BGE collection retained as fallback); the production
 embedder is selected by `EMBEDDING_PROVIDER` in `.env`.
+
+## 14. Frontend & streaming API layer
+
+The tool never changed what it *computes*; it grew a second, richer way to *present* it. Two web
+front-ends sit over the unchanged core, plus the scriptable CLI. Full plans + build history:
+[APP_REDESIGN.md](APP_REDESIGN.md) (Streamlit restyle) and
+[PHASE2_REACT_FASTAPI_PLAN.md](PHASE2_REACT_FASTAPI_PLAN.md) (React + FastAPI, the plan of record).
+
+### Two web front-ends, one design system
+
+- **Streamlit** (`ui/`, reference/fallback) — a restyled chat app (**brass-on-ink**, mono-as-label,
+  semantic-hue capability/tile colors), refactored from a 576-line monolith into a thin entrypoint +
+  a `ui/components/` package. **Dark-only** (Streamlit can't switch its own chrome theme from Python).
+- **React + FastAPI** (`web/` + `api/`, primary) — a streaming SPA that clears the four interactions
+  above Streamlit's ceiling: **live per-tool trace**, **token-by-token answer streaming**, an
+  **instant client-side light/dark toggle**, and an **export popover + top-bar context chips**.
+
+**Design-system token bridge (zero drift).** The brass-on-ink tokens live once in the pure
+`stock_agent.ui.theme`. `theme.web_tokens_css()` emits the `:root` dark + `[data-theme="light"]` var
+blocks; `scripts/gen_web_tokens.py` writes `web/src/tokens.css` (committed, `--check`-guarded in CI),
+and Tailwind maps every color to a `--sa-*` var. So Streamlit and React render the *same* palette by
+construction — neither side hardcodes hex, and a token change fails CI until the bridge is regenerated.
+
+### Event-emitting runtime (the one real backend change)
+
+Streaming needed the agent loop to *yield as it goes* without forking behavior. The loop body was
+extracted into a generator, and the synchronous entry point re-expressed as its drain:
+
+- `run_agent_events(...) -> Iterator[AgentEvent]` yields at points that already existed —
+  `tool_start`/`tool_finish` around each execution, `token` deltas on the answer turn, then `final`
+  **or** `error`. `run_agent(...) = drain(run_agent_events(...))`, so existing runtime/router tests
+  still pin behavior and the two paths cannot diverge.
+- `Router.run_events(...)` mirrors `Router.run`: it owns `turn_start` + `route_decided`; deterministic
+  routes dispatch one tool and emit a one-shot answer; `auto` delegates to `run_agent_events`.
+- **LLM streaming** is a Protocol extension: `AnthropicToolClient.stream(...)` drives
+  `client.messages.stream(...)`; create-only fakes fall back to a single delta, so every offline test
+  fake keeps working (no network in CI).
+- `tiles`/`chart`/`sources` are **not** emitted by the runtime/router (they must not import `ui`/`viz`,
+  which would cycle with Streamlit) — the API adapter (`api/streaming.py`) builds them from the tool
+  results via the same pure functions Streamlit uses (`ui.tiles`, `viz.charts`, `ui.state`).
+
+**`AgentEvent`** (`agent/events.py`, JSON-serialized via `to_wire()` — the SSE frame contract):
+`turn_start · route_decided · tool_start · tool_finish · tiles · chart · token · sources · final ·
+error`. `tiles`/`chart`/`sources` derive from tool results (grounded); `token` is *provisional*.
+
+### Stream ordering contract (correctness-critical)
+
+```
+turn_start → route_decided → (tool_start, tool_finish)* → tiles → chart* → token* → sources → final
+                                                                                       └─(or)→ error
+```
+
+- Tiles/chart/sources are emitted **after all tools finish** (functions of the complete invocation
+  list) and around the token stream, so the client renders **summary-before-detail** (tiles above the
+  prose), matching the design.
+- **Grounding still runs server-side before `final`.** Tokens stream only *after* the whole answer is
+  assembled and the numeric-grounding guard clears; a rejected answer emits `error` (never `final`) and
+  the client **discards the provisional tokens** — an ungrounded figure never reaches the user, even
+  transiently. (True live-*during*-generation typing is intentionally deferred: it conflicts with the
+  guard-needs-the-whole-answer and tiles-precede-prose invariants — see PHASE2 §8 P2.4.)
+
+### API surface (FastAPI, local-dev)
+
+`POST /chat/stream` (SSE), `GET/POST/DELETE /threads[/{id}]` (display-level persistence over
+`ChatStore`), `POST /export` (pdf/docx/md via `reports.export`), `GET /corpus` (`rag.status`),
+`GET /config` (routing modes + key availability). Thin like `cli/`; **downward-only** (`api/` →
+agent/pipelines/core → providers), nothing depends on it. Local-dev posture (uvicorn on localhost,
+permissive CORS to the Vite origin, no auth) — auth/HTTPS/containers are out of scope this phase.
+
+### Invariants (unchanged by the frontend)
+
+Numbers-from-tools, grounding-before-final, non-advisory (**no recommendation field** in any payload),
+citations-from-tool-output, dependency-direction-downward all hold. Both web apps consume the same pure
+builders (`tiles_for`/`charts_for`/`ChartSpec`), so **they cannot drift on numbers** — a cross-stack
+golden fixture asserts the Python adapter and the React reducer fold the identical event stream.

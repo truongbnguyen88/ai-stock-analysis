@@ -132,6 +132,28 @@ invariants as the forecasting core (numbers from models, non-advisory, no scrapi
   [ARCHITECTURE.md §4](ARCHITECTURE.md).
 - **Out of scope (still future):** earnings transcripts, investor decks, QoQ document comparison.
 
+## Frontend track (UI redesign + React/FastAPI) — separate track ✅
+
+A view-layer track parallel to the modeling/RAG work: make the app look and feel like a polished
+quant-research instrument **without changing what it computes** (every number still comes from the
+tools; the grounding guard is unchanged). Plans + build history:
+[APP_REDESIGN.md](APP_REDESIGN.md) · [PHASE2_REACT_FASTAPI_PLAN.md](PHASE2_REACT_FASTAPI_PLAN.md);
+architecture in [ARCHITECTURE.md §14](ARCHITECTURE.md).
+
+- **Phase 1 — Streamlit restyle (R0–R6) ✅** — brass-on-ink design system (tokens + mono typography +
+  semantic hues), the 576-line monolith refactored into a thin entrypoint + `ui/components/` package,
+  every surface polished (sidebar, hero, chat tiles/trace/sources/export, charts, composer). Behavior
+  fully preserved (§6 contract). **Dark-only** — Streamlit can't switch its own chrome theme from
+  Python, so first-class light mode moved to Phase 2.
+- **Phase 2 — React + FastAPI (P2.0–P2.6) ✅** — the *primary* UI, clearing the four interactions above
+  Streamlit's ceiling: **live per-tool trace**, **token streaming**, **instant client-side light/dark
+  toggle**, **export popover + top-bar chips**. New top-level `api/` (FastAPI, SSE) over an
+  event-emitting runtime (`run_agent_events`, `Router.run_events`, `AgentEvent` union) and a new
+  React SPA (`web/`, Vite + TS + Tailwind + shadcn/ui, react-vega). Streamlit kept runnable as a
+  reference/fallback until React fully retires it. Both web apps share one token source (the generated
+  `web/src/tokens.css` bridge), so their palettes can't drift; a cross-stack golden keeps their numbers
+  identical. Grounding still runs server-side before any answer is finalized.
+
 ## CLI / chat surface
 
 ```bash
@@ -155,8 +177,10 @@ python -m stock_agent chat                                    # LLM routing (pic
 > What are NVDA's key risk factors per its latest 10-K?
 python -m stock_agent chat --domain predictions --variant big-move --ticker NVDA  # deterministic (no routing LLM call)
 
-# Browser chat frontend (Streamlit)
-make ui   # → http://localhost:8501
+# Browser chat frontends (see ARCHITECTURE.md §14)
+make ui                                     # Streamlit (dark-only, brass-on-ink) → http://localhost:8501
+make api                                     # FastAPI streaming backend (SSE)    → http://localhost:8000
+make web-install && (cd web && pnpm dev)     # React SPA (streaming, light+dark)   → http://localhost:5173
 ```
 
 ## Notes / open decisions
@@ -164,5 +188,5 @@ make ui   # → http://localhost:8501
 - **CLI framework:** Typer (Annotated style; a `@app.callback()` keeps subcommand names).
 - **LLM integration:** Phases 3, 4.5, 6.5 use the `claude-api` skill with prompt caching (news context is large and reused across report sections and chat turns).
 - **Heavy agent tools:** `run_backtest` / `get_calibration` can be slow; runtime should stream progress and bound arguments (max horizon, max window) to keep chat responsive.
-- **UI (added, off-roadmap):** `ui/chat_app.py` — Streamlit chat over the agent; threads conversation history (stateful). Launch with `make ui`.
+- **Frontend track (see above + ARCHITECTURE.md §14):** two web front-ends over the unchanged core — a restyled **Streamlit** app (`ui/`, dark-only) and the primary **React + FastAPI** streaming SPA (`web/` + `api/`, light+dark). Launch: `make ui` / `make api` + `(cd web && pnpm dev)`.
 - **ML artifacts:** pooled models persist to `outputs/models/` (gitignored); `forecast --model <ml>` falls back to historical-sim until you `train`.

@@ -53,8 +53,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
   Domains: `predictions`, `news`, `filings`, `technicals`, `brief`, each with `--variant`
   (e.g. `chat --domain predictions --variant big-move --ticker NVDA`;
   `chat --domain filings --variant multi "compare NVDA and AMD risks"`). `--tool <route>`
-  is the advanced exact-route escape hatch. The Streamlit app (`streamlit run ui/chat_app.py`)
-  exposes the same choice as a sidebar **Routing** selector — Auto, or a domain + variant.
+  is the advanced exact-route escape hatch. Both web frontends (Streamlit and the React app — see
+  [Frontends](#frontends)) expose the same choice as a sidebar **Routing** selector — Auto, or a
+  domain + variant.
 - **`research`** — a **SEC-grounded equity research memo** (RAG): fuses filings
   (10-K/10-Q/8-K) + news + the forecast into one cited, non-advisory brief. Retrieval is
   100% local; every filing claim carries a citation, and a citation + number guard rejects
@@ -62,6 +63,28 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **`documents` / `rag`** — manage the SEC corpus: `documents download-sec` (official EDGAR
   API) → `documents ingest` (parse → chunk → embed → store) → `rag query` (grounded filing QA)
   or `rag ask` (multi-hop ReAct research; `--single` for one-shot).
+
+## Frontends
+
+Three ways in, one core — the front-ends only display and route; **every number still comes from the
+tools**, and the numeric-grounding guard runs before any answer is finalized.
+
+- **CLI** — scriptable, reproducible (`analyze` / `forecast` / `backtest` / `chat` / `research` …).
+- **React + FastAPI** (primary) — a streaming single-page app (`web/`, Vite + React + TS + Tailwind +
+  shadcn/ui) over a thin FastAPI backend (`src/stock_agent/api/`, Server-Sent Events). Live per-tool
+  trace, token-by-token answers, an instant client-side light/dark toggle, an export popover, and
+  top-bar context chips. The backend depends **downward only** (`api/` → agent/pipelines/core), streams
+  an `AgentEvent` union from an event-emitting runtime (`run_agent_events`), and enforces the same
+  grounding guard server-side before the terminal event.
+- **Streamlit** — the reference/fallback chat app (`streamlit run ui/chat_app.py` / `make ui`),
+  brass-on-ink, **dark-only**; kept runnable until the React app fully retires it.
+
+Both web apps share the **brass-on-ink** design system. Tokens live once in
+`src/stock_agent/ui/theme.py`; the React token bridge (`web/src/tokens.css`) is **generated** from them
+(`make gen-tokens`, drift-guarded in CI), so the two palettes can't diverge. Design system + build
+history: [docs/APP_REDESIGN.md](docs/APP_REDESIGN.md) (Streamlit restyle, phases R0–R6) ·
+[docs/PHASE2_REACT_FASTAPI_PLAN.md](docs/PHASE2_REACT_FASTAPI_PLAN.md) (React + FastAPI, the streaming
+event schema + API surface).
 
 ## Quickstart
 
@@ -85,7 +108,9 @@ python -m stock_agent forecast --ticker MSFT --horizon 30           # default mo
 python -m stock_agent forecast --ticker MSFT --horizon 30 --model monte_carlo_garch  # or pick one
 python -m stock_agent backtest --ticker AAPL
 python -m stock_agent chat                 # conversational agent (CLI)
-make ui                                     # Streamlit chat frontend (brass-on-ink, dark-only; light mode is Phase 2 — see docs/APP_REDESIGN.md)
+make ui                                     # Streamlit chat frontend (brass-on-ink, dark-only)
+make api                                     # FastAPI backend (SSE) on :8000 — the React app's server
+make web-install && (cd web && pnpm dev)     # React SPA (Vite) on :5173 — streaming, light+dark; run alongside `make api`
 
 # 5. SEC-grounded research (RAG) — optional; needs the [rag] extra + SEC_USER_AGENT
 python -m stock_agent documents download-sec --all --years 3   # official EDGAR API (free)
@@ -151,6 +176,7 @@ canned responses) — no live API calls in tests.
 | [docs/models_explanation.md](docs/models_explanation.md) | Every forecasting model, math, assumptions, failure modes |
 | [docs/validations_results.md](docs/validations_results.md) | Backtest / tuning / calibration results |
 | [docs/RAG_TODO.md](docs/RAG_TODO.md) · [docs/rag_concepts.md](docs/rag_concepts.md) · [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md) | SEC-grounded RAG layer: build plan, concepts, per-phase mechanism notes |
+| [docs/APP_REDESIGN.md](docs/APP_REDESIGN.md) · [docs/PHASE2_REACT_FASTAPI_PLAN.md](docs/PHASE2_REACT_FASTAPI_PLAN.md) | Frontend redesign: brass-on-ink Streamlit restyle + the React/FastAPI streaming app (event schema, API surface) |
 | [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/TASKS.md](docs/TASKS.md) | Build plan + progress log |
 
 ## Data & secrets
