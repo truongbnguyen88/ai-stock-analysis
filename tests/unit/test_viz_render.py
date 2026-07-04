@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-from stock_agent.ui.chart_theme import CATEGORY_PALETTE, MARK_COLOR, altair_config
+from stock_agent.ui.chart_theme import (
+    CATEGORY_PALETTE,
+    DOWN_COLOR,
+    MARK_COLOR,
+    UP_COLOR,
+    altair_config,
+)
 from stock_agent.ui.theme import mono_font_stack
 from stock_agent.viz.charts import ChartSpec
 from stock_agent.viz.render import to_altair, to_png
@@ -49,6 +55,34 @@ def test_to_altair_carries_title_and_data() -> None:
 def test_single_bar_uses_brass_accent() -> None:
     mark = to_altair(_bar()).to_dict()["mark"]
     assert mark["color"] == MARK_COLOR  # brass single-series bar (semantic palette)
+
+
+def test_direction_bar_colors_up_green_down_red_neutral_brass() -> None:
+    # A "bar" with a `direction` column (e.g. the large-move up/down tail split) tints each bar
+    # from the tool's own direction — not a flat fill — via an up/down/neutral color scale.
+    spec = ChartSpec(
+        title="Large-move breakdown",
+        kind="bar",
+        data=pd.DataFrame(
+            {
+                "outcome": ["Big up", "No big move", "Big down"],
+                "probability": [0.2, 0.65, 0.15],
+                "direction": ["up", "neutral", "down"],
+            }
+        ),
+        x="outcome",
+        y="probability",
+        y_is_percent=True,
+        direction="direction",
+    )
+    d = to_altair(spec).to_dict()
+    color = d["encoding"]["color"]
+    assert color["field"] == "direction"
+    assert color["scale"]["domain"] == ["up", "down", "neutral"]
+    assert color["scale"]["range"] == [UP_COLOR, DOWN_COLOR, MARK_COLOR]
+    # Direction drives the fill via the color encoding, not a flat mark color.
+    mark = d["mark"]
+    assert mark == "bar" or (isinstance(mark, dict) and "color" not in mark)
 
 
 def test_percent_axis_still_honored_under_theme() -> None:

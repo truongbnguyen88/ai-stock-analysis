@@ -33,6 +33,9 @@ class ChartSpec:
     color: str | None = None  # grouping column (grouped_bar only)
     x_sort: tuple[str, ...] | None = None  # explicit category order (Altair sorts alpha otherwise)
     y_is_percent: bool = False  # format/scale y as a percentage in the UI
+    direction: str | None = None  # "bar" only: column of "up"/"down"/"neutral" tinting each bar
+    # green/red/brass. Set ONLY from tool numbers (e.g. the get_large_move up-/down-tail split),
+    # never the LLM — so the §2 signaling rule holds (color = figure, not narrative).
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe form (for persisting a chat thread); DataFrame -> column lists."""
@@ -45,6 +48,7 @@ class ChartSpec:
             "color": self.color,
             "x_sort": list(self.x_sort) if self.x_sort is not None else None,
             "y_is_percent": self.y_is_percent,
+            "direction": self.direction,
             "data": self.data.to_dict(orient="list"),
         }
 
@@ -61,6 +65,7 @@ class ChartSpec:
             color=d.get("color"),
             x_sort=tuple(d["x_sort"]) if d.get("x_sort") else None,
             y_is_percent=bool(d.get("y_is_percent", False)),
+            direction=d.get("direction"),
         )
 
 
@@ -118,7 +123,16 @@ def _large_move_chart(r: dict[str, Any]) -> ChartSpec | None:
         return None
     k = r.get("threshold_pct") or int(round(float(r.get("threshold", 0.10)) * 100))
     labels = (f"Big up (>+{k}%)", "No big move", f"Big down (<-{k}%)")
-    df = pd.DataFrame({"outcome": list(labels), "probability": [up, max(0.0, 1.0 - total), down]})
+    # Per-bar direction from the tool's own tail split (up-tail green, down-tail red, middle
+    # neutral) — the numbers came from the model, so tinting them honors the §2 signaling rule.
+    directions = ("up", "neutral", "down")
+    df = pd.DataFrame(
+        {
+            "outcome": list(labels),
+            "probability": [up, max(0.0, 1.0 - total), down],
+            "direction": list(directions),
+        }
+    )
     htxt = f", {r['horizon_days']}-day" if r.get("horizon_days") is not None else ""
     return ChartSpec(
         title=f"Large-move breakdown (±{k}%{htxt})",
@@ -128,6 +142,7 @@ def _large_move_chart(r: dict[str, Any]) -> ChartSpec | None:
         y="probability",
         x_sort=labels,
         y_is_percent=True,
+        direction="direction",
         caption="P(|return| > k) split by tail; 'No big move' is the complement.",
     )
 

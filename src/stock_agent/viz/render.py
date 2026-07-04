@@ -12,9 +12,11 @@ from typing import Any
 
 from stock_agent.ui.chart_theme import (
     CATEGORY_PALETTE,
+    DOWN_COLOR,
     MARK_COLOR,
     POINT_COLOR,
     REFERENCE_COLOR,
+    UP_COLOR,
     altair_config,
 )
 from stock_agent.viz.charts import ChartSpec
@@ -62,7 +64,22 @@ def to_altair(spec: ChartSpec) -> Any:
             xOffset=f"{spec.color}:N",
             tooltip=list(spec.data.columns),
         )
-    else:  # "bar"
+    elif spec.direction:  # "bar" with per-bar direction: up=green, down=red, neutral=brass
+        chart = alt.Chart(spec.data).mark_bar().encode(
+            x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
+            y=y_enc,
+            color=alt.Color(
+                f"{spec.direction}:N",
+                title=None,
+                legend=None,  # colors are self-evident (up/down tails); no legend clutter
+                scale=alt.Scale(
+                    domain=["up", "down", "neutral"],
+                    range=[UP_COLOR, DOWN_COLOR, MARK_COLOR],
+                ),
+            ),
+            tooltip=list(spec.data.columns),
+        )
+    else:  # "bar" (single-series brass)
         chart = alt.Chart(spec.data).mark_bar(color=MARK_COLOR).encode(
             x=alt.X(f"{spec.x}:N", sort=x_sort, title=None),
             y=y_enc,
