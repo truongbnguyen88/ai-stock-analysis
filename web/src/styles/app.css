@@ -832,9 +832,9 @@
 
 /* ── empty-state hero ────────────────────────────────────────────────────── */
 .hero {
-  max-width: 760px;
+  max-width: 860px;
   margin: 0 auto;
-  padding: 46px 26px 20px;
+  padding: 34px 26px 22px;
 }
 .hero .eyebrow {
   text-align: center;
@@ -870,19 +870,21 @@
 .hero .sub b {
   color: var(--sa-text);
 }
+/* auto-fill + minmax: 3 columns at the hero's full width, reflowing to 2 then 1 as it narrows — so all
+   11 compact cards fit without a fixed column count. */
 .capgrid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
+  gap: 8px;
 }
 .capcard {
   border: 1px solid var(--sa-border);
   border-radius: var(--sa-r);
   background: var(--sa-surface);
-  padding: 14px;
+  padding: 10px 11px;
   cursor: pointer;
   display: flex;
-  gap: 12px;
+  gap: 10px;
   align-items: flex-start;
   text-align: left;
   font-family: inherit; /* rendered as a <button> — inherit the app sans, not the UA button font */
@@ -895,26 +897,26 @@
   border-color: color-mix(in srgb, var(--bc, var(--sa-accent)) 45%, var(--sa-border));
 }
 .capcard .badge {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
   flex-shrink: 0;
   background: color-mix(in srgb, var(--bc, var(--sa-accent)) 15%, transparent);
   color: var(--bc, var(--sa-accent));
   display: grid;
   place-items: center;
-  font-size: 15px;
+  font-size: 13px;
   border: 1px solid color-mix(in srgb, var(--bc, var(--sa-accent)) 38%, transparent);
 }
 .capcard .ct {
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 600;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 .capcard .cb {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--sa-muted);
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
 .view {
@@ -958,7 +960,5 @@
   .tiles {
     grid-template-columns: 1fr 1fr;
   }
-  .capgrid {
-    grid-template-columns: 1fr;
-  }
+  /* .capgrid intentionally omitted here — its auto-fill/minmax already reflows on narrow widths. */
 }

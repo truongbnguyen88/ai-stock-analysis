@@ -70,10 +70,13 @@ describe("empty-state hero", () => {
     render(<App />);
     await waitFor(() => expect(screen.getByLabelText("Ticker symbol")).toHaveValue("NVDA"));
 
-    // Eyebrow tagline + two collision-free capability titles (sidebar starters use other labels).
+    // Eyebrow tagline + collision-free capability titles (sidebar starters use other labels). The
+    // last two are among the 5 restored for full tool parity with the Streamlit empty state.
     expect(screen.getByText("SEC-grounded")).toBeInTheDocument();
     expect(screen.getByText("Probabilistic forecasts")).toBeInTheDocument();
     expect(screen.getByText("Chance of a big move")).toBeInTheDocument();
+    expect(screen.getByText("Executive research brief")).toBeInTheDocument();
+    expect(screen.getByText("Analyze a theme's news")).toBeInTheDocument();
     // The hero IS the "new chat" view → NEW CHAT is the pressed segment.
     expect(screen.getByRole("button", { name: "NEW CHAT" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "CONVERSATION" })).toHaveAttribute(
