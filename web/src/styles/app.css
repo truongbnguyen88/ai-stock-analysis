@@ -832,7 +832,7 @@
 
 /* ── empty-state hero ────────────────────────────────────────────────────── */
 .hero {
-  max-width: 860px;
+  max-width: 820px;
   margin: 0 auto;
   padding: 34px 26px 22px;
 }
@@ -870,14 +870,24 @@
 .hero .sub b {
   color: var(--sa-text);
 }
-/* auto-fill + minmax: 3 columns at the hero's full width, reflowing to 2 then 1 as it narrows — so all
-   11 compact cards fit without a fixed column count. */
+/* auto-fill + minmax: ~2 columns at the hero's full width, reflowing to 1 as it narrows. `align-items:
+   start` is load-bearing for the accordion — each cell is top-aligned (not stretched), so an open
+   category's children (rendered INSIDE its cell) simply make that cell taller, pushing rows below it
+   down while its row-mate stays put. No full-width span or JS layout math needed. */
 .capgrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  align-items: start;
   gap: 8px;
 }
+/* Grid cell = a category container (header button + optional inline children panel). `--bc` (the hue)
+   is set here so the badge, chevron, and children panel all inherit one tint. */
+.capcard-wrap {
+  display: flex;
+  flex-direction: column;
+}
 .capcard {
+  width: 100%;
   border: 1px solid var(--sa-border);
   border-radius: var(--sa-r);
   background: var(--sa-surface);
@@ -896,6 +906,12 @@
   transform: translateY(-1px);
   border-color: color-mix(in srgb, var(--bc, var(--sa-accent)) 45%, var(--sa-border));
 }
+/* Open category header: tinted + no lift, reading as the accordion's active row. */
+.capcard[aria-expanded="true"] {
+  background: var(--sa-surface-2);
+  transform: none;
+  border-color: color-mix(in srgb, var(--bc, var(--sa-accent)) 45%, var(--sa-border));
+}
 .capcard .badge {
   width: 26px;
   height: 26px;
@@ -908,6 +924,10 @@
   font-size: 13px;
   border: 1px solid color-mix(in srgb, var(--bc, var(--sa-accent)) 38%, transparent);
 }
+.cap-txt {
+  flex: 1; /* take the row so the chevron sits flush right */
+  min-width: 0; /* allow the body text to wrap instead of overflowing the cell */
+}
 .capcard .ct {
   font-size: 12.5px;
   font-weight: 600;
@@ -917,6 +937,52 @@
   font-size: 11px;
   color: var(--sa-muted);
   line-height: 1.4;
+}
+.capcard .chev {
+  align-self: center;
+  flex-shrink: 0;
+  color: var(--sa-muted);
+  font-size: 17px;
+  line-height: 1;
+  transition: transform 0.15s;
+}
+.capcard .chev[data-open="true"] {
+  transform: rotate(90deg); /* › → ⌄ : points down when the category is open */
+  color: var(--bc, var(--sa-accent));
+}
+/* Inline accordion panel: the category's child prompts, indented under a hue rail. */
+.subcards {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 2px 12px;
+  padding-left: 10px;
+  border-left: 2px solid color-mix(in srgb, var(--bc, var(--sa-accent)) 45%, var(--sa-border));
+}
+.subcard {
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  transition: background 0.12s, border-color 0.12s;
+}
+.subcard:hover {
+  background: var(--sa-surface);
+  border-color: color-mix(in srgb, var(--bc, var(--sa-accent)) 35%, var(--sa-border));
+}
+.subcard .sct {
+  font-size: 12px;
+  font-weight: 600;
+}
+.subcard .scb {
+  font-size: 11px;
+  color: var(--sa-muted);
+  line-height: 1.35;
+  margin-top: 1px;
 }
 
 .view {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "@/App";
@@ -66,17 +66,26 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("empty-state hero", () => {
-  it("shows the hero + capability cards on an empty conversation, with NEW CHAT active", async () => {
+  it("shows the five capability cards with children collapsed, and NEW CHAT active", async () => {
     render(<App />);
     await waitFor(() => expect(screen.getByLabelText("Ticker symbol")).toHaveValue("NVDA"));
+    // Scope to the hero so the sidebar's "Technical analysis" quick-starter namesake can't collide.
+    const hero = within(screen.getByTestId("hero"));
 
-    // Eyebrow tagline + collision-free capability titles (sidebar starters use other labels). The
-    // last two are among the 5 restored for full tool parity with the Streamlit empty state.
-    expect(screen.getByText("SEC-grounded")).toBeInTheDocument();
-    expect(screen.getByText("Probabilistic forecasts")).toBeInTheDocument();
-    expect(screen.getByText("Chance of a big move")).toBeInTheDocument();
-    expect(screen.getByText("Executive research brief")).toBeInTheDocument();
-    expect(screen.getByText("Analyze a theme's news")).toBeInTheDocument();
+    expect(hero.getByText("SEC-grounded")).toBeInTheDocument();
+    for (const title of [
+      "Technical analysis",
+      "SEC filings",
+      "Forecasts & odds",
+      "News & sentiment",
+      "Research briefs",
+    ]) {
+      expect(hero.getByText(title)).toBeInTheDocument();
+    }
+    // Child prompts live one click deep — not in the DOM until their category expands.
+    expect(hero.queryByText("Chance of a big move")).toBeNull();
+    expect(hero.queryByText("Executive research brief")).toBeNull();
+
     // The hero IS the "new chat" view → NEW CHAT is the pressed segment.
     expect(screen.getByRole("button", { name: "NEW CHAT" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "CONVERSATION" })).toHaveAttribute(
@@ -85,15 +94,20 @@ describe("empty-state hero", () => {
     );
   });
 
-  it("a capability card dispatches its canned prompt and switches to the conversation", async () => {
+  it("expands a category to reveal its child prompts, and a child dispatches + switches view", async () => {
     stubStream(FORECAST_TURN);
     render(<App />);
     await waitFor(() => expect(screen.getByLabelText("Ticker symbol")).toHaveValue("NVDA"));
+    const hero = within(screen.getByTestId("hero"));
 
-    // "Chance of a big move" has no sidebar-starter namesake → unambiguous button match.
-    await userEvent.click(screen.getByRole("button", { name: /Chance of a big move/ }));
+    // "Forecasts & odds" starts collapsed; clicking it opens the accordion.
+    const cat = hero.getByRole("button", { name: /Forecasts & odds/ });
+    expect(cat).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(cat);
+    expect(cat).toHaveAttribute("aria-expanded", "true");
 
-    // The card's prompt becomes the user bubble; the hero gives way to the folded turn.
+    // A revealed child dispatches its canned prompt → user bubble; the hero gives way to the turn.
+    await userEvent.click(await hero.findByRole("button", { name: /Chance of a big move/ }));
     await waitFor(() =>
       expect(screen.getByText(/chance of a big move in NVDA/i)).toBeInTheDocument(),
     );
@@ -102,6 +116,38 @@ describe("empty-state hero", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  it("the Technical analysis card is a leaf — it dispatches immediately, no expand", async () => {
+    stubStream(FORECAST_TURN);
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText("Ticker symbol")).toHaveValue("NVDA"));
+    const hero = within(screen.getByTestId("hero"));
+
+    const card = hero.getByRole("button", { name: /Technical analysis/ });
+    expect(card).not.toHaveAttribute("aria-expanded"); // leaf, not an accordion toggle
+    await userEvent.click(card);
+
+    await waitFor(() =>
+      expect(screen.getByText(/technical analysis of NVDA/i)).toBeInTheDocument(),
+    );
+    expect(screen.queryByText("SEC-grounded")).not.toBeInTheDocument();
+  });
+
+  it("single-open accordion: opening a second category closes the first", async () => {
+    render(<App />);
+    await waitFor(() => expect(screen.getByLabelText("Ticker symbol")).toHaveValue("NVDA"));
+    const hero = within(screen.getByTestId("hero"));
+
+    await userEvent.click(hero.getByRole("button", { name: /SEC filings/ }));
+    expect(
+      await hero.findByRole("button", { name: /Multi-hop filing research/ }),
+    ).toBeInTheDocument();
+
+    // Opening another category collapses the first (single-open).
+    await userEvent.click(hero.getByRole("button", { name: /News & sentiment/ }));
+    expect(await hero.findByRole("button", { name: /News synthesis/ })).toBeInTheDocument();
+    expect(hero.queryByRole("button", { name: /Multi-hop filing research/ })).toBeNull();
   });
 
   it("NEW CHAT returns to the hero and hides the prior turn", async () => {
