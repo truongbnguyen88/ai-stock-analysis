@@ -248,6 +248,10 @@ _COMPONENTS = """
   font-family: var(--sa-font-mono); font-variant-numeric: tabular-nums;
   font-size: 22px; font-weight: 600; color: var(--sa-text); line-height: 1.25;
 }
+/* Tool-driven value direction (up/down): green/red from the sign of the tool number,
+   set only by ui.tiles (never the LLM) — §2 signaling rule holds (color = figure). */
+.sa-tile__value--up { color: var(--sa-up); }
+.sa-tile__value--down { color: var(--sa-down); }
 .sa-tile__sub { font-size: 11px; color: var(--sa-faint); }
 /* Narrow viewports (R6 responsive): Streamlit owns the column *count* (st.columns reflow) —
    we don't force-stack via a column-container selector (that would stale on a version bump, §10).

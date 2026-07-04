@@ -28,6 +28,33 @@ describe("chartSpecToVegaLite", () => {
     expect(asRec(vl.data).values).toHaveLength(3);
   });
 
+  it("colors a bar by tool-driven direction (up=green, down=red, neutral=brass)", () => {
+    const spec: ChartSpecDict = {
+      title: "Large-move breakdown",
+      kind: "bar",
+      x: "outcome",
+      y: "prob",
+      caption: "",
+      color: null,
+      x_sort: ["Big up", "No big move", "Big down"],
+      y_is_percent: true,
+      direction: "direction",
+      data: {
+        outcome: ["Big up", "No big move", "Big down"],
+        prob: [0.2, 0.65, 0.15],
+        direction: ["up", "neutral", "down"],
+      },
+    };
+    const vl = asRec(chartSpecToVegaLite(spec));
+    // Direction drives the fill via a color encoding (not a flat mark color) — twin of to_altair.
+    expect(vl.mark).toBe("bar");
+    const enc = asRec(vl.encoding);
+    expect(asRec(enc.color).field).toBe("direction");
+    const scale = asRec(asRec(enc.color).scale);
+    expect(scale.domain).toEqual(["up", "down", "neutral"]);
+    expect(scale.range).toEqual(["#3FB950", "#E5534B", "#E8A13A"]); // up / down / brass
+  });
+
   it("builds a grouped bar with color scale + xOffset when a color field is set", () => {
     const spec: ChartSpecDict = {
       title: "By model",

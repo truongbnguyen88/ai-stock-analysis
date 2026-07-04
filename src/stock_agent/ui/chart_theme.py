@@ -48,6 +48,13 @@ POINT_COLOR: str = dark_token("--sa-sky")
 # it reads as a guide without competing with the data. RGB is the --sa-muted token (138,147,163).
 REFERENCE_COLOR: str = "rgba(138,147,163,0.55)"
 
+# Directional bar marks (green up / red down / neutral brass). Applied ONLY when a ChartSpec
+# carries a `direction` column set from tool numbers (e.g. the get_large_move up-/down-tail
+# split) — so the §2 rule holds: the color reflects the figure, not an LLM/heuristic judgment.
+# Dark-token hexes for both themes (same single-palette rule as the categorical marks above).
+UP_COLOR: str = dark_token("--sa-up")
+DOWN_COLOR: str = dark_token("--sa-down")
+
 # Faint gridlines / axis rules (the --sa-grid token value).
 _GRID: str = "rgba(138,147,163,0.14)"
 

@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends
 
+from stock_agent.chat.history import ChatStore
 from stock_agent.settings import Settings, get_settings
 
 if TYPE_CHECKING:  # keep the meta path (settings_dep) free of the agent import at module load
@@ -22,6 +23,21 @@ if TYPE_CHECKING:  # keep the meta path (settings_dep) free of the agent import 
 def settings_dep() -> Settings:
     """FastAPI dependency yielding the app settings (overridable in tests)."""
     return get_settings()
+
+
+def chat_store_dep(settings: Annotated[Settings, Depends(settings_dep)]) -> ChatStore:
+    """FastAPI dependency yielding the React SPA's chat-thread store (overridable in tests).
+
+    Nested under a ``web/`` subdirectory of ``chat_history_dir`` so the SPA's ``Turn``-shaped
+    transcripts never mix with the Streamlit store's ``{role, content}`` shape in the same folder
+    (both frontends share the retention config but not the display schema). ``chat.history`` is
+    pure stdlib (no agent/LLM/network), so importing it costs nothing on the meta path. Tests
+    override this to a ``tmp_path`` store so ``/threads`` never touches the real outputs tree.
+    """
+    return ChatStore(
+        settings.chat_history_dir / "web",
+        retention_days=settings.chat_history_retention_days,
+    )
 
 
 def router_dep(settings: Annotated[Settings, Depends(settings_dep)]) -> Router:

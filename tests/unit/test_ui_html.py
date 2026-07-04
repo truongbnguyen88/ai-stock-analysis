@@ -189,6 +189,16 @@ def test_stat_tile_omits_empty_sub() -> None:
     assert "sa-tile__sub" not in frag
 
 
+def test_stat_tile_direction_tints_value_up_down_else_neutral() -> None:
+    # Tool-driven direction adds a green/red value modifier class; absent → plain value.
+    up = stat_tile(label="P(up)", value="58%", tone="indigo", direction="up")
+    down = stat_tile(label="VaR", value="-8.1%", tone="rose", direction="down")
+    neutral = stat_tile(label="ECE", value="0.04", tone="violet")
+    assert "sa-tile__value--up" in up
+    assert "sa-tile__value--down" in down
+    assert "sa-tile__value--" not in neutral  # no modifier when direction is None
+
+
 def test_stat_tile_unknown_tone_falls_back_to_accent() -> None:
     # Chart up/down are deliberately not valid tile tones (signaling rule) -> accent.
     assert "var(--sa-accent)" in stat_tile(label="x", value="y", tone="up")

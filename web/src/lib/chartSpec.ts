@@ -24,12 +24,19 @@ export interface ChartSpecDict {
   color: string | null;
   x_sort: string[] | null;
   y_is_percent: boolean;
+  /**
+   * "bar" only: name of a data column of "up"/"down"/"neutral" that tints each bar
+   * green/red/brass. Set server-side from tool numbers (never the LLM); absent → brass.
+   */
+  direction?: string | null;
   /** column name -> column values (row i is data[col][i] across all columns). */
   data: Record<string, unknown[]>;
 }
 
 // --- palette constants (ui.chart_theme, dark-token hexes) ---------------------------------------
 const MARK_COLOR = "#E8A13A"; // --sa-accent (single-series bars)
+const UP_COLOR = "#3FB950"; // --sa-up (dark) — directional up bars
+const DOWN_COLOR = "#E5534B"; // --sa-down (dark) — directional down bars
 const POINT_COLOR = "#4FA8E8"; // --sa-sky (reliability points)
 const REFERENCE_COLOR = "rgba(138,147,163,0.55)"; // y=x guide (muted, higher alpha than grid)
 const GRID = "rgba(138,147,163,0.14)"; // --sa-grid
@@ -119,6 +126,27 @@ export function chartSpecToVegaLite(spec: ChartSpecDict): VisualizationSpec {
         y: { field: spec.y, type: "quantitative", axis: yAxis, title: null },
         color: { field: spec.color, type: "nominal", title: null, scale: { range: CATEGORY_PALETTE } },
         xOffset: { field: spec.color, type: "nominal" },
+        tooltip: cols.map((c) => ({ field: c })),
+      },
+    } as VisualizationSpec;
+  }
+
+  if (spec.direction) {
+    // Per-bar direction color (up=green, down=red, neutral=brass) — tool-driven, no legend.
+    // Twin of viz.render.to_altair's direction branch (same domain/range → identical marks).
+    return {
+      ...base,
+      data: { values: rows },
+      mark: "bar",
+      encoding: {
+        x: { field: spec.x, type: "nominal", sort: xSort, title: null },
+        y: { field: spec.y, type: "quantitative", axis: yAxis, title: null },
+        color: {
+          field: spec.direction,
+          type: "nominal",
+          legend: null,
+          scale: { domain: ["up", "down", "neutral"], range: [UP_COLOR, DOWN_COLOR, MARK_COLOR] },
+        },
         tooltip: cols.map((c) => ({ field: c })),
       },
     } as VisualizationSpec;

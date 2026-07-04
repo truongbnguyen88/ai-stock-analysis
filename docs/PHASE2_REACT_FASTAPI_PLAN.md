@@ -153,6 +153,25 @@ dicts, or hand-synced with a checked test) and reference them from `tailwind.con
 same `viz.render` Vega config. No SVG hand-drawing (the mockup's inline SVG was a mock; production uses
 Vega-Lite, identical to Streamlit).
 
+**Mockup-exact fidelity (decided 2026-07-04).** The target is to reproduce the reference artifact
+*exactly*. Rather than hand-translate the mockup to Tailwind utilities, the mockup's own stylesheet is
+ported once into `web/src/styles/app.css` with every `var(--x)` remapped to the shared `var(--sa-x)`
+token (so the palette still can't drift from `ui/theme.py`; a few decorative brass constants — dark-on-
+brass text, gradient stops — are kept verbatim as design details, not palette tokens). Components render
+the mockup's semantic classnames. This is a **design-fidelity restyle of the already-shipped P2.0/P2.3
+components** (TopBar, Sidebar, the turn stack, Composer) folded into the **P2.6 parity pass** — it does
+**not** renumber or reorder the roadmap and changes **no** backend contract.
+
+**Directional color — tool-driven (mockup-exact; supersedes the earlier "tiles/charts stay neutral,
+never up/down red-green" note).** The mockup colors P(up)/expected-move green and VaR / down-outcomes red.
+To reproduce that *without* violating the §2 signaling rule (no component assigns financial direction on
+its own), tiles and `ChartSpec` carry an optional `direction` (`up`/`down`/`null`) set **only from tool
+numbers** — the sign of `expected_return` / `pct_change` / net sentiment; the up-/down-tail labels of
+`get_large_move`; VaR is definitionally downside — **never from the LLM**. Renderers (Altair + the React
+`chartSpec` twin) and `TileRow` map `up → --sa-up`, `down → --sa-down`, else the neutral brass/semantic
+hue. Small, invariant-safe extension: numbers still originate in the tools; only a deterministic sign read
+drives the hue. The cross-stack golden keeps Streamlit and React identical on it.
+
 **State:** `Zustand` thread store (threads, active thread, streaming buffer). SSE via `fetch` +
 `ReadableStream` reader (not `EventSource`, so we can POST the query body). One reducer folds
 `AgentEvent`s into turn state.
@@ -162,7 +181,7 @@ Vega-Lite, identical to Streamlit).
 | Method / path | Purpose | Reuses |
 |---|---|---|
 | `POST /chat/stream` | SSE: run a turn, stream `AgentEvent`s | `Router.run_events` |
-| `GET /threads`, `POST /threads`, `DELETE /threads/{id}` | thread CRUD | `ChatStore` (`chat.history`) |
+| `GET /threads`, `GET /threads/{id}`, `POST /threads`, `DELETE /threads/{id}` | thread CRUD (display-level) | `ChatStore` (`chat.history`), nested under a `web/` subdir |
 | `POST /export` | turn text (+ chart PNGs) → pdf/docx/md bytes | `reports.export.export_summary`, `viz.render.to_png` |
 | `GET /corpus` | sidebar status card | `rag.status.corpus_status` |
 | `GET /config` | routing modes, key availability, default ticker | `settings`, `RoutingChoice` metadata |
@@ -330,12 +349,40 @@ Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` fo
     streaming), `tests/integration/test_agent_events.py` (+4 — one Token per delta with boundaries
     preserved, full-text grounding with a figure split across deltas, tool-turn preamble discarded,
     drain concatenates deltas). `make check` green (981 passed / 3 skipped); no web change.
-- **P2.5 — Threads + export.** `/threads` wired to `ChatStore`; `ExportMenu` popover → `/export`
-  download. *Tests:* thread round-trip (create/list/delete) reuses existing `ChatStore` tests; export
-  bytes non-empty per format (reuses `export_summary` tests).
-- **P2.6 — Empty-state hero + quick starters + parity pass.** `Hero`, capability cards, quick-starter
-  prefill. Side-by-side parity check vs. the mockup and vs. Streamlit (numbers identical). *DoD:*
-  the four ceiling items work; screenshots (light+dark) attached.
+- **P2.5 — Threads + export — ✅ DONE (2026-07-04).** Shipped in two slices:
+  - **P2.5a Export (commit `6a4a4ef`).** `POST /export` (`api/routes/export.py`) → `reports.export.
+    export_summary` renders the final answer + its `ChartSpec` figures (rasterized via `viz.render.
+    to_png`) to **pdf / docx / md** bytes with the format's MIME + `Content-Disposition` attachment
+    name; unknown fmt / empty text → 422 (never 500). Frontend `ExportMenu` is the app's first **Radix
+    Popover**, shown only on final grounded turns. *Tests:* `test_api_export.py` (6 — magic bytes +
+    MIME per format, chart embedding grows the pdf, md ignores charts, 422 paths), `apiExport.test.ts`
+    (3), `exportMenu.test.tsx` (2).
+  - **P2.5b Threads (this branch).** Display-level persistence: `/threads` CRUD (`api/routes/threads.
+    py`, `chat_store_dep`) over the existing `ChatStore`, nested under a `web/` subdir so the SPA's
+    `Turn[]` transcripts never mix with the Streamlit `{role,content}` shape. Sidebar chat list
+    (open/delete, active-row highlight); the store persists the transcript on finalize (only committed
+    `final` turns; explicit client-derived title since `display_messages` carry no role/content) and
+    reopens it (`loadTurns`, seq-collision-guarded). Best-effort throughout — a persistence/API
+    failure never breaks the chat. Full agent-context resume deferred (SSE doesn't expose
+    `agent_history`). *Tests:* `test_api_threads.py` (5 — CRUD roundtrip, `created_at` preserved on
+    upsert, most-recent-first, 404), `apiThreads.test.ts` (5), `threadsStore.test.ts` (4),
+    `conversationStore.test.ts` (3), `threads.test.tsx` (2 — persist-on-final, list/open/delete).
+- **P2.6 — Empty-state hero + quick starters + parity pass — ✅ DONE (2026-07-04).** `Hero` (eyebrow,
+  cycling typewriter, six hue-coded capability cards each dispatching a canned prompt) + TopBar
+  segmented **CONVERSATION / NEW CHAT** view control (non-destructive toggle; hero-send lazily resets).
+  Fixed a real off-by-one in the mockup's typewriter (froze on phrase 0) by extracting a pure,
+  unit-tested `stepType` state machine. Tool-driven green/red `direction` on tiles + chart (sign of
+  tool numbers only — never the LLM; preserves §2). *Tests:* `hero.test.tsx` (6 — hero shown on empty
+  conversation, card dispatch + view swap, 3 pure typewriter cases). *DoD:* the four ceiling items
+  work; screenshots (light+dark) attached.
+  - **Mockup-exact restyle (folded in, decided 2026-07-04).** Ships the ported `web/src/styles/app.css`
+    (mockup stylesheet → `--sa-*`) and rebuilds TopBar (brand glyph, disclaimer, dot/mode chips,
+    segmented view control, `◐` icon toggle), Sidebar (status card, `$`-ticker field, routing note,
+    hue-iconed quick starters, active-bar chat rows, key chips), the turn stack (avatars, left-stripe
+    tiles with tool-driven `direction`, chart card w/ header·meta·legend·caption, per-tool-hue trace,
+    citation-marker sources), and the Composer (context chips, `focus-within` brass) to pixel fidelity.
+    Delivered as a commit series on `feat/phase2-mockup-fidelity`; existing web tests (behavior/roles/
+    testids) stay green — presentation-only, no contract change.
 
 ## 9. Testing strategy
 

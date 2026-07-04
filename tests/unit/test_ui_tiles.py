@@ -1,8 +1,9 @@
 """Tool-result -> headline stat tiles (R4): golden per-tool + dedup/cap/error-skip.
 
 Pure-data tests — the extractor has no Streamlit dependency; it turns the numbers the
-tools already produced into display-ready tiles (numbers-from-tools invariant). Tones are
-semantic hues only (never chart up/down red-green).
+tools already produced into display-ready tiles (numbers-from-tools invariant). The ``tone``
+is a semantic stripe hue; a separate optional ``direction`` (up/down) tints the value green/red
+from a deterministic sign read of the tool number (never the LLM) — see the direction tests.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ def test_price_summary_tile() -> None:
     assert t["value"] == "$1,234.50"  # 2dp + thousands separator
     assert "+8.1% period" in t["sub"] and "30 bars" in t["sub"]
     assert t["tone"] == "sky"
+    assert t["direction"] == "up"  # pct_change > 0
 
 
 def test_forecast_tiles_pup_and_expected_return() -> None:
@@ -60,6 +62,9 @@ def test_forecast_tiles_pup_and_expected_return() -> None:
     assert _by_label(tiles, "Exp. return")["value"] == "-3.2%"
     assert _by_label(tiles, "P(up)")["tone"] == "indigo"
     assert _by_label(tiles, "Exp. return")["tone"] == "violet"
+    # Tool-driven direction: P(up)=0.58 > 0.5 → up; expected_return=-0.032 < 0 → down.
+    assert _by_label(tiles, "P(up)")["direction"] == "up"
+    assert _by_label(tiles, "Exp. return")["direction"] == "down"
 
 
 def test_large_move_tile_threshold_and_lean() -> None:
@@ -72,6 +77,7 @@ def test_large_move_tile_threshold_and_lean() -> None:
     assert t["value"] == "27%"
     assert "30d" in t["sub"] and "lean up" in t["sub"]
     assert t["tone"] == "rose"
+    assert t["direction"] == "up"  # from the tool's up/down tail lean
 
 
 def test_large_move_tile_without_threshold_uses_generic_label() -> None:
@@ -90,6 +96,34 @@ def test_sentiment_tile_signed_and_count() -> None:
     assert t["value"] == "+0.15"  # signed 2dp
     assert t["sub"] == "12 articles"
     assert t["tone"] == "teal"
+    assert t["direction"] == "up"  # avg_sentiment > 0
+
+
+# ---- tool-driven value direction (green/red) --------------------------------------
+def test_direction_is_neutral_at_the_midpoint_and_zero() -> None:
+    # P(up) exactly 0.5 and expected_return exactly 0.0 carry NO direction (neutral value),
+    # so a coin-flip / flat forecast never shows a green or red bias.
+    inv = _Inv("run_forecast", {"upside_prob": 0.5, "expected_return": 0.0, "horizon_days": 20})
+    tiles = stat_tiles_from_tool_results([inv])
+    assert "direction" not in _by_label(tiles, "P(up)")
+    assert "direction" not in _by_label(tiles, "Exp. return")
+
+
+def test_direction_follows_the_sign_down() -> None:
+    # A bearish forecast: P(up) < 0.5 → down; negative sentiment → down.
+    fc = _Inv("run_forecast", {"upside_prob": 0.42, "expected_return": -0.05, "horizon_days": 20})
+    sent = _Inv("get_news_sentiment", {"avg_sentiment": -0.2, "article_count": 5})
+    tiles = stat_tiles_from_tool_results([fc, sent])
+    assert _by_label(tiles, "P(up)")["direction"] == "down"
+    assert _by_label(tiles, "Exp. return")["direction"] == "down"
+    assert _by_label(tiles, "Net sentiment")["direction"] == "down"
+
+
+def test_large_move_without_lean_is_neutral() -> None:
+    # Magnitude-only (no up/down tail lean from the tool) → no direction (the tile stays neutral).
+    inv = _Inv("get_large_move", {"prob_large_move": 0.3, "threshold_pct": 10})
+    (t,) = stat_tiles_from_tool_results([inv])
+    assert "direction" not in t
 
 
 # ---- aggregation semantics --------------------------------------------------------

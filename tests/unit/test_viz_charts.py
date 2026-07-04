@@ -78,6 +78,9 @@ def test_large_move_split_sums_to_one() -> None:
     assert spec.kind == "bar"
     assert abs(float(spec.data["probability"].sum()) - 1.0) < 1e-9  # up + none + down = 1
     assert list(spec.data["outcome"])[1] == "No big move"
+    # Tool-driven per-bar direction (up-tail green / middle neutral / down-tail red).
+    assert spec.direction == "direction"
+    assert list(spec.data["direction"]) == ["up", "neutral", "down"]
 
 
 # ---- sentiment ----------------------------------------------------------------

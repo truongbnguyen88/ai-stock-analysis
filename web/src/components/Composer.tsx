@@ -8,9 +8,9 @@ interface ComposerProps {
 }
 
 /**
- * The message composer: context chips + a growing input + send. Enter sends, Shift+Enter newlines.
- * Disabled while a turn streams (one in-flight turn at a time in P2.3). `focus-within` brass accent
- * mirrors the mockup.
+ * Message composer (mockup input bar): "On enter:" context chips + a growing input + brass send.
+ * Enter sends, Shift+Enter newlines; disabled while a turn streams (one in-flight turn, P2.3). The
+ * send button keeps the accessible name "send" (the conversation test asserts it) behind the ↑ glyph.
  */
 export function Composer({ onSend, disabled, contextChips = [] }: ComposerProps) {
   const [value, setValue] = useState("");
@@ -35,36 +35,34 @@ export function Composer({ onSend, disabled, contextChips = [] }: ComposerProps)
   };
 
   return (
-    <form onSubmit={onSubmit} className="mt-4">
+    <form onSubmit={onSubmit}>
       {contextChips.length > 0 && (
-        <div className="mb-2 flex items-center gap-2 text-[11px]">
-          <span className="font-mono uppercase tracking-wider text-faint">on enter</span>
-          {contextChips.map((c) => (
-            <span
-              key={c}
-              className="rounded-full border border-border-strong px-2 py-0.5 font-mono text-muted"
-            >
+        <div className="context-chips">
+          <span className="lbl">On enter:</span>
+          {contextChips.map((c, i) => (
+            <span key={c} className={`chip${i === 0 ? " accent" : ""}`}>
+              {i === 0 && <span className="dot" />}
               {c}
             </span>
           ))}
         </div>
       )}
-      <div className="flex items-end gap-2 rounded-sa border border-border-strong bg-surface-2 p-2 focus-within:border-accent-line">
+      <div className="composer">
         <textarea
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKeyDown}
           rows={1}
           aria-label="Message"
-          placeholder="Ask about a ticker…"
-          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1 text-sm text-text outline-none placeholder:text-faint"
+          placeholder="Ask anything about a stock…"
         />
         <button
           type="submit"
+          className="send"
+          aria-label="send"
           disabled={disabled || !value.trim()}
-          className="rounded-sa-sm border border-accent-line px-3 py-1.5 font-mono text-xs text-accent transition-colors hover:bg-accent-weak disabled:opacity-40"
         >
-          send
+          ↑
         </button>
       </div>
     </form>
