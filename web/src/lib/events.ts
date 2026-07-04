@@ -17,8 +17,14 @@ export interface Tile {
   label: string;
   value: string;
   sub: string;
-  /** Semantic hue token name: teal|sky|indigo|violet|rose|accent (never up/down). */
+  /** Semantic hue token name for the category stripe: teal|sky|indigo|violet|rose|accent. */
   tone: string;
+  /**
+   * Tool-driven direction for the VALUE color (mockup-exact): "up" → green, "down" → red,
+   * null/absent → neutral. Set server-side from a deterministic sign read of the tool number
+   * (never the LLM) — see ui.tiles. Optional so pre-direction fixtures render neutral.
+   */
+  direction?: "up" | "down" | null;
 }
 
 /** A SEC filing citation (ui.state.sources_from_tool_results). */

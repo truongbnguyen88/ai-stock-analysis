@@ -8,9 +8,10 @@ import { useTheme } from "@/lib/useTheme";
 import { useConversation } from "@/store/conversation";
 
 /**
- * P2.3 conversation shell: the TopBar + Sidebar (from live /config + /corpus, P2.0) now sit above a
- * real streamed conversation. The Composer POSTs to /chat/stream and the store folds the AgentEvents
- * into turns (tiles, live trace, chart, provisional→final prose, sources). The empty-state Hero and
+ * Conversation shell (mockup-exact): the sticky TopBar over a two-column `.shell` (Sidebar + main).
+ * Main is the scrolling `.stream` (folded turns from /chat/stream) above the sticky `.inputbar`
+ * Composer. Config/corpus come from the live meta endpoints (P2.0); the store folds AgentEvents into
+ * turns (tiles, live trace, chart, provisional→final prose, sources). The empty-state Hero and
  * threads/export land in later slices (P2.5/P2.6).
  */
 export default function App() {
@@ -36,7 +37,7 @@ export default function App() {
     fetchCorpus()
       .then(setCorpus)
       .catch(() => {
-        /* corpus card degrades to "loading…"; config error is the surfaced one */
+        /* corpus card degrades to "…"; the config error is the surfaced one */
       });
   }, []);
 
@@ -48,11 +49,14 @@ export default function App() {
   const onSend = (message: string): void => {
     void send({ message, route, ticker: ticker || null });
   };
+  const onQuickStart = (prompt: string): void => {
+    if (!streaming) onSend(prompt);
+  };
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="app">
       <TopBar config={config} ticker={ticker} mode={mode} theme={theme} onToggleTheme={toggle} />
-      <div className="flex flex-1">
+      <div className="shell">
         <Sidebar
           config={config}
           corpus={corpus}
@@ -60,19 +64,33 @@ export default function App() {
           onTicker={setTicker}
           mode={mode}
           onMode={setMode}
+          onQuickStart={onQuickStart}
         />
-        <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-6 py-8">
+        <main className="main">
           {error ? (
-            <p className="font-mono text-sm text-down">
-              API unavailable: {error}. Start it with{" "}
-              <code>uvicorn stock_agent.api.app:app --port 8000</code>.
-            </p>
+            <div className="stream">
+              <div className="measure">
+                <div className="errbox">
+                  <span className="ek">API unavailable</span>
+                  <p className="em">
+                    {error}. Start it with{" "}
+                    <code>uvicorn stock_agent.api.app:app --port 8000</code>.
+                  </p>
+                </div>
+              </div>
+            </div>
           ) : (
             <>
-              <div className="flex-1">
-                <Stream turns={turns} />
+              <div className="stream">
+                <div className="measure">
+                  <Stream turns={turns} />
+                </div>
               </div>
-              <Composer onSend={onSend} disabled={streaming} contextChips={contextChips} />
+              <div className="inputbar">
+                <div className="measure">
+                  <Composer onSend={onSend} disabled={streaming} contextChips={contextChips} />
+                </div>
+              </div>
             </>
           )}
         </main>

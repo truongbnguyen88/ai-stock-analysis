@@ -153,6 +153,25 @@ dicts, or hand-synced with a checked test) and reference them from `tailwind.con
 same `viz.render` Vega config. No SVG hand-drawing (the mockup's inline SVG was a mock; production uses
 Vega-Lite, identical to Streamlit).
 
+**Mockup-exact fidelity (decided 2026-07-04).** The target is to reproduce the reference artifact
+*exactly*. Rather than hand-translate the mockup to Tailwind utilities, the mockup's own stylesheet is
+ported once into `web/src/styles/app.css` with every `var(--x)` remapped to the shared `var(--sa-x)`
+token (so the palette still can't drift from `ui/theme.py`; a few decorative brass constants — dark-on-
+brass text, gradient stops — are kept verbatim as design details, not palette tokens). Components render
+the mockup's semantic classnames. This is a **design-fidelity restyle of the already-shipped P2.0/P2.3
+components** (TopBar, Sidebar, the turn stack, Composer) folded into the **P2.6 parity pass** — it does
+**not** renumber or reorder the roadmap and changes **no** backend contract.
+
+**Directional color — tool-driven (mockup-exact; supersedes the earlier "tiles/charts stay neutral,
+never up/down red-green" note).** The mockup colors P(up)/expected-move green and VaR / down-outcomes red.
+To reproduce that *without* violating the §2 signaling rule (no component assigns financial direction on
+its own), tiles and `ChartSpec` carry an optional `direction` (`up`/`down`/`null`) set **only from tool
+numbers** — the sign of `expected_return` / `pct_change` / net sentiment; the up-/down-tail labels of
+`get_large_move`; VaR is definitionally downside — **never from the LLM**. Renderers (Altair + the React
+`chartSpec` twin) and `TileRow` map `up → --sa-up`, `down → --sa-down`, else the neutral brass/semantic
+hue. Small, invariant-safe extension: numbers still originate in the tools; only a deterministic sign read
+drives the hue. The cross-stack golden keeps Streamlit and React identical on it.
+
 **State:** `Zustand` thread store (threads, active thread, streaming buffer). SSE via `fetch` +
 `ReadableStream` reader (not `EventSource`, so we can POST the query body). One reducer folds
 `AgentEvent`s into turn state.
@@ -304,6 +323,14 @@ Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` fo
 - **P2.6 — Empty-state hero + quick starters + parity pass.** `Hero`, capability cards, quick-starter
   prefill. Side-by-side parity check vs. the mockup and vs. Streamlit (numbers identical). *DoD:*
   the four ceiling items work; screenshots (light+dark) attached.
+  - **Mockup-exact restyle (folded in, decided 2026-07-04).** Ships the ported `web/src/styles/app.css`
+    (mockup stylesheet → `--sa-*`) and rebuilds TopBar (brand glyph, disclaimer, dot/mode chips,
+    segmented view control, `◐` icon toggle), Sidebar (status card, `$`-ticker field, routing note,
+    hue-iconed quick starters, active-bar chat rows, key chips), the turn stack (avatars, left-stripe
+    tiles with tool-driven `direction`, chart card w/ header·meta·legend·caption, per-tool-hue trace,
+    citation-marker sources), and the Composer (context chips, `focus-within` brass) to pixel fidelity.
+    Delivered as a commit series on `feat/phase2-mockup-fidelity`; existing web tests (behavior/roles/
+    testids) stay green — presentation-only, no contract change.
 
 ## 9. Testing strategy
 

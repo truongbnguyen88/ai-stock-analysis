@@ -10,45 +10,39 @@ interface TopBarProps {
 }
 
 /**
- * Sticky top bar: brand mark, persistent non-advisory chip, active ticker/mode context chips,
- * and the instant theme toggle. Mirrors the mockup's blurred header (PHASE2 §6); the full
- * segmented view control lands with the conversation slice.
+ * Sticky blurred top bar (mockup §6): brass glyph brand, non-advisory disclaimer, active
+ * ticker/mode context chips, and the instant theme toggle. The segmented view control lands with
+ * the empty-state Hero (P2.6). The theme button keeps a dynamic "Switch to … theme" accessible
+ * name (the shell test asserts it) while showing the mockup's ◐ glyph.
  */
 export function TopBar({ config, ticker, mode, theme, onToggleTheme }: TopBarProps) {
   return (
-    <header className="sticky top-0 z-10 flex items-center gap-4 border-b border-border bg-surface/80 px-5 py-3 backdrop-blur">
-      <div className="flex items-center gap-2">
-        <span className="text-lg leading-none">◆</span>
-        <span className="font-mono text-sm font-semibold tracking-tight text-text">stock-agent</span>
+    <header className="topbar">
+      <div className="brand">
+        <span className="glyph">§</span>
+        STOCK&nbsp;RESEARCH <span className="dim">/ AGENT</span>
       </div>
-
-      <span className="rounded-full border border-border-strong px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-faint">
-        research only · not advice
-      </span>
-
-      <div className="ml-auto flex items-center gap-2">
-        {config && (
-          <>
-            <ContextChip label={ticker || "no ticker"} tone="accent" />
-            <ContextChip label={mode} tone="muted" />
-          </>
-        )}
-        <button
-          type="button"
-          onClick={onToggleTheme}
-          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
-          className="rounded-sa-sm border border-border-strong px-2 py-1 font-mono text-xs text-muted transition-colors hover:border-accent-line hover:text-accent"
-        >
-          {theme === "dark" ? "◐ dark" : "◑ light"}
-        </button>
-      </div>
+      <div className="disclaimer">RESEARCH &amp; EDUCATION — NOT FINANCIAL ADVICE</div>
+      <div className="spacer" />
+      {config && (
+        <>
+          <span className="chip accent">
+            <span className="dot" /> {ticker || "no ticker"}
+          </span>
+          <span className="chip">
+            MODE <b>{mode}</b>
+          </span>
+        </>
+      )}
+      <button
+        type="button"
+        className="iconbtn"
+        onClick={onToggleTheme}
+        aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+        title="Toggle light / dark"
+      >
+        ◐
+      </button>
     </header>
-  );
-}
-
-function ContextChip({ label, tone }: { label: string; tone: "accent" | "muted" }) {
-  const toneClass = tone === "accent" ? "border-accent-line text-accent" : "border-border-strong text-muted";
-  return (
-    <span className={`rounded-full border px-2 py-1 font-mono text-[11px] ${toneClass}`}>{label}</span>
   );
 }
