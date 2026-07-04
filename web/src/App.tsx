@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
-import { TopBar } from "@/components/TopBar";
+import { TopBar, type View } from "@/components/TopBar";
 import { Stream } from "@/components/Stream";
+import { Hero } from "@/components/Hero";
 import { Composer } from "@/components/Composer";
 import { fetchConfig, fetchCorpus, type ConfigResponse, type CorpusResponse } from "@/lib/api";
 import { useTheme } from "@/lib/useTheme";
@@ -21,10 +22,13 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [ticker, setTicker] = useState("");
   const [mode, setMode] = useState("");
+  // Empty-state hero until the first send; the TopBar seg toggles it non-destructively (mockup #view).
+  const [view, setView] = useState<View>("hero");
 
   const turns = useConversation((s) => s.turns);
   const streaming = useConversation((s) => s.streaming);
   const send = useConversation((s) => s.send);
+  const reset = useConversation((s) => s.reset);
 
   useEffect(() => {
     fetchConfig()
@@ -47,7 +51,11 @@ export default function App() {
   const contextChips = [ticker || "no ticker", mode].filter(Boolean);
 
   const onSend = (message: string): void => {
+    // Composing from the hero while a prior thread exists starts a genuinely new chat (single
+    // in-memory thread; multi-thread lands in P2.5). Non-destructive until the user actually sends.
+    if (view === "hero" && turns.length > 0) reset();
     void send({ message, route, ticker: ticker || null });
+    setView("chat");
   };
   const onQuickStart = (prompt: string): void => {
     if (!streaming) onSend(prompt);
@@ -55,7 +63,15 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar config={config} ticker={ticker} mode={mode} theme={theme} onToggleTheme={toggle} />
+      <TopBar
+        config={config}
+        ticker={ticker}
+        mode={mode}
+        theme={theme}
+        onToggleTheme={toggle}
+        view={view}
+        onView={setView}
+      />
       <div className="shell">
         <Sidebar
           config={config}
@@ -81,11 +97,17 @@ export default function App() {
             </div>
           ) : (
             <>
-              <div className="stream">
-                <div className="measure">
-                  <Stream turns={turns} />
+              {view === "hero" ? (
+                <div className="stream">
+                  <Hero ticker={ticker} onQuickStart={onQuickStart} />
                 </div>
-              </div>
+              ) : (
+                <div className="stream">
+                  <div className="measure">
+                    <Stream turns={turns} />
+                  </div>
+                </div>
+              )}
               <div className="inputbar">
                 <div className="measure">
                   <Composer onSend={onSend} disabled={streaming} contextChips={contextChips} />

@@ -846,6 +846,8 @@
   gap: 12px;
   align-items: flex-start;
   text-align: left;
+  font-family: inherit; /* rendered as a <button> — inherit the app sans, not the UA button font */
+  color: inherit;
   transition: border-color 0.15s, background 0.15s, transform 0.08s;
 }
 .capcard:hover {
