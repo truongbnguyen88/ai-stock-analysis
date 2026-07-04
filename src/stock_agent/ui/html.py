@@ -162,22 +162,26 @@ def chip(text: str, *, tone: str = "neutral", marker: str = "") -> str:
     return f'<span class="sa-chip sa-chip--{tone_cls}">{mk}{_esc(text)}</span>'
 
 
-def stat_tile(*, label: str, value: str, sub: str = "", tone: str = "accent") -> str:
+def stat_tile(
+    *, label: str, value: str, sub: str = "", tone: str = "accent", direction: str | None = None
+) -> str:
     """Metric tile: colored category stripe + mono uppercase label + big value + sub (R4).
 
     ``value``/``sub`` are already-formatted display strings (the number formatting lives in
     ``stock_agent.ui.tiles`` so this stays presentation-only). ``tone`` is a semantic hue
     token (``teal|sky|indigo|violet|rose|accent``) driving the left stripe via ``--tile-hue``;
-    unknown tones fall back to brass. Up/down green-red is intentionally NOT a valid tone —
-    those colors are reserved for chart marks (APP_REDESIGN §2 signaling rule). Presentation
-    only: the numbers come from tool results upstream, never the LLM.
+    unknown tones fall back to brass. The optional ``direction`` (``up``/``down``) tints the
+    *value* green/red — supplied by ``ui.tiles`` from a deterministic sign read of the tool
+    number (never the LLM), so the §2 signaling rule holds (the color is the figure, not the
+    narrative); absent → neutral. Presentation only: numbers come from tool results upstream.
     """
     hue_name = _hue_token(tone)
+    val_mod = f" sa-tile__value--{direction}" if direction in ("up", "down") else ""
     sub_html = f'<div class="sa-tile__sub">{_esc(sub)}</div>' if sub else ""
     return (
         f'<div class="sa-tile" style="--tile-hue: var(--sa-{hue_name});">'
         f'<div class="sa-tile__label">{_esc(label)}</div>'
-        f'<div class="sa-tile__value">{_esc(value)}</div>'
+        f'<div class="sa-tile__value{val_mod}">{_esc(value)}</div>'
         f"{sub_html}"
         "</div>"
     )

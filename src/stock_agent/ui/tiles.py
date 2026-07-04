@@ -7,12 +7,15 @@ never to the LLM, preserving the numbers-vs-narrative invariant (APP_REDESIGN §
 
 Dispatch is by tool ``name`` (like ``charts_for``) so only well-known scalar-bearing
 results produce tiles; multi-ticker comparisons and RAG tools intentionally yield none
-(they surface as charts / filing sources instead). Error results are skipped. Tones are
-semantic secondary hues (teal/sky/indigo/violet/rose) — never chart up/down red-green,
-which is reserved for marks (§2 signaling rule).
+(they surface as charts / filing sources instead). Error results are skipped. The ``tone``
+is a semantic secondary hue (teal/sky/indigo/violet/rose) for the category stripe; a separate
+**optional** ``direction`` (``up``/``down``) tints the *value* green/red. Direction is set
+only from a **deterministic sign read of the tool number** (never the LLM), so the §2 signaling
+rule still holds — the color comes from the figure, not the narrative. Absent ``direction`` →
+neutral value.
 
-Each tile is a plain ``dict[str, str]`` (``label``/``value``/``sub``/``tone``): directly
-JSON-serializable for the chat store and directly consumable by ``ui.html.stat_tile``.
+Each tile is a plain ``dict[str, str]`` (``label``/``value``/``sub``/``tone`` [+ ``direction``]):
+directly JSON-serializable for the chat store and directly consumable by ``ui.html.stat_tile``.
 """
 
 from __future__ import annotations
@@ -53,6 +56,35 @@ def _money(x: Any) -> str | None:
     return f"${x:,.2f}"
 
 
+def _sign_dir(x: Any) -> str | None:
+    """Value direction from a signed tool number: ``>0`` → ``"up"``, ``<0`` → ``"down"``, else None.
+
+    Deterministic sign read — NEVER an LLM/heuristic call — so tinting the tile value green/red
+    honors the §2 signaling rule (direction from the figure, not the narrative).
+    """
+    if not isinstance(x, (int, float)):
+        return None
+    return "up" if x > 0 else "down" if x < 0 else None
+
+
+def _prob_dir(x: Any, *, mid: float = 0.5) -> str | None:
+    """Direction from which side of ``mid`` a probability sits (``P(up) > 0.5`` → ``"up"``).
+
+    A deterministic threshold read of the model's probability mass; not a recommendation, and
+    never LLM-assigned. ``mid`` is the no-lean point (0.5 for a binary up/down probability).
+    """
+    if not isinstance(x, (int, float)):
+        return None
+    return "up" if x > mid else "down" if x < mid else None
+
+
+def _dir(tile: Tile, direction: str | None) -> Tile:
+    """Attach a tool-driven ``direction`` to a tile only when present (omit → neutral value)."""
+    if direction is not None:
+        tile["direction"] = direction
+    return tile
+
+
 def _horizon_sub(result: dict[str, Any], extra: str = "") -> str:
     """Compose a compact sub-label from horizon (+ optional model / extra note)."""
     parts: list[str] = []
@@ -80,7 +112,13 @@ def _price_tiles(r: dict[str, Any]) -> list[Tile]:
         f"{n} bars" if isinstance(n, int) else "",
     ]
     sub = " · ".join(p for p in parts if p)
-    return [{"label": "Last close", "value": close, "sub": sub, "tone": "sky"}]
+    # Value tinted by the sign of the period change (up/down over the window), not the LLM.
+    return [
+        _dir(
+            {"label": "Last close", "value": close, "sub": sub, "tone": "sky"},
+            _sign_dir(r.get("pct_change")),
+        )
+    ]
 
 
 def _forecast_tiles(r: dict[str, Any]) -> list[Tile]:
@@ -89,12 +127,18 @@ def _forecast_tiles(r: dict[str, Any]) -> list[Tile]:
     up = _pct(r.get("upside_prob"))
     if up is not None:
         tiles.append(
-            {"label": "P(up)", "value": up, "sub": _horizon_sub(r), "tone": "indigo"}
+            _dir(
+                {"label": "P(up)", "value": up, "sub": _horizon_sub(r), "tone": "indigo"},
+                _prob_dir(r.get("upside_prob")),  # >0.5 leans up, <0.5 leans down
+            )
         )
     exp = _pct(r.get("expected_return"), signed=True, dp=1)
     if exp is not None:
         tiles.append(
-            {"label": "Exp. return", "value": exp, "sub": _horizon_sub(r), "tone": "violet"}
+            _dir(
+                {"label": "Exp. return", "value": exp, "sub": _horizon_sub(r), "tone": "violet"},
+                _sign_dir(r.get("expected_return")),
+            )
         )
     return tiles
 
@@ -108,7 +152,9 @@ def _large_move_tiles(r: dict[str, Any]) -> list[Tile]:
     label = f"P(±{k}%)" if isinstance(k, int) else "P(big move)"
     lean = r.get("lean")
     sub = _horizon_sub(r, extra=f"lean {lean}" if isinstance(lean, str) else "")
-    return [{"label": label, "value": p, "sub": sub, "tone": "rose"}]
+    # Direction from the tool's own up/down tail lean (not the LLM); magnitude otherwise neutral.
+    direction = lean if lean in ("up", "down") else None
+    return [_dir({"label": label, "value": p, "sub": sub, "tone": "rose"}, direction)]
 
 
 def _sentiment_tiles(r: dict[str, Any]) -> list[Tile]:
@@ -119,7 +165,12 @@ def _sentiment_tiles(r: dict[str, Any]) -> list[Tile]:
     n = r.get("article_count")
     n_int = int(n) if isinstance(n, (int, float)) else None
     sub = f"{n_int} articles" if n_int is not None else ""
-    return [{"label": "Net sentiment", "value": f"{avg:+.2f}", "sub": sub, "tone": "teal"}]
+    return [
+        _dir(
+            {"label": "Net sentiment", "value": f"{avg:+.2f}", "sub": sub, "tone": "teal"},
+            _sign_dir(avg),
+        )
+    ]
 
 
 # Tool name -> tile builder. Only these tools produce tiles; everything else (comparisons,

@@ -44,6 +44,7 @@ def render_stat_tiles(tiles: Sequence[dict[str, Any]]) -> None:
                         value=str(tile.get("value", "")),
                         sub=str(tile.get("sub", "")),
                         tone=str(tile.get("tone", "accent")),
+                        direction=tile.get("direction"),
                     ),
                     unsafe_allow_html=True,
                 )
