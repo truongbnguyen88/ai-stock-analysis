@@ -35,6 +35,21 @@ if (typeof HTMLCanvasElement !== "undefined") {
   HTMLCanvasElement.prototype.getContext = (() => null) as never;
 }
 
+// Radix popovers (P2.5 ExportMenu) probe pointer-capture / resize / scroll APIs that jsdom lacks;
+// stub them so the popover can open under test (these are no-ops — no layout happens in jsdom).
+if (typeof window !== "undefined") {
+  window.ResizeObserver ??= class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+  Element.prototype.hasPointerCapture ??= () => false;
+  Element.prototype.releasePointerCapture ??= () => {};
+  Element.prototype.scrollIntoView ??= () => {};
+  URL.createObjectURL ??= () => "blob:jsdom";
+  URL.revokeObjectURL ??= () => {};
+}
+
 beforeAll(() => {
   const storage = new MemoryStorage();
   Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });

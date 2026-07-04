@@ -35,6 +35,21 @@ class ChatStreamRequest(BaseModel):
     history: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ExportRequest(BaseModel):
+    """Body for ``POST /export`` — render one turn's answer to a downloadable document.
+
+    ``text`` is the assistant's final answer (markdown; it already carries the model figures — the
+    exporter adds none, same non-advisory framing as the Streamlit export). ``charts`` are the same
+    ``ChartSpec`` dicts the client rendered, embedded as figures in pdf/docx (markdown is text).
+    ``fmt`` in {pdf, docx, md}; an unknown value is rejected 422.
+    """
+
+    text: str
+    fmt: str
+    title: str = "Stock Research Summary"
+    charts: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class KeyStatus(BaseModel):
     """One API-key row for the sidebar key chips (mirrors ``ui.html.keys_row`` tuples)."""
 

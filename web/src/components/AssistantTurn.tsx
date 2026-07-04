@@ -3,6 +3,7 @@ import { TileRow } from "@/components/TileRow";
 import { ChartCard } from "@/components/ChartCard";
 import { TraceRow } from "@/components/TraceRow";
 import { Sources } from "@/components/Sources";
+import { ExportMenu } from "@/components/ExportMenu";
 
 /**
  * The assistant side of a turn, composed in the mockup's summary-before-detail order (plan §5):
@@ -40,6 +41,15 @@ export function AssistantTurn({ turn }: { turn: Turn }) {
 
       <TraceRow trace={turn.trace} />
       <Sources sources={turn.sources} />
+
+      {/* Export the finished, grounded answer (mockup's ↓ Export ▾). Only once final and non-empty. */}
+      {turn.status === "final" && turn.answer && (
+        <ExportMenu
+          text={turn.answer}
+          charts={turn.charts}
+          title={turn.ticker ? `${turn.ticker} — research summary` : undefined}
+        />
+      )}
     </div>
   );
 }

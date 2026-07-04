@@ -698,6 +698,45 @@
   border-color: var(--sa-border-strong);
 }
 
+/* export popover (Radix Popover.Content) — a small format menu anchored on .export-btn */
+.export-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 132px;
+  padding: 5px;
+  border: 1px solid var(--sa-border-strong);
+  border-radius: var(--sa-r-sm);
+  background: var(--sa-surface);
+  box-shadow: var(--sa-shadow);
+  z-index: 30;
+}
+.export-item {
+  text-align: left;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--sa-text);
+  font-family: var(--sa-font-mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.export-item:hover:not(:disabled) {
+  background: var(--sa-surface-2);
+}
+.export-item:disabled {
+  color: var(--sa-faint);
+  cursor: default;
+}
+.export-err {
+  font-family: var(--sa-font-mono);
+  font-size: 10.5px;
+  color: var(--sa-down);
+  padding: 4px 9px 2px;
+}
+
 /* error surface (streamed `error` frame — grounding rejection / tool failure) */
 .errbox {
   border: 1px solid color-mix(in srgb, var(--sa-down) 45%, var(--sa-border));
