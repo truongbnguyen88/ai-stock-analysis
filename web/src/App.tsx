@@ -4,9 +4,16 @@ import { TopBar, type View } from "@/components/TopBar";
 import { Stream } from "@/components/Stream";
 import { Hero } from "@/components/Hero";
 import { Composer } from "@/components/Composer";
-import { fetchConfig, fetchCorpus, type ConfigResponse, type CorpusResponse } from "@/lib/api";
+import {
+  fetchConfig,
+  fetchCorpus,
+  fetchThread,
+  type ConfigResponse,
+  type CorpusResponse,
+} from "@/lib/api";
 import { useTheme } from "@/lib/useTheme";
-import { useConversation } from "@/store/conversation";
+import { useConversation, type Turn } from "@/store/conversation";
+import { useThreads } from "@/store/threads";
 
 /**
  * Conversation shell (mockup-exact): the sticky TopBar over a two-column `.shell` (Sidebar + main).
@@ -29,6 +36,12 @@ export default function App() {
   const streaming = useConversation((s) => s.streaming);
   const send = useConversation((s) => s.send);
   const reset = useConversation((s) => s.reset);
+  const loadTurns = useConversation((s) => s.loadTurns);
+  const activeThreadId = useConversation((s) => s.activeThreadId);
+
+  const threads = useThreads((s) => s.items);
+  const refreshThreads = useThreads((s) => s.refresh);
+  const removeThread = useThreads((s) => s.remove);
 
   useEffect(() => {
     fetchConfig()
@@ -45,6 +58,12 @@ export default function App() {
       });
   }, []);
 
+  // Refresh the sidebar chat list whenever the app goes idle: on mount and after each turn settles
+  // (the store persists the transcript before clearing `streaming`, so the saved thread is present).
+  useEffect(() => {
+    if (!streaming) void refreshThreads();
+  }, [streaming, refreshThreads]);
+
   // mode === auto label → "auto" (LLM path); otherwise it's a domain name the API resolves to a
   // granular route (resolve_domain). Keeps routing logic in Python — the client sends the selection.
   const route = config && mode === config.auto_mode ? "auto" : mode || "auto";
@@ -59,6 +78,25 @@ export default function App() {
   };
   const onQuickStart = (prompt: string): void => {
     if (!streaming) onSend(prompt);
+  };
+  // Reopen a saved thread: load its transcript (display-level resume) and switch to the stream view.
+  const onOpenThread = (id: string): void => {
+    fetchThread(id)
+      .then((t) => {
+        loadTurns(t.display_messages as Turn[], t.id);
+        setView("chat");
+      })
+      .catch(() => {
+        /* opening a missing/corrupt thread is a no-op; the list refresh will drop it */
+      });
+  };
+  // Delete a saved thread; if it is the one on screen, fall back to a fresh empty-state chat.
+  const onDeleteThread = (id: string): void => {
+    void removeThread(id);
+    if (id === activeThreadId) {
+      reset();
+      setView("hero");
+    }
   };
 
   return (
@@ -81,6 +119,10 @@ export default function App() {
           mode={mode}
           onMode={setMode}
           onQuickStart={onQuickStart}
+          threads={threads}
+          activeThreadId={activeThreadId}
+          onOpenThread={onOpenThread}
+          onDeleteThread={onDeleteThread}
         />
         <main className="main">
           {error ? (

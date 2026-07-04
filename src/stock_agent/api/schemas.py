@@ -50,6 +50,41 @@ class ExportRequest(BaseModel):
     charts: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ThreadMetaResponse(BaseModel):
+    """One thread descriptor for the sidebar list (mirrors ``chat.history.ThreadMeta``)."""
+
+    id: str
+    title: str
+    created_at: str  # ISO-8601 UTC
+    updated_at: str  # ISO-8601 UTC; the list is sorted by this, most-recent first
+
+
+class ThreadResponse(ThreadMetaResponse):
+    """A full thread: descriptor + display transcript (+ resumable agent history).
+
+    ``display_messages`` is what the sidebar reopens (text + serialized chart/source dicts).
+    ``agent_history`` is the resumable Anthropic-format transcript; empty for now because the
+    SSE stream does not expose it yet (display-level resume is the P2.5b contract).
+    """
+
+    display_messages: list[dict[str, Any]] = Field(default_factory=list)
+    agent_history: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ThreadSaveRequest(BaseModel):
+    """Body for ``POST /threads`` — create or update one thread (display-level persistence).
+
+    An empty ``id`` mints a new thread; an existing ``id`` updates it in place with ``created_at``
+    preserved. An empty ``title`` is derived from the first user message. ``agent_history`` is
+    optional — the SSE stream does not surface it yet, so text+charts is the persisted contract.
+    """
+
+    id: str = ""
+    title: str = ""
+    display_messages: list[dict[str, Any]] = Field(default_factory=list)
+    agent_history: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class KeyStatus(BaseModel):
     """One API-key row for the sidebar key chips (mirrors ``ui.html.keys_row`` tuples)."""
 

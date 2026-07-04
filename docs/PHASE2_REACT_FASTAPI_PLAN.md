@@ -181,7 +181,7 @@ drives the hue. The cross-stack golden keeps Streamlit and React identical on it
 | Method / path | Purpose | Reuses |
 |---|---|---|
 | `POST /chat/stream` | SSE: run a turn, stream `AgentEvent`s | `Router.run_events` |
-| `GET /threads`, `POST /threads`, `DELETE /threads/{id}` | thread CRUD | `ChatStore` (`chat.history`) |
+| `GET /threads`, `GET /threads/{id}`, `POST /threads`, `DELETE /threads/{id}` | thread CRUD (display-level) | `ChatStore` (`chat.history`), nested under a `web/` subdir |
 | `POST /export` | turn text (+ chart PNGs) → pdf/docx/md bytes | `reports.export.export_summary`, `viz.render.to_png` |
 | `GET /corpus` | sidebar status card | `rag.status.corpus_status` |
 | `GET /config` | routing modes, key availability, default ticker | `settings`, `RoutingChoice` metadata |
@@ -314,15 +314,43 @@ Each slice is independently green (`make check` for Python; `pnpm test`/`tsc` fo
   - **Deps:** `zustand`, `react-vega` (v8 → `VegaEmbed`), `vega`, `vega-lite`, `vega-embed`.
     react-vega/Zustand land here per P2.0's "defer to the consuming slice". Vega canvas probe in
     jsdom silenced by a top-level `getContext` stub in the test setup (no chart is really rendered).
-- **P2.4 — True token streaming.** `AnthropicToolClient.stream`; adapter forwards deltas. *Tests:*
-  streaming client unit test against a recorded/faked chunk sequence (no network); multi-chunk →
-  concatenated == single-shot answer.
-- **P2.5 — Threads + export.** `/threads` wired to `ChatStore`; `ExportMenu` popover → `/export`
-  download. *Tests:* thread round-trip (create/list/delete) reuses existing `ChatStore` tests; export
-  bytes non-empty per format (reuses `export_summary` tests).
-- **P2.6 — Empty-state hero + quick starters + parity pass.** `Hero`, capability cards, quick-starter
-  prefill. Side-by-side parity check vs. the mockup and vs. Streamlit (numbers identical). *DoD:*
-  the four ceiling items work; screenshots (light+dark) attached.
+- **P2.4 — True token streaming — ✅ DONE (2026-07-03, PR #58).** `AnthropicToolClient.stream` drives
+  `client.messages.stream` (forwards `text_stream` deltas + one terminal `ToolResponse`); a
+  `@runtime_checkable StreamingToolLLM` Protocol + `stream_turn(llm,…)` route a streaming LLM to
+  `.stream` and fall back to a single-delta `create()` for create-only fakes (every existing test
+  fake unchanged). `run_agent_events` emits the **accepted** answer as multiple `Token` deltas
+  preserving the model's chunk boundaries; grounding runs on the FULL assembled answer **before** any
+  delta yields (an ungrounded figure split across chunks — `"92."+"5%"` — is still caught; the
+  rejected attempt streams no tokens). Backend-only (the P2.3 client already renders multiple `token`
+  frames). Live-during-generation typing deferred (flagged): it fights the grounding guard + §5
+  ordering. *Tests:* `test_token_bridge.py` (`"".join(deltas)==text`; split-figure still rejected),
+  `test_streaming_adapter.py` (buffers→flush at `Final`).
+- **P2.5 — Threads + export — ✅ DONE (2026-07-04).** Shipped in two slices:
+  - **P2.5a Export (commit `6a4a4ef`).** `POST /export` (`api/routes/export.py`) → `reports.export.
+    export_summary` renders the final answer + its `ChartSpec` figures (rasterized via `viz.render.
+    to_png`) to **pdf / docx / md** bytes with the format's MIME + `Content-Disposition` attachment
+    name; unknown fmt / empty text → 422 (never 500). Frontend `ExportMenu` is the app's first **Radix
+    Popover**, shown only on final grounded turns. *Tests:* `test_api_export.py` (6 — magic bytes +
+    MIME per format, chart embedding grows the pdf, md ignores charts, 422 paths), `apiExport.test.ts`
+    (3), `exportMenu.test.tsx` (2).
+  - **P2.5b Threads (this branch).** Display-level persistence: `/threads` CRUD (`api/routes/threads.
+    py`, `chat_store_dep`) over the existing `ChatStore`, nested under a `web/` subdir so the SPA's
+    `Turn[]` transcripts never mix with the Streamlit `{role,content}` shape. Sidebar chat list
+    (open/delete, active-row highlight); the store persists the transcript on finalize (only committed
+    `final` turns; explicit client-derived title since `display_messages` carry no role/content) and
+    reopens it (`loadTurns`, seq-collision-guarded). Best-effort throughout — a persistence/API
+    failure never breaks the chat. Full agent-context resume deferred (SSE doesn't expose
+    `agent_history`). *Tests:* `test_api_threads.py` (5 — CRUD roundtrip, `created_at` preserved on
+    upsert, most-recent-first, 404), `apiThreads.test.ts` (5), `threadsStore.test.ts` (4),
+    `conversationStore.test.ts` (3), `threads.test.tsx` (2 — persist-on-final, list/open/delete).
+- **P2.6 — Empty-state hero + quick starters + parity pass — ✅ DONE (2026-07-04).** `Hero` (eyebrow,
+  cycling typewriter, six hue-coded capability cards each dispatching a canned prompt) + TopBar
+  segmented **CONVERSATION / NEW CHAT** view control (non-destructive toggle; hero-send lazily resets).
+  Fixed a real off-by-one in the mockup's typewriter (froze on phrase 0) by extracting a pure,
+  unit-tested `stepType` state machine. Tool-driven green/red `direction` on tiles + chart (sign of
+  tool numbers only — never the LLM; preserves §2). *Tests:* `hero.test.tsx` (6 — hero shown on empty
+  conversation, card dispatch + view swap, 3 pure typewriter cases). *DoD:* the four ceiling items
+  work; screenshots (light+dark) attached.
   - **Mockup-exact restyle (folded in, decided 2026-07-04).** Ships the ported `web/src/styles/app.css`
     (mockup stylesheet → `--sa-*`) and rebuilds TopBar (brand glyph, disclaimer, dot/mode chips,
     segmented view control, `◐` icon toggle), Sidebar (status card, `$`-ticker field, routing note,

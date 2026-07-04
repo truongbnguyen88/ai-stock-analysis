@@ -1,4 +1,4 @@
-import type { ConfigResponse, CorpusResponse, KeyStatus } from "@/lib/api";
+import type { ConfigResponse, CorpusResponse, KeyStatus, ThreadMeta } from "@/lib/api";
 
 interface SidebarProps {
   config: ConfigResponse | null;
@@ -9,6 +9,20 @@ interface SidebarProps {
   onMode: (m: string) => void;
   /** Dispatch a canned quick-starter prompt through the normal send path (optional). */
   onQuickStart?: (prompt: string) => void;
+  /** Saved chat threads for the list, most-recent first (P2.5b). */
+  threads?: ThreadMeta[];
+  /** The currently open thread id (highlights its row); null when the chat is unsaved. */
+  activeThreadId?: string | null;
+  /** Reopen a saved thread by id (loads its transcript). */
+  onOpenThread?: (id: string) => void;
+  /** Delete a saved thread by id. */
+  onDeleteThread?: (id: string) => void;
+}
+
+/** Compact monospace date for a chat row (e.g. "Jul 4"); '' if the ISO string is unparseable. */
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 interface Starter {
@@ -31,11 +45,62 @@ const STARTERS: Starter[] = [
  * starters, and API-key chips — all driven by live /config + /corpus (the P2.0 DoD). The saved-chat
  * list lands with threads (P2.5).
  */
-export function Sidebar({ config, corpus, ticker, onTicker, mode, onMode, onQuickStart }: SidebarProps) {
+export function Sidebar({
+  config,
+  corpus,
+  ticker,
+  onTicker,
+  mode,
+  onMode,
+  onQuickStart,
+  threads = [],
+  activeThreadId = null,
+  onOpenThread,
+  onDeleteThread,
+}: SidebarProps) {
   return (
     <aside className="side">
       <div className="side-sec">
         <StatusCard corpus={corpus} />
+      </div>
+
+      <div className="side-sec">
+        <div className="label">Chats</div>
+        {threads.length === 0 ? (
+          <div className="route-note">No saved chats yet.</div>
+        ) : (
+          <div className="chats">
+            {threads.map((t) => (
+              <div
+                key={t.id}
+                className={`chatrow${t.id === activeThreadId ? " active" : ""}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpenThread?.(t.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onOpenThread?.(t.id);
+                  }
+                }}
+              >
+                <span className="ct">{t.title}</span>
+                <span className="cd">{shortDate(t.updated_at)}</span>
+                <button
+                  type="button"
+                  className="trash"
+                  aria-label={`Delete ${t.title}`}
+                  onClick={(e) => {
+                    e.stopPropagation(); // don't also open the thread we're deleting
+                    onDeleteThread?.(t.id);
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="side-sec">
