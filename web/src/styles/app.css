@@ -1028,3 +1028,180 @@
   }
   /* .capgrid intentionally omitted here — its auto-fill/minmax already reflows on narrow widths. */
 }
+
+/* ── rendered answer (Markdown) ──────────────────────────────────────────────
+   The assistant's grounded prose is GitHub-flavored Markdown, parsed by
+   components/Markdown.tsx (react-markdown + remark-gfm) into semantic HTML and
+   styled here, scoped under `.md`. Goals: brass section headers (no literal
+   "##"), real aligned tables, tabular figures, and readable lists/quotes/code —
+   all via the shared --sa-* tokens so it tracks the light/dark theme. */
+.md {
+  line-height: 1.6;
+  color: var(--sa-text);
+}
+.md > :first-child {
+  margin-top: 0;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md p {
+  margin: 0 0 12px;
+}
+.md strong {
+  color: var(--sa-text);
+  font-weight: 650;
+}
+.md em {
+  font-style: italic;
+}
+
+/* Section headers — colored (brass), larger, bold; the "##" markers are gone (parsed away). h2 is
+   the primary section ("📅 5. Earnings Context") with a hairline divider; h3 is a lighter subsection.
+   Emoji keep their own glyph color; `color` only tints the text. */
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  color: var(--sa-accent);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: -0.005em;
+}
+.md h1 {
+  font-size: 21px;
+  margin: 24px 0 12px;
+}
+.md h2 {
+  font-size: 17px;
+  margin: 24px 0 11px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--sa-accent-line);
+}
+.md h3 {
+  font-size: 14.5px;
+  font-weight: 650;
+  margin: 18px 0 8px;
+}
+.md h4 {
+  font-size: 12.5px;
+  font-weight: 650;
+  margin: 16px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--sa-muted);
+}
+
+/* Links (sources / SEC filings) — accent with a hairline underline that solidifies on hover. */
+.md a {
+  color: var(--sa-accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--sa-accent-line);
+  transition: border-color 0.15s;
+}
+.md a:hover {
+  border-bottom-color: var(--sa-accent);
+}
+
+/* Lists */
+.md ul,
+.md ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+.md li {
+  margin: 3px 0;
+}
+.md li::marker {
+  color: var(--sa-faint);
+}
+.md li > ul,
+.md li > ol {
+  margin: 3px 0 3px;
+}
+
+/* Blockquote — brass rail, muted text (callouts / caveats). */
+.md blockquote {
+  margin: 0 0 12px;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--sa-accent-line);
+  color: var(--sa-muted);
+}
+.md blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+/* Horizontal rule — section divider. */
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--sa-border);
+  margin: 20px 0;
+}
+
+/* Inline code (tickers, figures) and fenced blocks. */
+.md code {
+  font-family: var(--sa-font-mono);
+  font-size: 0.86em;
+  background: var(--sa-surface-2);
+  border: 1px solid var(--sa-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: var(--sa-text);
+}
+.md pre {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: var(--sa-surface-2);
+  border: 1px solid var(--sa-border);
+  border-radius: var(--sa-r-sm);
+}
+.md pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+/* Tables (remark-gfm pipe tables) — the headline fix. A wide table scrolls INSIDE this wrapper so it
+   never forces the whole page to scroll horizontally (the wrapper is emitted by Markdown.tsx). Figures
+   use tabular-nums so digits line up column-wise; GFM column alignment (`:--`, `--:`) arrives as an
+   inline text-align on th/td and wins over these defaults. */
+.md-tablewrap {
+  overflow-x: auto;
+  margin: 0 0 14px;
+  border: 1px solid var(--sa-border);
+  border-radius: var(--sa-r-sm);
+}
+.md table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.md thead th {
+  background: var(--sa-surface-2);
+  text-align: left;
+  font-family: var(--sa-font-mono);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--sa-muted);
+  font-weight: 600;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--sa-border);
+  white-space: nowrap;
+}
+.md tbody td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--sa-border);
+  color: var(--sa-text);
+  vertical-align: top;
+}
+.md tbody tr:last-child td {
+  border-bottom: 0;
+}
+.md tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--sa-surface-2) 45%, transparent);
+}

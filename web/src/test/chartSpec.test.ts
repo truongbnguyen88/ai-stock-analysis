@@ -28,6 +28,35 @@ describe("chartSpecToVegaLite", () => {
     expect(asRec(vl.data).values).toHaveLength(3);
   });
 
+  it("sizes charts with a concrete width+height (fixed intrinsic size, fit autosize)", () => {
+    // Regression for the "tall & skinny" bug AND the "chart invisible" regression: without an
+    // explicit width the band-scale bar renders ~step*nBands wide at 200px tall; with
+    // width:"container" the SVG collapsed to ~0 (the .chart wrapper measures its child, which
+    // max-width:100%'s back to the wrapper). A concrete px width avoids both; .chart svg's
+    // max-width:100% then downscales on narrow screens. Bar is 600x260; reliability is squarer.
+    const bar = asRec(chartSpecToVegaLite(FORECAST_CHART));
+    expect(bar.width).toBe(600);
+    expect(bar.height).toBe(260);
+    expect(asRec(bar.autosize).type).toBe("fit");
+    expect(asRec(bar.autosize).contains).toBe("padding");
+
+    const reliability = asRec(
+      chartSpecToVegaLite({
+        title: "Calibration",
+        kind: "reliability",
+        x: "predicted",
+        y: "realized",
+        caption: "",
+        color: null,
+        x_sort: null,
+        y_is_percent: false,
+        data: { predicted: [0.2], realized: [0.3] },
+      }),
+    );
+    expect(reliability.width).toBe(340);
+    expect(reliability.height).toBe(320);
+  });
+
   it("colors a bar by tool-driven direction (up=green, down=red, neutral=brass)", () => {
     const spec: ChartSpecDict = {
       title: "Large-move breakdown",

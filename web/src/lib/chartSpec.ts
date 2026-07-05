@@ -84,9 +84,25 @@ export function chartSpecToVegaLite(spec: ChartSpecDict): VisualizationSpec {
   const cols = Object.keys(spec.data);
   const yAxis = spec.y_is_percent ? { format: "%" } : {};
   const xSort = spec.x_sort ?? "ascending";
+  // Sizing (fixes the "tall & skinny" render): a band-scale bar with no explicit width defaults to
+  // ~step*nBands (very narrow with few bars) at a fixed 200px height. We give a concrete intrinsic
+  // width/height instead — NOT `width:"container"`. Container sizing measures the mount element via a
+  // ResizeObserver, but our `.chart` wrapper has `overflow-x:auto` and its child SVG is styled
+  // `max-width:100%`, so the wrapper's width resolves against a child that itself sizes to the
+  // wrapper → the measured width collapses to ~0 and the chart renders invisible. A fixed px width
+  // avoids that entirely; the existing `.chart svg { max-width:100%; height:auto }` then scales the
+  // SVG *down* proportionally on narrow screens (responsive without depending on measurement). The
+  // content box is ~643px (760 − page/msg/card padding); 600 fits desktop with margin, reliability
+  // is squarer (its X and Y share the 0..1 domain). Python's PNG export is 560x300 — same spirit.
+  const reliability = spec.kind === "reliability";
+  const width = reliability ? 340 : 600;
+  const height = reliability ? 320 : 260;
   const base = {
     $schema: "https://vega.github.io/schema/vega-lite/v6.json",
     title: spec.title,
+    width,
+    height,
+    autosize: { type: "fit", contains: "padding" },
     config: vlConfig(),
   };
 
