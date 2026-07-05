@@ -7,20 +7,19 @@ import { ExportMenu } from "@/components/ExportMenu";
 import { Markdown } from "@/components/Markdown";
 
 /**
- * The assistant side of a turn, composed in the mockup's summary-before-detail order (plan §5):
- * tiles → chart(s) → prose → trace → sources. Prose is PROVISIONAL while streaming (brass caret);
- * on `error` the provisional prose is already cleared by the reducer and we show an error surface
- * instead (the client never persists unguarded prose, §5).
+ * The assistant side of a turn, composed summary-before-detail (plan §5): tiles → prose →
+ * figures(charts) → trace → sources. Charts sit AFTER the prose as a "Figures" group rather than
+ * stacked above the first line: the narrative is organized into LLM-chosen sections we can't map a
+ * given chart to (chart origin is the tool, not a section), so grouping the plots below the text
+ * reads better than a wall of plots before any words. Tiles stay on top as the KPI summary strip.
+ * Prose is PROVISIONAL while streaming (brass caret); on `error` the reducer has already cleared it
+ * and we show an error surface instead (the client never persists unguarded prose, §5).
  */
 export function AssistantTurn({ turn }: { turn: Turn }) {
   const streaming = turn.status === "streaming";
   return (
     <div data-testid="assistant-turn" data-status={turn.status}>
       <TileRow tiles={turn.tiles} />
-
-      {turn.charts.map((spec, i) => (
-        <ChartCard key={`${spec.title}-${i}`} spec={spec} />
-      ))}
 
       {turn.status === "error" ? (
         <div className="errbox">
@@ -41,6 +40,16 @@ export function AssistantTurn({ turn }: { turn: Turn }) {
         ) : (
           <Markdown>{turn.answer}</Markdown>
         ))
+      )}
+
+      {turn.charts.length > 0 && (
+        <div className="figures">
+          {/* Label only when there's prose above to divide from (a chart-only turn needs no header). */}
+          {turn.answer && <div className="figures-label">Figures</div>}
+          {turn.charts.map((spec, i) => (
+            <ChartCard key={`${spec.title}-${i}`} spec={spec} />
+          ))}
+        </div>
       )}
 
       {streaming && !turn.answer && turn.trace.length === 0 && (

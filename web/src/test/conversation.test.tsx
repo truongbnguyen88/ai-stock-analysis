@@ -66,7 +66,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("conversation flow", () => {
-  it("renders a streamed forecast turn: user bubble, tiles, trace, chart, prose", async () => {
+  it("renders a streamed forecast turn: user bubble, tiles, prose, figures(chart), trace", async () => {
     stubStream(FORECAST_TURN);
     render(<App />);
     await waitFor(() => expect(screen.getByLabelText("Ticker symbol")).toHaveValue("NVDA"));
@@ -74,12 +74,18 @@ describe("conversation flow", () => {
     await userEvent.type(screen.getByLabelText("Message"), "forecast NVDA");
     await userEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // The folded turn renders in §5 order: tiles, chart, prose, resolved trace.
+    // The folded turn renders in order: tiles, prose, figures(chart), resolved trace.
     await waitFor(() => expect(screen.getByText("mildly up", { exact: false })).toBeInTheDocument());
     expect(screen.getByText("forecast NVDA")).toBeInTheDocument(); // user bubble
     expect(screen.getByText("P(up)")).toBeInTheDocument();
     expect(screen.getByText("58%")).toBeInTheDocument();
-    expect(screen.getByTestId("vega")).toHaveAttribute("data-title", "Scenario probabilities");
+    const chart = screen.getByTestId("vega");
+    expect(chart).toHaveAttribute("data-title", "Scenario probabilities");
+    // Charts now render as a "Figures" group AFTER the prose (not stacked above the first section):
+    // the prose element must precede the chart in document order, under a "Figures" header.
+    const prose = screen.getByText("mildly up", { exact: false });
+    expect(prose.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Figures")).toBeInTheDocument();
     // Trace chip resolved (✓) for the forecast tool.
     expect(screen.getByText("run_forecast")).toBeInTheDocument();
     const turn = screen.getByTestId("assistant-turn");

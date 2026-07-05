@@ -564,6 +564,20 @@
   color: var(--sa-faint);
   margin-top: 9px;
 }
+/* charts grouped below the narrative ("Figures"), not stacked above the first section */
+.figures {
+  margin-top: 2px;
+}
+.figures-label {
+  font-family: var(--sa-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sa-faint);
+  margin: 14px 0 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sa-border);
+}
 .legend {
   display: flex;
   gap: 14px;
