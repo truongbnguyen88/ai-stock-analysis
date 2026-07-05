@@ -8,6 +8,8 @@ Every expected vector is hand-computed against FEATURE_NAMES:
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping, Sequence
+
 from stock_agent.rag.policy_features import FEATURE_NAMES, N_FEATURES, featurize
 
 # Small deterministic fixtures (no file I/O, no model).
@@ -15,8 +17,17 @@ ALIAS = {"NVDA": ["NVIDIA"], "AMD": ["AMD", "Advanced Micro Devices"], "MU": ["M
 UNIVERSE = {"NVDA", "AMD", "MU"}
 
 
-def _vec(*args, **kwargs) -> list[float]:
-    return featurize(*args, **kwargs).values.tolist()
+def _vec(
+    query: str,
+    *,
+    ticker: str | None = None,
+    alias_map: Mapping[str, Sequence[str]] | None = None,
+    graph_universe: Collection[str] | None = None,
+) -> list[float]:
+    vec = featurize(
+        query, ticker=ticker, alias_map=alias_map, graph_universe=graph_universe
+    ).values.tolist()
+    return [float(v) for v in vec]
 
 
 def test_risk_scoped_single_entity() -> None:
