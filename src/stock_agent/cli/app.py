@@ -55,6 +55,14 @@ from stock_agent.rag.pipeline import (
     build_chunks,
     bulk_ingest,
 )
+from stock_agent.rag.policy import ARMS
+from stock_agent.rag.policy_eval import (
+    PolicyEvalReport,
+    build_dataset,
+    evaluate_offline,
+    split_dataset,
+)
+from stock_agent.rag.policy_retriever import build_arm_system
 from stock_agent.rag.read_path import (
     LATTICE_SYSTEMS,
     build_graph_system,
@@ -1533,3 +1541,120 @@ def rag_gen_multistep(
                 json.dumps([q.model_dump(mode="json") for q in rows], indent=2), encoding="utf-8"
             )
         typer.echo(f"Group-wise split (D2): {len(train)} train / {len(test)} test written.")
+
+
+def _format_policy_eval(report: PolicyEvalReport) -> str:
+    """Human-readable verdict table: per-policy value + the promote/reject decision."""
+    lines = [
+        f"Policy eval — {report.n_train} train / {report.n_test} test "
+        f"(seed={report.seed}, λ_c={report.lambda_cost:g}, arms={list(report.arms)})",
+        "",
+        f"  {'policy':<24}{'DR':>8}{'  95% CI':>18}{'true':>8}{'ESS':>8}",
+    ]
+    for v in sorted(report.values, key=lambda x: x.dr, reverse=True):
+        ci = f"[{v.dr_ci[0]:+.3f},{v.dr_ci[1]:+.3f}]"
+        lines.append(f"  {v.name:<24}{v.dr:>8.3f}{ci:>18}{v.true_value:>8.3f}{v.ess:>8.1f}")
+    lines += [
+        "",
+        f"  best fixed : {report.best_fixed}",
+        f"  bandit     : {report.bandit}",
+        f"  Δ DR       : {report.delta_dr:+.4f}  CI [{report.delta_ci[0]:+.4f}, "
+        f"{report.delta_ci[1]:+.4f}]",
+        "  per-stratum (bandit − best fixed):",
+    ]
+    for s in report.per_stratum:
+        lines.append(
+            f"    {s.stratum:<5} n={s.n:<4} bandit={s.dr_bandit:+.3f} "
+            f"fixed={s.dr_fixed:+.3f} Δ={s.delta:+.4f}"
+        )
+    lines += ["", f"  VERDICT: {report.rationale}"]
+    return "\n".join(lines)
+
+
+@rag_app.command("policy-eval")
+def rag_policy_eval(
+    queries: Annotated[
+        Path, typer.Option("--queries", "-q", help="Benchmark JSON (list of MultiHopQuery)")
+    ] = Path("configs/rag_eval_multistep_generated.json"),
+    policy: Annotated[
+        str, typer.Option("--policy", help="Learned bandit to judge: linucb | epsilon_greedy")
+    ] = "linucb",
+    test_frac: Annotated[
+        float, typer.Option("--test-frac", help="Group-wise held-out fraction (leakage-safe)")
+    ] = 0.3,
+    seed: Annotated[
+        int, typer.Option("--seed", help="RNG seed (split + mu-logs + bootstrap)")
+    ] = 42,
+    alpha: Annotated[float, typer.Option("--alpha", help="LinUCB exploration weight")] = 1.0,
+    epsilon: Annotated[
+        float, typer.Option("--epsilon", help="epsilon-greedy exploration rate")
+    ] = 0.1,
+    lambda_cost: Annotated[
+        float | None,
+        typer.Option("--lambda-cost", help="Cost weight λ_c (default settings.reward_lambda_cost)"),
+    ] = None,
+    top_k: Annotated[
+        int | None, typer.Option("--top-k", help="Retrieval depth (default settings.rag_top_k)")
+    ] = None,
+    graph_universe: Annotated[
+        Path, typer.Option("--graph-universe", help="Graph universe file (in_graph_universe flag)")
+    ] = Path("configs/graph_universe.txt"),
+    n_boot: Annotated[
+        int, typer.Option("--n-boot", help="Group-bootstrap resamples for the CIs")
+    ] = 1000,
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Verdict JSON path (default timestamped)")
+    ] = None,
+) -> None:
+    """Train the retrieval bandit offline and judge it vs the best fixed arm (A6.1f verdict, local).
+
+    Builds the 5-arm reward matrix over the benchmark ($0 retrieval — needs the ingested corpus +
+    the A5 graph, like `rag eval-multistep`), group-splits it, fits the learned policy on train, and
+    off-policy-evaluates (IPS/SNIPS/DR + group bootstrap CI) on the held-out test fold. Applies the
+    pre-registered rule: promote `adaptive_retrieval` iff `DR(bandit) − DR(best fixed)` clears the
+    95% CI and does not regress the CTRL stratum. Writes the verdict JSON for the notes docs.
+    """
+    from datetime import UTC, datetime
+
+    settings = get_settings()
+    configure_logging(settings)
+    if policy not in ("linucb", "epsilon_greedy"):
+        typer.echo("--policy must be 'linucb' or 'epsilon_greedy' (a learned bandit).")
+        raise typer.Exit(code=1)
+    if not queries.exists():
+        typer.echo(f"Benchmark not found: {queries} (generate via `rag gen-multistep`).")
+        raise typer.Exit(code=1)
+
+    labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    alias_map = load_alias_map()
+    universe = load_universe(graph_universe) if graph_universe.exists() else None
+    # ARMS order == reward-matrix column order == policy action order (non-negotiable alignment).
+    systems = {name: build_arm_system(name, settings) for name in ARMS}
+    dataset = build_dataset(
+        labeled,
+        systems,
+        settings=settings,
+        alias_map=alias_map,
+        graph_universe=universe,
+        lambda_cost=lambda_cost,
+        top_k=top_k,
+    )
+    train, test = split_dataset(dataset, labeled, test_frac=test_frac, seed=seed)
+    lam = lambda_cost if lambda_cost is not None else settings.reward_lambda_cost
+    report = evaluate_offline(
+        train,
+        test,
+        bandit=policy,
+        alpha=alpha,
+        epsilon=epsilon,
+        lambda_cost=lam,
+        n_boot=n_boot,
+        seed=seed,
+    )
+    typer.echo(_format_policy_eval(report))
+
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    out = out or Path(f"outputs/rag_eval/policy_eval_{ts}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report.to_json_dict(), indent=2), encoding="utf-8")
+    typer.echo(f"\nWrote verdict to {out}")
