@@ -1447,3 +1447,126 @@ is a **local** run (like the model backtests).
 `test_multistep_gen.py` (probe HARD/MED/discard, group split disjointness + determinism, generator
 strata/dedup/cap/target-sampling/determinism over a temp graph + InMemory corpus);
 `test_rag_sparse_store.py` (parametrized `iter_chunks` exhaustive + filtered).
+
+## A6.1 — Contextual bandits + off-policy evaluation (`rag/policy*.py`, `rag/ope.py`, `rag/reward.py`, `rag policy-eval`) ✅ (infra; verdict = local run)
+
+**Role.** Treat retrieval-config selection as a **one-shot contextual bandit**: a featurized query
+(context `x`) → a **policy** `π(a|x)` picks one of 5 retrieval **arms** `a` → earns a scalar
+**reward** `r = quality − λ_c·cost`. Learn the policy **offline** from a logged dataset and evaluate
+it **off-policy** (never deploy to measure); **promote only if** it beats the best fixed arm past a
+group-bootstrap CI on a group-wise held-out split. A rigorous **negative** is an acceptable outcome —
+the logging + OPE + bandit infrastructure is the durable artifact either way. Theory (the *why/math*)
+lives in [rag_concepts.md §18](rag_concepts.md); this section is the *how/where*.
+
+**Action space (the alignment invariant).** `ARMS = ("dense", "reranked", "hybrid", "hybrid+rerank",
+"graph")` = the 4 `LATTICE_SYSTEMS` (`read_path.build_named_system`) + the A5 `graph` arm
+(`build_graph_system`). This integer order is used **everywhere** — `reward_matrix` columns (c),
+OPE `target_probs` columns (d), and policy action indices (e) — so a policy's action, the reward
+matrix, and the importance weights line up **without a name lookup**. `policy.py` keeps `ARMS` as a
+literal (to stay pure-numpy, no retrieval-backend import) with a drift-guard test pinning
+`ARMS == (*LATTICE_SYSTEMS, "graph")`.
+
+**Slice-by-slice mechanism.**
+
+- **a — Telemetry** (`schemas/retrieval_log.py`, `rag/retrieval_log.py`). `RetrievalLogEntry` is the
+  atomic OPE row: the bandit tuple `(context x, action a, propensity μ(a|x), reward r)` + provenance
+  (query/ticker, retrieved chunk ids+scores, optional downstream answer/guard, seed). `log_retrieval`
+  appends **JSONL** (O(1) append; a crash costs ≤1 line) under `settings.retrieval_log_dir`, gated by
+  `settings.retrieval_logging` (default-OFF ⇒ **no-op**, no file). `read_log` tolerates blank/malformed
+  final lines. The **propensity** is the crucial field: OPE divides by it, so a deterministic logger
+  writes `None` (unusable for IPS) while the uniform logger writes `1/K` exactly.
+
+- **b — Featurizer** (`rag/policy_features.py`). Pure `featurize(query, *, ticker, alias_map,
+  graph_universe) -> ContextVector` over a stable 11-dim `FEATURE_NAMES` = `[bias, n_tokens,
+  has_ticker, n_entities, is_bridging, qtype_{risk,financial,business,overview,bridging},
+  in_graph_universe]`. **Leakage rule 1 (non-negotiable):** label-free — it reads only the query
+  text + alias map + `graph_universe.txt`, **never** the gold `stratum`/`relation`/`qtype` (the answer
+  key). `is_bridging`/`n_entities` reuse the *canonical* `research.bridge` helpers (lazy-imported to
+  break the `rag↔research` cycle) so the features mean exactly what A4/A5 bridging means.
+  `in_graph_universe` is the signal separating "graph helps" (semis bridges, ticker in the graph) from
+  "graph = hybrid + cost" (e.g. AAPL, no edges).
+
+- **c — Reward oracle** (`rag/reward.py`). `reward(system, labeled, *, arm, settings, …) = quality −
+  λ_c·cost(arm)`, retrieval-only and **$0** (no synthesis). `quality` dispatches on label type:
+  `LabeledQuery` → `evaluate_query(...).ndcg` (graded nDCG@k); `MultiHopQuery` → single-shot aspect
+  `coverage` of one `retrieve()` — **reusing the A6.0 metric verbatim** (leakage rule 3, no drift).
+  `cost(arm)` = `DEFAULT_ARM_COSTS` (`dense=0, hybrid=0.1, reranked=0.3, hybrid+rerank=0.4,
+  graph=0.3`) — the **reward-hacking guard** (an arm must earn its compute in quality). The `λ_f`
+  faithfulness term is **deferred** (needs a synthesis call A6.1 never runs), field kept at 0.
+  `reward_matrix(systems, queries)` evaluates **every arm on every query** → the $0 **full-information
+  matrix** `R[N,K]`: both the ground truth OPE is checked against and the pool the logging policy
+  subsamples. Column order = `systems` insertion order (pass `ARMS` order).
+
+- **d — OPE** (`rag/ope.py`). Three estimators of the value `V(π) = E_x E_{a∼π}[r(x,a)]` from a
+  `μ`-log: **IPS** `mean(w_i r_i)` with `w_i = π(a_i|x_i)/μ(a_i|x_i)` (unbiased under full support,
+  high variance); **SNIPS** `Σ w_i r_i / Σ w_i` (self-normalized, bounded in `[min r, max r]`);
+  **DR** = direct model `q̂(x,a)` + IPS correction on its residual (consistent if *either* `q̂` or the
+  propensities are right; lower variance). `q̂` is per-arm **ridge** (numpy normal equations, same
+  linear form as LinUCB); with `q̂≡0` DR collapses exactly to IPS (tested). Kish **ESS**
+  `(Σw)²/Σw²` is the trust diagnostic. CIs are a **group-level bootstrap** — resample *groups* (bridge
+  pairs), not rows, honouring the A6.0 group structure (anti-pseudo-replication). All functions take
+  plain arrays, so OPE is decoupled from the Policy class.
+
+- **e — Policies** (`rag/policy.py`). A `Policy` Protocol = `name` + `n_arms` + `act(x) -> (action,
+  propensity)` + `prob(a, x) -> float`; `target_prob_matrix(policy, X)` is the single bridge to OPE
+  (turns a policy into the `[N,K]` `π(a|x)` matrix). Four policies: **UniformPolicy** (logging `μ`,
+  `μ(a|x)=1/K`, full support ⇒ OPE exact — the dataset synthesizer); **FixedPolicy** (one arm, the
+  baseline to beat = the promoted default; deterministic one-hot); **EpsilonGreedy** (greedy =
+  `argmax_a x·θ_a` over the ridge `q̂`, explore w.p. `ε`; `π(a|x)=ε/K + (1−ε)·1[a=greedy]`);
+  **LinUCB** (disjoint linear UCB — per-arm `A_a=λI+Σxxᵀ`, `θ_a=A_a⁻¹b_a`, score `θ_aᵀx +
+  α√(xᵀA_a⁻¹x)`; fit **offline** in one batch pass). Pure numpy (leakage rule 5 — torch is A6.2).
+
+- **f — Gated serving + verdict** (`rag/policy_retriever.py`, `rag/policy_eval.py`, `rag policy-eval`).
+  - **`PolicyRetriever`** wraps any policy in the `RetrievalSystem` contract: `featurize(query) →
+    policy.act(x) → build/cache the chosen arm → delegate retrieve → log (a, when on)`. Arms are
+    built by `build_arm_system` (dispatches `graph` → `build_graph_system`, else `build_named_system`)
+    and **cached per instance** (an embedder/store loads at most once per arm). Context sources
+    (`alias_map`, `graph_universe`) default to `None` = "lazy-load the real ones"; explicit (even
+    empty) values are used verbatim (tests pass `{}`/`set()` ⇒ no I/O). It **only routes** — adds no
+    chunks, reorders nothing — so every numbers/grounding invariant is untouched.
+  - **`policy_eval.py`** is the offline **"training procedure"** (batch, not online): `build_dataset`
+    (the $0 `R[N,K]` + label-free `X[N,d]`; contexts use `q.seed` as the scoped ticker) → `split_dataset`
+    (reuses the canonical `split_multihop`, recovers row indices by object identity, so a bridge pair
+    never straddles the fold) → z-score standardize contexts using **train stats only** (bias/constant
+    columns pass through) → `synthesize_log` a uniform `μ`-log on each fold (partial feedback: each row
+    sees only the sampled arm's reward) → `fit_learned_policies` on train (LinUCB + ε-greedy, numpy
+    normal-equations, no gradient descent) → `off_policy_evaluate` every candidate (5 fixed + 2 learned)
+    on the test `μ`-log (DR headline + IPS/SNIPS + true value from `R_test`) → pick best fixed by DR →
+    `_paired_delta` (`DR(bandit) − DR(best fixed)`, group-bootstrap CI on the paired difference, +
+    per-stratum HARD/MED/CTRL) → **pre-registered verdict**: `promote = Δ>0 ∧ CI_low>0 ∧ no CTRL
+    regression`. Deterministic given `seed` (μ-train=seed, μ-test=seed+1, bootstrap=seed).
+  - **`rag policy-eval` CLI** builds the 5 arms in `ARMS` order, runs the harness, prints the
+    per-policy value table + verdict, and writes `outputs/rag_eval/policy_eval_<ts>.json`.
+
+**Config flags** (`settings.py`, all default-OFF / inert): `retrieval_logging`, `retrieval_log_dir`,
+`reward_lambda_cost=0.05`, `reward_lambda_faithfulness=0.0` (deferred), `adaptive_retrieval=False`,
+`bandit_policy="fixed"`. With these unchanged the read path is **byte-identical to A5.3**. The static
+cost vector `c(a)` lives in `reward.DEFAULT_ARM_COSTS` (single source of truth) rather than a settings
+dict — `reward_lambda_cost` is the tunable price (avoids pydantic dict-from-env friction).
+
+**Deliberate boundary (why `adaptive_retrieval` is still inert).** `PolicyRetriever` is complete and
+injectable (it satisfies `RetrievalSystem`, so it can be passed as `ToolExecutor(retriever=…)` →
+`_injected_base`, the PR-#43 injection point). But auto-wiring it into `build_retrieval_system` under
+`adaptive_retrieval=True` needs a **persisted trained policy** — and A6.1 does not persist one because
+*training is the verdict run*. So promotion is a small follow-up (serialize the fitted LinUCB/ε-greedy
+weights + load them behind the flag), taken **only if** the verdict says promote. This keeps invariant
+4 (default-OFF) exact and avoids shipping a half-wired code path.
+
+**CI vs local.** CI (offline, no model/graph/corpus): telemetry round-trip + off-noop; featurizer
+goldens; reward composite + reward-hacking sentinel; hand-computed IPS/SNIPS/DR + `DR=IPS@q̂≡0` +
+SNIPS-hull; policy seeded determinism + hand-checked LinUCB toy; `PolicyRetriever` arm-selection /
+caching / gated logging with a `FakePolicy`; harness log-synthesis, standardizer bias-preservation,
+**contextual-optimum promote**, **no-signal reject**, ε-greedy learns, DR≈true under full support, and
+the leakage-safe **split-disjoint** check. **Local (the verdict, pending):** `python -m stock_agent
+rag policy-eval --queries configs/rag_eval_multistep_generated.json --policy linucb` over the 212-Q
+benchmark ($0 retrieval; needs NVDA/MU/AMD/INTC 10-K + TSM 20-F ingested and the graph built for
+`configs/graph_universe.txt`) → writes the verdict JSON; record it in
+[validations_results.md](validations_results.md).
+
+**Decisions.** (a) Primary benchmark = the 212-Q multi-hop set (coverage reward; the A5.3
+context-dependent optimum HARD→graph / CTRL→hybrid is exactly what a *contextual* policy can exploit
+and a fixed one cannot). (b) 5 arms; `top_k`/`section` variants deferred. (c) Ridge/LinUCB =
+hand-rolled numpy normal equations (no sklearn). (d) `λ_c=0.05`; sensitivity-test 0/0.05/0.1 in the
+verdict run via `--lambda-cost`. (e) Best fixed selected by **DR** (not true value) — the honest
+deploy-time comparison. (f) Standardize contexts (train-fit) so LinUCB's `√(xᵀA⁻¹x)` bonus and the
+ridge conditioning are scale-sane; constant/bias columns pass through unchanged.

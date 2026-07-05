@@ -245,6 +245,24 @@ class Settings(BaseSettings):
     # since additive — non-graph corpora are unaffected (empty traversal).
     graph_multistep_enabled: bool = True
 
+    # Retrieval-as-decision (advanced-RAG A6.1 — contextual bandits + off-policy evaluation). All
+    # default-OFF / inert: with these unchanged the read path is byte-identical to A5.3. A6.1a adds
+    # only the telemetry writer; featurizer/reward/OPE/policy flags land with A6.1c-f.
+    retrieval_logging: bool = False  # A6.1a: append each retrieval decision to JSONL (else no-op)
+    retrieval_log_dir: Path = Path("data/retrieval_logs")  # append-only JSONL telemetry (gitignore)
+    # A6.1c reward = quality (nDCG / single-shot coverage, $0) − λ_c·cost(arm) − λ_f·(guard fails).
+    # λ_c prices compute in quality units (the reward-hacking guard); λ_f is DEFERRED (needs a
+    # synthesis call A6.1 does not run) — kept at 0 so A6.2/opt-in synth-in-loop can switch it on.
+    reward_lambda_cost: float = 0.05  # weight on the static per-arm cost proxy (sensitivity-tested)
+    reward_lambda_faithfulness: float = 0.0  # DEFERRED faithfulness/guard-failure penalty weight
+    # A6.1f: route each query's retrieval through the learned bandit policy (PolicyRetriever) in
+    # place of the fixed A5.3 default. Default-OFF ⇒ byte-identical read path; flip on only after a
+    # verdict run (rag policy-eval) shows a promotion. `bandit_policy` selects which trained policy
+    # PolicyRetriever serves when adaptive is on. The static per-arm cost vector c(a) lives in
+    # `rag.reward.DEFAULT_ARM_COSTS` (the single source of truth); `reward_lambda_cost` prices it.
+    adaptive_retrieval: bool = False  # wire PolicyRetriever into the read path (else fixed default)
+    bandit_policy: Literal["fixed", "epsilon_greedy", "linucb"] = "fixed"  # served policy when on
+
     @property
     def earnings_priority(self) -> list[str]:
         """Ordered earnings-provider fallback chain (highest priority first)."""
