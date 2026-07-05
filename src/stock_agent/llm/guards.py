@@ -133,6 +133,18 @@ _ANY_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 # decimals. Bare integers (years, day counts) are intentionally not checked.
 _CHECK_NUMBER = re.compile(r"-?\d+(?:\.\d+)?%|-?\d+\.\d+")
 
+# Thousands-separator commas. Tools return figures as plain floats (e.g. 1043.27),
+# but an LLM writes them back in prose with grouping commas ("1,043.27"). The number
+# patterns above can't span the comma, so they would latch onto the trailing group
+# ("043.27") and mis-flag a legitimately grounded figure. Strip only *genuine*
+# separators — a comma with a digit before and exactly three digits then a
+# non-digit/end after — so list-style "1,2,3" is left intact (no spurious merge).
+_THOUSANDS_SEP = re.compile(r"(?<=\d),(?=\d{3}(?:\D|$))")
+
+
+def _strip_thousands(text: str) -> str:
+    return _THOUSANDS_SEP.sub("", text)
+
 
 def _normalized_forms(value: float) -> set[float]:
     """Rounded fraction- and percent-scaled forms used for matching."""
@@ -169,8 +181,9 @@ class NumberGrounding:
             for item in obj:
                 self.add_from(item)
         elif isinstance(obj, str):
-            # Ground numbers embedded in text (e.g. "revenue up 20%").
-            for match in _ANY_NUMBER.finditer(obj):
+            # Ground numbers embedded in text (e.g. "revenue up 20%"); drop grouping
+            # commas first so "$1,043.27" grounds as 1043.27, not 1 + 043.27.
+            for match in _ANY_NUMBER.finditer(_strip_thousands(obj)):
                 try:
                     self.add_value(float(match.group(0)))
                 except ValueError:
@@ -180,7 +193,9 @@ class NumberGrounding:
         """Return distinct numeric tokens in ``text`` not traceable to an input."""
         violations: list[str] = []
         seen: set[str] = set()
-        for match in _CHECK_NUMBER.finditer(text):
+        # Normalize grouping commas so "1,043.27" is checked as the token 1043.27
+        # (matching how tools ground it), not the spurious fragment 043.27.
+        for match in _CHECK_NUMBER.finditer(_strip_thousands(text)):
             token = match.group(0)
             raw = token[:-1] if token.endswith("%") else token
             try:
