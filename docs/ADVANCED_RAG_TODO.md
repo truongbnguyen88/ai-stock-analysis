@@ -844,16 +844,27 @@ seeded sampler, seed logged in the dataset header.
 
 ---
 
-### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first)
+### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra; verdict = local run)
 
-> **Status: PLANNED (detailed, execution-ready). Not yet executed.** This subsection IS the build
-> blueprint — slices A6.1a–f with exact files/signatures/tests, the leakage rules, the pre-registered
-> verdict, and the config flags. **To execute in a fresh session:** open this section and say "execute
-> A6.1a", then b…f in order; each is a `make check`-green, default-OFF vertical slice. Conceptual
-> background → [rl_rag_pre_questions.md](rl_rag_pre_questions.md) (MDP/reward framing) and
-> [rag_concepts.md §17](rag_concepts.md) (the A6.0 benchmark this consumes). **Prereqs (merged):** A6.0
-> benchmark (`configs/rag_eval_multistep_generated.json`, PR #42) + the A5 agent graph-routing fix
-> (PR #43); A1–A5 shipped.
+> **Status: INFRA COMPLETE & GREEN (slices A6.1a–f shipped, `make check` green, default-OFF).** The
+> **verdict numbers are a pending local run** (`rag policy-eval` over the 212-Q benchmark — needs the
+> ingested corpus + A5 graph, like the A1/A5.3 local runs; $0 retrieval, no LLM). Mechanism →
+> [rag_implementation_notes.md §A6.1](rag_implementation_notes.md); theory → [rag_concepts.md
+> §18](rag_concepts.md). Conceptual background → [rl_rag_pre_questions.md](rl_rag_pre_questions.md)
+> (MDP/reward framing) and [rag_concepts.md §17](rag_concepts.md) (the A6.0 benchmark this consumes).
+> **Prereqs (merged):** A6.0 benchmark (`configs/rag_eval_multistep_generated.json`, PR #42) + the A5
+> agent graph-routing fix (PR #43); A1–A5 shipped.
+>
+> **Shipped slices:** a — telemetry (`schemas/retrieval_log.py`, `rag/retrieval_log.py`); b —
+> featurizer (`rag/policy_features.py`); c — reward oracle (`rag/reward.py`); d — OPE
+> (`rag/ope.py`); e — policies (`rag/policy.py`); f — gated serving (`rag/policy_retriever.py`) +
+> offline verdict harness (`rag/policy_eval.py`) + `rag policy-eval` CLI. **Deliberate boundary:**
+> `PolicyRetriever` is built and injectable (it satisfies `RetrievalSystem` ⇒ drops into
+> `ToolExecutor._injected_base`), but auto-wiring it into `build_retrieval_system` under
+> `adaptive_retrieval=True` is **deferred** — that needs a *persisted trained policy*, which A6.1
+> does not produce (training IS the verdict run). So `adaptive_retrieval` / `bandit_policy` are inert
+> flags until a promotion + a policy-persistence step (a small follow-up, only if the verdict says
+> promote).
 
 **What A6.1 is.** Treat retrieval as a **one-shot decision**: a featurized query (context `x`) → a
 **policy** picks one of ~5 retrieval **configs** (arms `a`) → earns **reward** `r` = quality − cost.
@@ -917,7 +928,7 @@ that matrix. Exploit both in tests.
 4. **Default-OFF** — logging + adaptive retrieval config-gated; flags off ⇒ byte-identical pipeline.
 5. **Numpy only (no torch)** — LinUCB / ridge `q̂` are numpy normal-equations. Torch is A6.2-only.
 
-**Build slices (each a green vertical slice; default-OFF; deterministic tests):**
+**Build slices (each a green vertical slice; default-OFF; deterministic tests) — all ✅ shipped:**
 - **A6.1a — Telemetry.** `schemas/retrieval_log.py` (`RetrievalLogEntry`: timestamp, query, context
   features / raw `ContextVector`, chosen `action`, **propensity** `μ(a|x)` (None if deterministic),
   retrieved `chunk_id`s + scores, optional downstream answer + guard outcome, optional reward/feedback,

@@ -1906,7 +1906,206 @@ group key.
 
 ---
 
-## 18. References
+## 18. Contextual bandits + off-policy evaluation (retrieval as a one-shot decision)
+
+A6 asks a different question from §§11–17: not "how do we retrieve?" but "**which retrieval config
+should we run for *this* query?**" A5.3 measured that the best config is **context-dependent** —
+single-shot graph *helps* HARD bridge questions but *regresses* easy CTRL ones — so no single fixed
+config is optimal everywhere. That is exactly the setting a **contextual bandit** is built for.
+
+### 18.1 The one-shot bandit framing
+
+A **contextual bandit** is a single-step decision: observe a context $x$, choose one **arm** (action)
+$a$ from a finite set of size $K$, receive a scalar **reward** $r$, and stop. Unlike full RL there is
+no next state — retrieval is one decision, then the episode ends. Formally a **policy** is a
+conditional distribution $\pi(a \mid x)$ over arms, and its **value** is the expected reward it earns:
+
+$$V(\pi) = \mathbb{E}_{x} \mathbb{E}_{a \sim \pi(\cdot \mid x)}\big[r(x,a)\big]$$
+
+- **Context** $x = \mathrm{featurize}(\text{query}) \in \mathbb{R}^{d}$ — deploy-time signals only
+  ($d=11$: bias, length, ticker/entity flags, a bridging flag, a cheap question-type one-hot, and
+  `in_graph_universe`). **Label-free** by construction (leakage rule 1): using the gold stratum would
+  make the policy un-deployable.
+- **Arms** $a \in \{0,\dots,K-1\}$, $K=5$: `dense, reranked, hybrid, hybrid+rerank, graph`.
+- **Reward** $r(x,a)$ — retrieval quality minus a compute penalty (§18.2).
+- **Goal** — learn a $\pi$ with $V(\pi)$ higher than the best *fixed* arm, using only **logged** data.
+
+Every symbol in plain English: $x$ describes the question; $a$ is which retriever we ran; $\pi(a \mid
+x)$ is the probability the policy would pick arm $a$ on question $x$; $V(\pi)$ is the average reward we
+would earn if we deployed $\pi$ over the query distribution.
+
+### 18.2 Reward design — quality minus cost (the reward-hacking guard)
+
+$$r(x,a) = \mathrm{quality}(x,a) - \lambda_c  c(a)$$
+
+- $\mathrm{quality}(x,a) \in [0,1]$ is **retrieval-only and \$0**: graded nDCG@k for a single-shot
+  `LabeledQuery`, or single-shot aspect **coverage** for a `MultiHopQuery` (the *same* A6.0 metric the
+  labels were built against — no metric drift, leakage rule 3).
+- $c(a) \ge 0$ is a **static per-arm compute proxy** (`dense`$=0$, `hybrid`$=0.1$, `reranked`$=0.3$,
+  `hybrid+rerank`$=0.4$, `graph`$=0.3$) and $\lambda_c$ (default $0.05$) is the **price of compute in
+  quality units**.
+- The cost term is the **reward-hacking guard**: without it a policy could always pick the most
+  expensive arm "just in case." Subtracting $\lambda_c c(a)$ forces an arm to *earn* its extra
+  compute in quality or lose. The faithfulness penalty $\lambda_f$ is **deferred** (it needs a
+  synthesis call A6.1 never makes) and pinned to $0$.
+
+Because the oracle is deterministic and \$0, we evaluate **every arm on every query** — the
+**full-information reward matrix** $R \in \mathbb{R}^{N \times K}$, $R_{i,a} = r(x_i, a)$. This is a
+luxury real bandits never have; we exploit it twice: as the pool the logging policy subsamples, and as
+the **ground-truth value** to check the off-policy estimators against.
+
+### 18.3 The off-policy problem and the logging policy
+
+We want $V(\pi)$ for a *candidate* $\pi$ **without deploying it** — using only data logged under a
+different **logging policy** $\mu$. Each logged row is a tuple $(x_i, a_i, r_i)$ where
+$a_i \sim \mu(\cdot \mid x_i)$ and $r_i = R_{i, a_i}$ (we see the reward of **only** the arm $\mu$
+actually pulled — *partial feedback*). We use the uniform logger
+
+$$\mu(a \mid x) = \tfrac{1}{K}\quad\text{for every arm,}$$
+
+which has **full support** ($\mu(a \mid x) > 0$ for all $a$) — the condition that makes off-policy
+evaluation *unbiased and exact*. The quantity that makes it work is the **propensity** $\mu(a_i \mid
+x_i)$, logged with every row.
+
+### 18.4 IPS — inverse propensity scoring
+
+Reweight each logged reward by the ratio of how likely $\pi$ vs $\mu$ was to take the logged action:
+
+$$w_i = \frac{\pi(a_i \mid x_i)}{\mu(a_i \mid x_i)}, \qquad \hat{V}_{\mathrm{IPS}}(\pi) =
+\frac{1}{N}\sum_{i=1}^{N} w_i  r_i$$
+
+**Why it is unbiased** (under full support). Condition on $x_i$ and take the expectation over the
+logged action $a_i \sim \mu$:
+
+$$\mathbb{E}_{a_i \sim \mu}\big[w_i r_i \mid x_i\big] = \sum_{a} \mu(a \mid x_i) \frac{\pi(a \mid
+x_i)}{\mu(a \mid x_i)} r(x_i,a) = \sum_{a} \pi(a \mid x_i)  r(x_i,a) = \mathbb{E}_{a \sim \pi}\big[
+r(x_i,a)\big]$$
+
+so averaging over rows estimates $V(\pi)$. The $\mu$ in the numerator and denominator cancel — that is
+the whole trick — but the cancellation needs $\mu(a \mid x) > 0$ wherever $\pi(a \mid x) > 0$.
+**Weakness:** when $\pi$ and $\mu$ disagree, a few rows get huge weights and the variance explodes.
+
+- *Worked micro-example.* $K=2$, $\mu$ uniform ($\mu \equiv \tfrac12$), $\pi = $ the one-hot fixed
+  policy "always arm 0." A logged row that pulled arm 0 gets $w = \tfrac{1}{1/2} = 2$; a row that
+  pulled arm 1 gets $w = \tfrac{0}{1/2} = 0$. So IPS averages $2 r$ over the (~half) rows that sampled
+  arm 0 and $0$ elsewhere — recovering $\mathbb{E}[r(x,0)] = V(\text{fixed arm 0})$, as it must.
+
+### 18.5 SNIPS — self-normalized IPS
+
+Divide by the sum of weights instead of by $N$:
+
+$$\hat{V}_{\mathrm{SNIPS}}(\pi) = \frac{\sum_i w_i  r_i}{\sum_i w_i}$$
+
+Since $\mathbb{E}_\mu[\sum_i w_i] = N$ but the *realized* $\sum_i w_i$ fluctuates, normalizing by it
+removes IPS's systematic scale error, trading a little bias for much lower variance. Structurally it is
+a **weighted average of the observed rewards** with non-negative weights $w_i$, so it is **bounded**:
+
+$$\min_i r_i \ \le\ \hat{V}_{\mathrm{SNIPS}}(\pi)\ \le\ \max_i r_i$$
+
+(the convex-hull property) — IPS has no such guarantee and can land outside $[0,1]$ on unlucky weights.
+
+### 18.6 DR — doubly robust (the control variate)
+
+Combine a **direct method** — a learned reward model $\hat{q}(x,a) \approx r(x,a)$ — with an IPS
+**correction on its residual**:
+
+$$\hat{V}_{\mathrm{DR}}(\pi) = \frac{1}{N}\sum_{i=1}^{N}\Big[\underbrace{\sum_{a} \pi(a \mid x_i) 
+\hat{q}(x_i,a)}_{\text{direct estimate}} + \underbrace{w_i\big(r_i - \hat{q}(x_i,a_i)\big)}_{\text{IPS
+on the residual}}\Big]$$
+
+- The **direct term** is the model's own estimate of $V(\pi)$ at $x_i$ (needs no propensities, low
+  variance, but biased if $\hat{q}$ is wrong).
+- The **correction term** is IPS applied to the residual $r_i - \hat{q}(x_i,a_i)$ — it cancels the
+  model's bias when the propensities are right.
+- **Double robustness:** the estimate is consistent if *either* $\hat{q}$ is accurate *or* the
+  propensities are correct (here $\mu$ is known exactly, so DR is always consistent). Because $\hat{q}$
+  absorbs most of the signal, only the *residual* is importance-weighted, so DR has **lower variance**
+  than IPS. If $\hat{q}\equiv 0$ the direct term vanishes and DR collapses **exactly** to IPS (a unit
+  test pins this).
+
+**The reward model $\hat{q}$** is a per-arm **ridge** regression (numpy normal equations — the same
+linear form as LinUCB below):
+
+$$\hat{\theta}_a = \big(X_a^\top X_a + \lambda I\big)^{-1} X_a^\top r_a, \qquad \hat{q}(x,a) = x^\top
+\hat{\theta}_a$$
+
+where $X_a$ / $r_a$ are the logged contexts / rewards for the rows that pulled arm $a$. An arm with no
+logged rows keeps $\hat{\theta}_a = 0$ (DR then leans entirely on the IPS correction for it — correct).
+$\lambda > 0$ keeps $X_a^\top X_a + \lambda I$ invertible on tiny/collinear data.
+
+### 18.7 Trust diagnostics — effective sample size and the group bootstrap
+
+**Kish effective sample size** measures how many *independent* rows the reweighting effectively leaves:
+
+$$\mathrm{ESS} = \frac{\big(\sum_i w_i\big)^2}{\sum_i w_i^2}\ \in\ [1, N]$$
+
+It equals $N$ when all weights are equal and collapses toward $1$ when one weight dominates (the IPS
+failure mode) — a cheap "is this estimate trustworthy?" flag.
+
+**Confidence intervals** are a **group-level bootstrap**: resample *groups* (bridge pairs) with
+replacement, not rows, and recompute the estimate. Rows sharing a group are near-duplicates (§17.4), so
+a row-level bootstrap would pseudo-replicate and understate variance. Resampling whole groups honours
+the dependency structure — the direct analogue of clustered standard errors.
+
+### 18.8 The policies
+
+- **FixedPolicy** — always one arm; $\pi(a \mid x) = \mathbb{1}[a = a_0]$. The **baseline to beat** (the
+  current promoted default: `graph` for multi-hop, `hybrid` single-shot).
+- **EpsilonGreedy** over the ridge model — exploit the model's best arm with probability $1-\varepsilon$,
+  explore uniformly with probability $\varepsilon$:
+
+$$\pi_\varepsilon(a \mid x) = \frac{\varepsilon}{K} + (1-\varepsilon) \mathbb{1}\Big[a =
+\mathrm{argmax}_{a'} \hat{q}(x,a')\Big]$$
+
+  ($\varepsilon = 1$ degenerates to the uniform logger; $\varepsilon = 0$ to pure greedy.)
+
+- **LinUCB** (disjoint linear UCB, Li et al. 2010) — *optimism under uncertainty*. Maintain per arm a
+  Gram matrix and response vector, giving a ridge estimate $\hat{\theta}_a$ and a **confidence bonus**:
+
+$$A_a = \lambda I + \sum_{t:  a_t = a} x_t x_t^\top, \qquad b_a = \sum_{t:  a_t = a} r_t  x_t,
+\qquad \hat{\theta}_a = A_a^{-1} b_a$$
+
+$$p_a(x) = \underbrace{\hat{\theta}_a^\top x}_{\text{predicted reward}} + \underbrace{\alpha
+\sqrt{x^\top A_a^{-1} x}}_{\text{exploration bonus}}, \qquad a^\star(x) = \mathrm{argmax}_a  p_a(x)$$
+
+  The bonus $\alpha\sqrt{x^\top A_a^{-1} x}$ grows with the **posterior uncertainty** of arm $a$ in the
+  direction $x$: an arm with few (or no) observations near $x$ has a large $A_a^{-1}$ there and gets
+  explored; a well-observed arm is judged mostly on its predicted reward. $\alpha$ tunes exploration,
+  $\lambda$ the prior precision. We fit **offline** in one batch pass over the logged data (no online
+  updates during eval), so a given train set yields a fixed, reproducible policy.
+
+- *Worked micro-example (the unit test).* $d=1$, $\lambda=1$, $\alpha=1$. Arm 0 is pulled twice
+  ($x=1$, $r=1$), arm 1 once ($x=1$, $r=0$). Then $A_0 = 1 + 1 + 1 = 3$, $b_0 = 1 + 1 = 2$,
+  $\hat{\theta}_0 = 2/3$, $A_0^{-1} = 1/3$; and $A_1 = 1 + 1 = 2$, $\hat{\theta}_1 = 0$. At $x=1$:
+  $p_0 = \tfrac23 + \sqrt{1/3} \approx 1.244$ and $p_1 = 0 + \sqrt{1/2} \approx 0.707$, so LinUCB picks
+  arm 0 — it has both the higher mean and, having been observed, is chosen on merit rather than
+  optimism. An *unseen* arm ($\hat{\theta}=0$) would score purely $\alpha\sqrt{x^\top(\lambda^{-1}
+  I)x}$, i.e. pure exploration.
+
+All policies are **pure numpy** (leakage rule 5 — torch is reserved for A6.2's full RL). Feature
+standardization (z-score, fit on the **train** fold only; the constant bias column passes through) puts
+the raw `n_tokens` on the same scale as the 0/1 flags so the LinUCB bonus and ridge conditioning are
+scale-sane.
+
+### 18.9 The pre-registered verdict (write the rule before seeing the numbers)
+
+On the **group-wise held-out** test fold, with $\pi_{\text{fixed}}^\star$ the best fixed arm *by DR*:
+
+$$\text{promote} \iff \hat{V}_{\mathrm{DR}}(\pi_{\text{bandit}}) -
+\hat{V}_{\mathrm{DR}}(\pi_{\text{fixed}}^\star) > 0 \quad\wedge\quad \mathrm{CI}_{\text{low}} > 0
+\quad\wedge\quad \text{no per-stratum (CTRL) regression}$$
+
+The CI is a **paired** group bootstrap on the *difference* (resample groups once per draw, recompute
+both DR values on the same rows, take the gap) so it directly tests $\Delta > 0$. Reporting
+**per-stratum** (HARD / MED / CTRL) guards against a pooled win that hides a CTRL regression — the
+precise failure A5.3 warned about. If the rule fails we keep `adaptive_retrieval` **default-OFF** and
+**record the negative**: the logging + OPE + bandit infrastructure is the durable deliverable either
+way. Pre-registered likely outcome: tuned hybrid(+graph) is a strong baseline, so a **modest win or a
+rigorous negative** — both ship the infra.
+
+---
+
+## 19. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -1939,3 +2138,12 @@ group key.
   detection (the clustering behind global GraphRAG, §16.5).
 - Haveliwala (2003), *Topic-Sensitive PageRank* — the personalized-PageRank relevance propagation of
   §16.2.
+- Li, Chu, Langford & Schapire (2010), *A Contextual-Bandit Approach to Personalized News Article
+  Recommendation* — **disjoint LinUCB** (the ridge + UCB score of §18.8).
+- Dudík, Langford & Li (2011), *Doubly Robust Policy Evaluation and Learning* — the **DR** estimator
+  of §18.6 (control variate + IPS residual correction).
+- Horvitz & Thompson (1952), *A Generalization of Sampling Without Replacement From a Finite
+  Universe* — the inverse-propensity (IPS) estimator of §18.4.
+- Swaminathan & Joachims (2015), *The Self-Normalized Estimator for Counterfactual Learning* — the
+  **SNIPS** estimator of §18.5.
+- Kish (1965), *Survey Sampling* — the effective-sample-size (design-effect) diagnostic of §18.7.

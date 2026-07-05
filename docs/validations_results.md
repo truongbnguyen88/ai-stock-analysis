@@ -799,3 +799,46 @@ AGENTIC_BRIDGE_MAX_ENTITIES=0 PYTHONPATH=src python -m stock_agent rag eval-mult
 # Repeat both for seed 2 (…_seed2.json); pooled 2×2 = scratchpad analyze_a5_3_pooled.py.
 # Prereq: NVDA/MU/AMD/INTC 10-K + TSM 20-F ingested; graph built for configs/graph_universe.txt.
 ```
+
+---
+
+## 2026-07-05 — A6.1: retrieval contextual bandit + off-policy evaluation (infra shipped; verdict = local run) ⏳
+
+**Question.** A5.3 showed the best retrieval config is **context-dependent** (HARD bridges → graph,
+CTRL → hybrid/dense). Can a **learned contextual-bandit policy** realize that per-query lift — beating
+the best *fixed* arm past a group-bootstrap CI on a group-wise held-out split — or is a rigorous
+**negative** the outcome? Either way the logging + OPE + bandit infrastructure is the deliverable.
+
+**Design (off-policy, not a deployment A/B).** Retrieval is a one-shot decision: context
+$x = \mathrm{featurize}(\text{query})$ (label-free, 11-dim) → policy $\pi(a \mid x)$ picks 1 of **5
+arms** (`dense, reranked, hybrid, hybrid+rerank, graph`) → reward $r = \mathrm{quality} - \lambda_c
+c(a)$, quality = single-shot aspect **coverage** (the A6.0 metric, retrieval-only, **\$0**). The oracle
+is deterministic + \$0, so we compute the **full-information reward matrix** $R[N,K]$ and (i) synthesize
+a uniform-$\mu$ log (full support ⇒ OPE exact), (ii) fit LinUCB / ε-greedy offline on the **train**
+fold, (iii) score every candidate on the **test** fold via **DR** (IPS/SNIPS/ESS reported), with the
+$R$-derived **true value** as a ground-truth check. Group-wise split (`split_multihop`) + group-level
+bootstrap throughout (§17.4, anti-pseudo-replication). Theory → [rag_concepts.md
+§18](rag_concepts.md); mechanism → [rag_implementation_notes.md §A6.1](rag_implementation_notes.md).
+
+**Pre-registered decision rule (fixed before seeing any numbers).** Promote (`adaptive_retrieval`
+default→True) **iff**, on the group-wise held-out test fold,
+$\hat{V}_{\mathrm{DR}}(\pi_{\text{bandit}}) - \hat{V}_{\mathrm{DR}}(\pi_{\text{fixed}}^\star) > 0$ **and**
+the paired group-bootstrap 95% CI lower bound $> 0$ **and** no per-stratum regression (must not lose to
+the best fixed arm on **CTRL**). Else keep default-OFF and **record the negative**. Report per-stratum
+(HARD/MED/CTRL). Sensitivity-test $\lambda_c \in \{0, 0.05, 0.1\}$ via `--lambda-cost`. Likely outcome:
+tuned hybrid(+graph) is strong → a **modest win or a rigorous negative**.
+
+**Status — infra COMPLETE & GREEN; numbers PENDING.** Slices A6.1a–f shipped, `make check` green,
+default-OFF (read path byte-identical to A5.3). CI pins the mechanics against hand-computed goldens and
+a synthetic reward matrix with a *known* contextual optimum (bandit promotes; no-signal rejects). The
+**verdict run is local** (needs the ingested corpus + A5 graph; \$0 retrieval, no LLM) and is **not yet
+executed** — this entry will be updated with the DR table + promote/reject once it runs.
+
+**Reproduce** (local, **\$0** — retrieval-only, no LLM):
+```bash
+# Prereq: NVDA/MU/AMD/INTC 10-K + TSM 20-F ingested; graph built for configs/graph_universe.txt.
+PYTHONPATH=src python -m stock_agent rag policy-eval \
+  --queries configs/rag_eval_multistep_generated.json --policy linucb \
+  --test-frac 0.3 --seed 42 --out outputs/rag_eval/policy_eval_linucb.json
+# Sensitivity: rerun with --lambda-cost 0 and 0.1; compare with --policy epsilon_greedy.
+```
