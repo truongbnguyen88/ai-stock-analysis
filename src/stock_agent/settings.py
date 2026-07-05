@@ -245,6 +245,12 @@ class Settings(BaseSettings):
     # since additive — non-graph corpora are unaffected (empty traversal).
     graph_multistep_enabled: bool = True
 
+    # Retrieval-as-decision (advanced-RAG A6.1 — contextual bandits + off-policy evaluation). All
+    # default-OFF / inert: with these unchanged the read path is byte-identical to A5.3. A6.1a adds
+    # only the telemetry writer; featurizer/reward/OPE/policy flags land with A6.1c-f.
+    retrieval_logging: bool = False  # A6.1a: append each retrieval decision to JSONL (else no-op)
+    retrieval_log_dir: Path = Path("data/retrieval_logs")  # append-only JSONL telemetry (gitignore)
+
     @property
     def earnings_priority(self) -> list[str]:
         """Ordered earnings-provider fallback chain (highest priority first)."""
