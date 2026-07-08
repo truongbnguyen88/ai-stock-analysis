@@ -13,6 +13,9 @@ from __future__ import annotations
 import numpy as np
 
 from stock_agent.rag.ope import (
+    _bootstrap_samples,
+    bootstrap_ci,
+    bootstrap_delta_stats,
     dr_value,
     effective_sample_size,
     fit_q_ridge,
@@ -125,3 +128,32 @@ def test_group_bootstrap_is_deterministic_and_uses_groups() -> None:
         CONTEXTS, ACTIONS, MU, REWARDS, TARGET, groups=groups, n_boot=200, seed=3
     )
     assert (a["ips"].ci_low, a["ips"].ci_high) == (b["ips"].ci_low, b["ips"].ci_high)
+
+
+# --- bootstrap_delta_stats: exact one-sided P(Δ>0), CI-consistent (A6.1 verdict-b) -------------
+def test_delta_stats_ci_matches_bootstrap_ci_and_p_positive_counts_samples() -> None:
+    # estimate_fn = mean of a fixed per-row array; verify (1) the CI it returns is byte-identical to
+    # bootstrap_ci at the same seed (shared resampling core), and (2) p_positive equals the fraction
+    # of the SAME bootstrap replicates that are > 0 (recomputed here from the raw sample array).
+    rng = np.random.default_rng(0)
+    vals = rng.normal(0.05, 1.0, size=40)  # small positive mean, straddles 0
+
+    def est(idx: np.ndarray) -> float:
+        return float(np.mean(vals[idx]))
+
+    lo, hi, p_pos = bootstrap_delta_stats(est, len(vals), n_boot=500, seed=7)
+    assert (lo, hi) == bootstrap_ci(est, len(vals), n_boot=500, seed=7)  # same seed ⇒ same CI
+    # p_positive must count the SAME resamples the CI is read from (shared core, same seed).
+    samples = _bootstrap_samples(est, len(vals), n_boot=500, seed=7)
+    assert p_pos == float(np.mean(samples > 0.0))
+    assert 0.0 <= p_pos <= 1.0
+
+
+def test_delta_stats_p_positive_is_one_when_all_replicates_positive() -> None:
+    # Strictly positive rows ⇒ every resample mean > 0 ⇒ P(Δ>0)=1; all-negative ⇒ 0. Degenerate but
+    # pins the semantics (achieved-significance for H1: Δ>0) with no ambiguity.
+    pos = np.full(10, 0.3)
+    neg = np.full(10, -0.3)
+    _, _, p_pos = bootstrap_delta_stats(lambda i: float(np.mean(pos[i])), 10, n_boot=100, seed=1)
+    _, _, p_neg = bootstrap_delta_stats(lambda i: float(np.mean(neg[i])), 10, n_boot=100, seed=1)
+    assert p_pos == 1.0 and p_neg == 0.0

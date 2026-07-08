@@ -492,3 +492,240 @@ $\Delta\text{coverage}=0<\lambda_c$ → STOP is optimal.
 invariant — the citation + `NumberGrounding` guards already run on every synthesis call; the hard floor
 just makes "ungrounded ⇒ no reward" the policy's incentive too, so the optimizer can never *learn* to
 bypass them.
+
+---
+
+## Q6 — Contextual bandit (A6.1): end-to-end "training", serving, and challenges
+
+> **Post-build addendum (2026-07-05).** Q1–Q5 above were captured *before* building the A6 RL
+> capstone and largely describe the **A6.2** full-MDP/PPO design. This Q6 is scoped to the
+> **A6.1 contextual bandit** that is now actually built and green (PR #60): how its offline "training"
+> works with a concrete example, how it would be served in the chat agent, and the operational
+> challenges. Math is kept in code spans / plain ASCII (no `$…$`) to match the Q4 walkthrough and avoid
+> MathJax escaping hazards. Durable theory: [rag_concepts.md](rag_concepts.md) §18; build log:
+> [rag_implementation_notes.md](rag_implementation_notes.md) §A6.1.
+
+**Question.** *Can you give me a full picture of how the "training" for contextual bandit RL Retrieval
+works? A concrete, end-to-end illustrating example would be very helpful. Then after training, if we
+integrate contextual bandit RL into use in the chat agent UI, how would it work? Any challenges that I
+should be aware of?*
+
+### Part 1 — What "training" means here (and what it doesn't)
+
+There is **no gradient descent, no online interaction, no episodes**. "Training" is a single **offline
+batch pass** that solves a supervised-style least-squares problem (ridge normal equations) over a logged
+dataset, then evaluates the result off-policy. The whole thing is `$0` and deterministic because the
+reward oracle is retrieval-only (no LLM).
+
+The bandit framing — each query is one independent round:
+- **Context** `x` = an 11-dim label-free feature vector of the query.
+- **Action** `a` = one of **5 retrieval arms** `(dense, reranked, hybrid, hybrid+rerank, graph)`.
+- **Reward** `r(x,a)` = `single-shot coverage/nDCG(a on x) − λ_c·cost(a)`.
+- **Goal** = learn `π(a|x)` maximizing `V(π) = E_x E_{a∼π}[r(x,a)]`, then *prove* it beats the fixed
+  default before shipping.
+
+Core difficulty OPE solves: at serve time we have **no labels**, so we can't just `argmax` the reward
+row — we need a policy that generalizes from `x`. And we can only *log* one arm per query, so we must
+estimate what a *different* policy would have scored (off-policy).
+
+> **Bandit (A6.1) vs MDP (A6.2, Q2 above).** A6.1 picks one config from the query features and is blind
+> to "what have I gathered so far" — it is a **one-shot** decision. The MDP of Q2 conditions each action
+> on accumulated evidence state `s_t`. A6.1 is the strict sub-problem (config-only, single step).
+
+### Part 2 — End-to-end, with a concrete example
+
+Two real-shaped queries from the 212-Q benchmark:
+
+| | q1 (HARD, bridging) | q2 (CTRL, simple) |
+|---|---|---|
+| text | "How does NVDA's data-center growth depend on its memory suppliers?" | "What was NVDA's revenue?" |
+| seed | NVDA | NVDA |
+
+**Step 0 — arms & costs (fixed).** `ARMS = (dense, reranked, hybrid, hybrid+rerank, graph)`, indices
+0–4. Costs in that order `c = [0.0, 0.3, 0.1, 0.4, 0.3]`, `λ_c = 0.05`. This ordering is the
+**load-bearing invariant**: reward-matrix columns, OPE `target_probs` columns, and policy action indices
+all use it.
+
+**Step 1 — full-information reward matrix `R[N,K]`** ([reward.py](../src/stock_agent/rag/reward.py)).
+Every query × every arm: run `retrieve()` once, score coverage, subtract cost. The only step that
+touches the corpus.
+
+```
+          dense  reranked hybrid  hyb+rr  graph
+q1 (HARD) 0.400   0.485   0.595   0.580   0.885   ← graph wins (traversal reaches MU's own 10-K)
+q2 (CTRL) 0.700   0.735   0.845   0.830   0.835   ← hybrid wins (graph adds nothing, costs more)
+```
+e.g. q1/graph = `0.90 − 0.05·0.3 = 0.885`; q2/hybrid = `0.85 − 0.05·0.1 = 0.845`. **The optimal arm
+flips with context** — the entire premise. A fixed arm can't win both rows.
+
+**Step 2 — featurize contexts `X[N,d]`** ([policy_features.py](../src/stock_agent/rag/policy_features.py)).
+Label-free, 11 dims. Discriminating features:
+
+```
+        bias n_tok has_tk n_ent is_brdg qt_risk qt_fin qt_bus qt_ovr qt_brdg in_graph
+q1        1    10     1      1      1       0      0      0      0      1        1
+q2        1     4     1      1      0       0      1      0      0      0        1
+```
+`is_bridging` (1 vs 0) is the signal the policy keys on. The featurizer **never reads the gold
+`stratum`/`qtype`** — every feature is deploy-time computable, so a policy trained on them is deployable
+(leakage rule 1).
+
+**Step 3 — group-wise split** ([split_dataset](../src/stock_agent/rag/policy_eval.py)). `split_multihop`
+by `group_id` (bridge pair) → ~149 train / 63 test, **no bridge pair straddling the fold**. The z-score
+standardizer is fit on **train only**; the constant `bias` column passes through unchanged.
+
+**Step 4 — synthesize the logging dataset under `μ`**
+([synthesize_log](../src/stock_agent/rag/policy_eval.py)). `μ = UniformPolicy` picks an arm uniformly
+(`μ(a|x)=1/5`, propensity 0.2), revealing **only that arm's reward** — partial feedback, like a real log:
+
+```
+row   sampled arm   propensity   observed r
+q1 →  hybrid(2)       0.2         0.595      (we do NOT get to see the 0.885 graph would give)
+q2 →  graph(4)        0.2         0.835
+```
+Uniform `μ` has **full support** (every arm `μ>0`) — what makes the later OPE mathematically exact.
+
+**Step 5 — fit the policy on the train log** ([LinUCB.fit](../src/stock_agent/rag/policy.py)). Per arm
+`a`, accumulate over the rows where `μ` sampled it:
+```
+A_a = λI + Σ x xᵀ        b_a = Σ r x        θ_a = A_a⁻¹ b_a
+```
+Per-arm ridge regression of reward on context. One batch pass, then frozen.
+
+**Step 6 — off-policy evaluate every candidate on the *test* log**
+([ope.py](../src/stock_agent/rag/ope.py)). Fresh uniform `μ`-log on test (`seed+1`). For each of 7
+candidates (5 fixed + linucb + ε-greedy) compute `π(a|x)` and:
+- **IPS** `mean(w_i r_i)`, `w_i = π(a_i|x_i)/0.2`. Deterministic policy ⇒ `w ∈ {0, 5}` — credits only
+  test rows where the logged arm matched the pick (~1/5 of rows) → unbiased, high variance.
+- **DR** = ridge `q̂` baseline + IPS correction on the residual → same target, much lower variance.
+  The headline.
+- **true_value** `mean_i R[i, π(x_i)]` — genuine full-info value, available **only because the oracle is
+  `$0`**. Ground-truth check that DR isn't lying (`|DR − true| < 0.15` asserted in tests).
+
+```
+candidate        DR      true_value
+fixed(dense)    0.62      0.61
+fixed(hybrid)   0.80      0.81      ← best on CTRL, mediocre on HARD bridges
+fixed(graph)    0.855     0.86      ← best fixed overall (bridges dominate the set)
+linucb          0.878     0.88      ← graph on HARD, hybrid on CTRL = best of both
+```
+
+**Step 7 — pre-registered verdict** ([evaluate_offline](../src/stock_agent/rag/policy_eval.py)).
+```
+best_fixed = fixed(graph)            # argmax DR among fixed
+Δ = DR(linucb) − DR(fixed(graph)) = +0.023
+group-bootstrap 95% CI on Δ = [+0.006, +0.041]   (resamples bridge groups, paired)
+per-stratum Δ: HARD +0.01, MED +0.02, CTRL +0.05  (no CTRL regression)
+⇒ promote = (Δ>0) ∧ (CI_low>0) ∧ (no CTRL loss) = TRUE
+```
+The CTRL win is the tell: on simple questions LinUCB picks cheap `hybrid` where fixed-`graph` overpays
+for traversal that doesn't help — the cost term `λ_c` earns its keep.
+
+> The numbers in Steps 1/6/7 are illustrative-but-plausible to make the mechanics concrete; the *real*
+> numbers come from the local verdict run and land in [validations_results.md](validations_results.md).
+> **Real verdict (2026-07-08): REJECT.** The illustrative Step 7 shows a *promote*; the actual run was a
+> **rigorous negative** — DR(linucb) 0.438 vs best-fixed 0.414 (Δ=+0.024) but the group-bootstrap CI
+> **[−0.208, +0.273] includes 0** (ESS≈16 ⇒ underpowered) **and** the bandit *regressed on CTRL*
+> (−0.263, opposite of the illustrative CTRL win). Default-OFF stays. Instructive: the mechanics are
+> exactly as diagrammed, but the *outcome* was decided by OPE variance and a control-stratum loss, not by
+> the sign of Δ. See [validations_results.md](validations_results.md) for the full table.
+
+**Zoom-in: LinUCB actually learning the flip (hand-traced).** Reduce to 2 features `x=[1, is_bridging]`
+and 2 arms `{hybrid, graph}`, separated rewards (non-bridging: hybrid 0.80 / graph 0.60; bridging:
+hybrid 0.40 / graph 0.90). With `λ=1` and a balanced uniform log (2 samples per arm per context):
+
+```
+design matrix Σ x xᵀ over 2×[1,0] + 2×[1,1] = [[4,2],[2,2]];  +λI = [[5,2],[2,3]], det 11
+inverse (1/11)[[3,-2],[-2,5]]
+
+b_graph  = 0.60·[1,0]·2 + 0.90·[1,1]·2 = [3.00, 1.80]
+θ_graph  = (1/11)[[3,-2],[-2,5]]·[3.00,1.80] = (1/11)[5.40, 3.00] = [0.491, 0.273]
+b_hybrid = 0.80·[1,0]·2 + 0.40·[1,1]·2 = [2.40, 0.80]
+θ_hybrid = (1/11)[[3,-2],[-2,5]]·[2.40,0.80] = (1/11)[5.60,-0.80] = [0.509, -0.073]
+
+predicted reward  θ·x:
+  is_bridging=0 (CTRL):  hybrid 0.509 > graph 0.491  → picks HYBRID  ✓
+  is_bridging=1 (HARD):  graph  0.764 > hybrid 0.436 → picks GRAPH   ✓
+```
+Ridge shrinks the magnitudes (0.49 vs true 0.60), but the **ordering across context is recovered** —
+all `argmax` needs. The `+α·sqrt(xᵀ A⁻¹ x)` UCB bonus adds optimism for under-sampled arms; with
+balanced counts it doesn't change this argmax, but on real data it stops a rarely-tried arm from being
+prematurely written off.
+
+### Part 3 — Serving it in the chat agent UI (after a promote)
+
+**Current state.** `PolicyRetriever` ([policy_retriever.py](../src/stock_agent/rag/policy_retriever.py))
+is fully built and satisfies the `RetrievalSystem` contract — but is **not auto-wired**.
+`adaptive_retrieval` / `bandit_policy` are inert flags. Deliberate: **A6.1 training doesn't persist a
+policy** (training *is* the verdict run), so there's nothing to load yet. The read path is byte-identical
+to A5.3.
+
+**To actually serve it, three additions:**
+
+1. **Persist the promoted policy.** Serialize LinUCB's
+   `{θ, A_inv per arm, α, arm_names, FEATURE_NAMES order, standardizer (mean,std)}` at the end of a
+   promoting verdict run. Feature order and arm order must be pinned — reordering silently remaps every
+   weight.
+2. **Load + wire under the flag.** With `adaptive_retrieval=True, bandit_policy=linucb`,
+   `build_retrieval_system` loads the saved policy, wraps it in `PolicyRetriever`, and injects it as the
+   base retriever (the `_injected_base` hook from PR #43).
+3. **Per chat turn** (what the user experiences):
+
+```
+user question ─▶ featurize(q, ticker=where.ticker, alias_map, graph_universe)   # cheap, pure
+             ─▶ policy.act(x) → (arm, propensity)                               # e.g. bridging → graph
+             ─▶ build/reuse that arm (embedder/graph DB cached per instance)
+             ─▶ arm.retrieve(q, top_k, where)   → evidence
+             ─▶ answer_question(evidence)        # unchanged synth + citation/number guards
+             ─▶ (optional) log_retrieval(...)    # if retrieval_logging=True
+```
+
+The user sees **no new UI** — same answer schema, same guards, same non-advisory contract. Only
+observable difference: *which* evidence got selected and slightly variable latency (graph turns are
+heavier). The numbers-vs-narrative invariant is untouched: the bandit only *chooses a retrieval config*,
+it emits no numbers.
+
+**The virtuous loop (optional, toward A6.2).** With `retrieval_logging=True`, production decisions
+`(context, action, propensity, chunks)` accumulate as real logs — the substrate for periodic
+re-evaluation/retraining on true traffic rather than the synthetic benchmark.
+
+### Part 4 — Challenges to be aware of (ranked)
+
+1. **Off-policy → production distribution shift (biggest risk).** Trained on 212 semis/AI, bridging-heavy
+   questions. Real chat traffic differs (unscoped queries, tickers with no graph, non-finance phrasings).
+   LinUCB's linear `θ` can extrapolate badly on out-of-distribution `x`, and the 11-dim coarse features
+   (keyword `qtype`, no embeddings) may be uninformative for many real queries → the policy collapses
+   toward a near-constant arm. **Mitigation:** keep the fixed default as a floor; let the bandit override
+   only where features are confident.
+2. **Reward ≠ end objective.** Reward is *single-shot retrieval coverage* minus a *hand-set* cost proxy.
+   It does **not** measure final-answer faithfulness (`λ_f` deferred — needs a synthesis call), real
+   latency in ms, or user satisfaction. An arm that maximizes coverage need not maximize post-synthesis
+   answer quality. The cost vector `[0,0.3,0.1,0.4,0.3]` is a guess, not measured latency — if wrong, the
+   cost-adjusted optimum is wrong. **Calibrate costs to real ms before trusting CTRL-stratum wins.**
+3. **OPE reliability on *production* logs.** The clean verdict math relies on a **uniform** `μ` with full
+   support. Once you serve a deterministic LinUCB, its own log has `w ∈ {0,5}` and no exploration — any
+   *future* re-eval from that log is high-variance (tiny Kish ESS → wide CIs) or biased (unsupported
+   arms). To keep the loop honest, **log propensities and inject exploration** (ε-greedy or Thompson) so
+   future OPE stays valid. Classic bandit feedback-loop confound: the policy shapes the data it later
+   learns from.
+4. **Frozen, not online.** Deployed LinUCB is static — won't adapt to new filings, tickers, or drift
+   without a manual retrain. Real LinUCB updates `A_a,b_a` per round; we deliberately froze it (numpy,
+   offline) for reproducibility. Auto-retraining reintroduces the loop risk in (3).
+5. **Small, group-correlated benchmark.** 63 test queries, correlated within bridge pairs, `competes_with`
+   skew (100/120 HARD). A `+0.023` promote can be within noise; the group bootstrap widens (correctly)
+   but doesn't eliminate this. Treat the first promote as provisional; re-confirm on held-out tickers.
+6. **Determinism vs exploration at serve time.** LinUCB's deterministic `argmax` is good for
+   reproducibility and caching. Stochastic ε-greedy would inject randomness into which arm runs —
+   undesirable for cache hit rates and reproducible answers. **Serve LinUCB (or ε-greedy's greedy
+   branch), not stochastic ε-greedy.**
+7. **Layering against existing routing.** The agent already routes multi-hop → graph (A5.3) and runs the
+   alias bridge. `PolicyRetriever` is *another* controller choosing an arm. Decide the layering — bandit
+   governs single-shot default only, or also overrides multistep routing? Otherwise two systems fight
+   over the graph decision.
+8. **Cold-start arm build cost.** `featurize` is cheap, but the *first* time each arm is selected,
+   `PolicyRetriever` builds it (embedder / graph DB load). Per-instance caching amortizes it, but the
+   first graph turn in a session pays the load.
+
+**Highest-value follow-up if promoted:** wire the `λ_f` faithfulness term into the reward (challenge 2)
+so the bandit optimizes answer quality, not just retrieval coverage — but that turns training from `$0`
+into a metered run, which is exactly the A6.2 boundary.

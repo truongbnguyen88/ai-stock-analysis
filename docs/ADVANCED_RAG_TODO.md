@@ -844,11 +844,17 @@ seeded sampler, seed logged in the dataset header.
 
 ---
 
-### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra; verdict = local run)
+### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra) · verdict 2026-07-08 = **REJECT** · gated-router follow-up 2026-07-08 = **REJECT (A5.3 vindicated)** · **TRACK CLOSED** → A6.2
 
-> **Status: INFRA COMPLETE & GREEN (slices A6.1a–f shipped, `make check` green, default-OFF).** The
-> **verdict numbers are a pending local run** (`rag policy-eval` over the 212-Q benchmark — needs the
-> ingested corpus + A5 graph, like the A1/A5.3 local runs; $0 retrieval, no LLM). Mechanism →
+> **Status: INFRA COMPLETE & GREEN (slices A6.1a–f shipped, `make check` green, default-OFF).
+> Verdict EXECUTED 2026-07-08 → REJECT: `promote=false`, `adaptive_retrieval` stays False.** LinUCB α=1,
+> seed 42, n_train=129/n_test=83: DR(linucb) 0.438 vs best-fixed(dense) 0.414 → Δ=+0.0239, group-boot 95%
+> CI [−0.208, +0.273]; per-stratum HARD +0.110 / MED +0.305 / **CTRL −0.263**. Fails the pre-registered
+> rule twice (CI includes 0 **and** CTRL regression) — a rigorous negative; the logging+OPE+bandit infra
+> is the deliverable. Numbers + honest read (underpowered: ESS≈16; DR misranks fixed arms) →
+> [validations_results.md](validations_results.md) (2026-07-05 entry, resolved) and
+> [rag_implementation_notes.md §A6.1](rag_implementation_notes.md). Output:
+> `outputs/rag_eval/policy_eval_linucb_seed42.json`. Mechanism →
 > [rag_implementation_notes.md §A6.1](rag_implementation_notes.md); theory → [rag_concepts.md
 > §18](rag_concepts.md). Conceptual background → [rl_rag_pre_questions.md](rl_rag_pre_questions.md)
 > (MDP/reward framing) and [rag_concepts.md §17](rag_concepts.md) (the A6.0 benchmark this consumes).
@@ -865,6 +871,32 @@ seeded sampler, seed logged in the dataset header.
 > does not produce (training IS the verdict run). So `adaptive_retrieval` / `bandit_policy` are inert
 > flags until a promotion + a policy-persistence step (a small follow-up, only if the verdict says
 > promote).
+>
+> **Gated-router follow-up (2026-07-08 → REJECT; A5.3 vindicated).** Built the gate the A6.1 verdict
+> called for: `GatedPolicy` + `build_gated_policy` (`rag/policy.py`), `evaluate_gated` +
+> `GatedEvalReport` (`rag/policy_eval.py`), `rag gated-eval` CLI — a **deterministic label-free gate**
+> (`is_bridging`) routes easy→`dense`, hard→branch-under-test; deterministic gate ⇒ OPE machinery reused
+> verbatim. Two pre-registered verdicts (same split/seed/λ_c as A6.1): **(1) promote gated router?** Δ =
+> DR(gated) − DR(dense) = **+0.1096**, CI **[−0.056, +0.287]** → REJECT (CI includes 0), **but the A6.1
+> CTRL regression is gone** (−0.263 → **exactly 0**, by construction) and Δ quadrupled — a strict
+> improvement, still power-limited (ESS≈17). **(2) does the bandit earn the hard branch?** on HARD+MED
+> `linucb` vs `fixed(graph)`: Δ = **−0.0250** → **NO** (oracle `true_value` agrees). ⇒ The architecture
+> the data supports is **deterministic gate → fixed graph = exactly A5.3's tiered router**; no learned
+> policy is justified. `adaptive_retrieval` stays False. Output: `outputs/rag_eval/gated_eval_seed42.json`;
+> theory → [rag_concepts.md §18.10](rag_concepts.md); mechanism + numbers →
+> [rag_implementation_notes.md §A6.1](rag_implementation_notes.md) and
+> [validations_results.md](validations_results.md) (2026-07-08 entry). Only remaining lever: higher-ESS
+> logging (stratified/propensity-blended μ) — an A6.2 concern.
+>
+> **Follow-up (b) — exact bootstrap P(Δ>0) (2026-07-08):** added `delta_p_positive` as a first-class
+> harness field (`ope.bootstrap_delta_stats`, one resample pass shared with the CI). Verdict [1]
+> **P(Δ>0) = 86.8%** (868/1000 resamples positive; below the ~89% Gaussian approx — mild left-skew, and
+> far below the 97.5% the `CI_low>0` rule implies) and verdict [2] **P(Δ>0) = 28.9%** (bandit *more likely
+> worse* than fixed graph). Reported, not a criterion ⇒ **verdict unchanged: REJECT.** Theory →
+> [rag_concepts.md §18.9](rag_concepts.md). **A6.1 (contextual-bandit) TRACK CLOSED** — three tests
+> (unified bandit, λ_c sweep, gated router) all REJECT; a learned contextual policy is not justified at
+> this logging design. Next: **A6.2 (Full RL for Retrieval)**, whose first move is the higher-ESS logging
+> lever A6.1 could not turn (see §A6.2).
 
 **What A6.1 is.** Treat retrieval as a **one-shot decision**: a featurized query (context `x`) → a
 **policy** picks one of ~5 retrieval **configs** (arms `a`) → earns **reward** `r` = quality − cost.

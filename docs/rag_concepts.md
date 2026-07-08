@@ -2033,6 +2033,34 @@ where $X_a$ / $r_a$ are the logged contexts / rewards for the rows that pulled a
 logged rows keeps $\hat{\theta}_a = 0$ (DR then leans entirely on the IPS correction for it — correct).
 $\lambda > 0$ keeps $X_a^\top X_a + \lambda I$ invertible on tiny/collinear data.
 
+**Worked example tying §§18.4–18.6 together (the `test_ope.py` goldens).** Three logged rows, two
+arms, target policy $\pi$ = "always arm 0", under a *non-uniform* logger $\mu$ (propensities need not
+be flat for OPE to work — only positive):
+
+| row | logged action | propensity `μ` | reward `r` | `π` takes it? | weight `w = π/μ` |
+|---|---|---|---|---|---|
+| 1 | arm 0 | 0.5 | 1.0 | yes (prob 1) | 2 |
+| 2 | arm 1 | 0.5 | 0.0 | no (prob 0) | 0 |
+| 3 | arm 0 | 0.25 | 0.4 | yes (prob 1) | 4 |
+
+- **IPS** $= \frac{1}{3}\big(2\cdot 1 + 0\cdot 0 + 4\cdot 0.4\big) = \frac{3.6}{3} = 1.2$ — **outside
+  $[0,1]$**. Row 2 (which $\pi$ would never pick) drops out, and the two surviving rows carry weight
+  mass $2 + 4 = 6$ while IPS still divides by $N = 3$, so it over-counts. This is the scale/variance
+  pathology of §18.4 made concrete: an "average reward" that exceeds the maximum reward any arm can
+  earn. In expectation $\mathbb{E}_\mu[\sum_i w_i] = N$, so IPS is still *unbiased* — but any single
+  sample can drift far, and here it did.
+- **SNIPS** $= \frac{2\cdot 1 + 0 + 4\cdot 0.4}{2 + 0 + 4} = \frac{3.6}{6} = 0.6$ — back **inside** the
+  reward hull $[\min r, \max r] = [0,1]$, because it divides by the *realized* weight mass $6$ rather
+  than $N$. Same three numbers, a sane estimate — the §18.5 convex-hull property in action.
+- **DR** with $\hat{q}\equiv 0$ collapses to IPS $= 1.2$ (the direct term vanishes). A $\hat{q}$ that
+  actually explained the reward would leave only a small residual to importance-weight, pulling the
+  estimate back toward the $0.6$ region with far less variance — which is why DR is the headline.
+
+These are exactly the values `test_ips_golden` ($1.2$), `test_snips_golden` ($0.6$), and
+`test_dr_equals_ips_when_qhat_zero` assert, so the doc and the code agree by construction. The same
+mechanism, at the real evaluation's $K=5$ deterministic-policy scale, is why the verdict's confidence
+intervals are wide: only $\approx 1/K$ of rows survive the weighting (§18.7).
+
 ### 18.7 Trust diagnostics — effective sample size and the group bootstrap
 
 **Kish effective sample size** measures how many *independent* rows the reweighting effectively leaves:
@@ -2103,6 +2131,108 @@ precise failure A5.3 warned about. If the rule fails we keep `adaptive_retrieval
 way. Pre-registered likely outcome: tuned hybrid(+graph) is a strong baseline, so a **modest win or a
 rigorous negative** — both ship the infra.
 
+**Exact one-sided probability — the CI's companion.** The paired bootstrap yields a whole distribution
+of resampled deltas $\{\Delta^{(b)}\}_{b=1}^{B}$; the CI reads its 2.5 / 97.5 percentiles, but the same
+resamples also give the exact one-sided probability the effect is **positive** — just count the sign:
+
+$$\hat{P}(\Delta > 0) = \frac{1}{B}\sum_{b=1}^{B} \mathbb{1}[\Delta^{(b)} > 0]$$
+
+This is the bootstrap **achieved significance** for the alternative $H_1: \Delta > 0$: the fraction of
+resampled worlds in which the policy wins. Two facts make it a *companion* to the CI, not a competitor:
+
+- **It does not move the bar.** The pre-registered rule gates on $\mathrm{CI}_{\text{low}} > 0$, which
+  for a two-sided 95% percentile interval is equivalent to $\hat{P}(\Delta>0) \ge 0.975$ — strictly
+  stronger than "more likely positive than not" ($\hat{P} > 0.5$). We **report** $\hat{P}(\Delta>0)$;
+  we do not promote on it. Its job is to say *how close* a within-CI delta came to certification.
+- **It is read from the same resamples as the CI**, so the two can never disagree (harness field
+  `delta_p_positive`, one bootstrap pass shared with the interval).
+
+*Worked micro-example (the gated-router verdict, §18.10).* $\Delta = +0.1096$ with $B = 1000$ group
+resamples: $868$ came out positive, so $\hat{P}(\Delta>0) = 0.868$. The Gaussian approximation
+$\Phi(\Delta / \widehat{\mathrm{se}})$ with $\widehat{\mathrm{se}} \approx \text{width}/(2 \cdot 1.96)
+= 0.343/3.92 \approx 0.0875$ gives $\Phi(1.25) \approx 0.896$ — the exact bootstrap sits **below** the
+normal approximation because the resample distribution is mildly left-skewed. At $0.868 < 0.975$ the
+router is *suggestive but uncertifiable*: the gap to promotion is **effective samples, not a bigger
+point estimate** — exactly the ESS-bound limit §18.7 predicts, and the reason the next lever is a
+higher-ESS logging design, not a new policy class.
+
+### 18.10 The gated router — deterministic routing in front of the bandit
+
+**Why.** The A6.1 verdict was REJECT: the bandit *regressed the CTRL stratum* — it sent easy,
+single-filing questions to heavy retrievers where cheap `dense` already suffices — and the $\lambda_c$
+cost sweep showed cost-tuning cannot repair it (~97% of the CTRL loss was retrieval-quality, not
+cost). The gate removes that failure **by construction**, rather than hoping the bandit learns to
+avoid it from $\approx 16$ effective samples (§18.7).
+
+**The policy.** A gated router is a deterministic two-branch mixture: a label-free gate $g$ maps a
+context to a branch, and each branch is itself any policy.
+
+$$\pi_{\text{gated}}(a \mid x) = \mathbb{1}[g(x) = \text{hard}] \pi_{\text{hard}}(a \mid x)
++ \mathbb{1}[g(x) = \text{easy}] \pi_{\text{easy}}(a \mid x)$$
+
+$\pi_{\text{easy}}$ is the cheap fixed arm (`dense`, cost 0) and $\pi_{\text{hard}}$ is the branch under
+test (a fixed arm, or the bandit). The gate is a threshold on one feature:
+
+$$g(x) = \text{hard} \iff x_j > \tau$$
+
+- $x_j$ — the value of the gate feature on this query. We use `is_bridging` (index $j$): 1 if a bridge
+  phrasing is present, else 0. Plain English: *"does the answer likely live in a related company's own
+  filings?"* — the exact cue that separates easy (CTRL) from hard (MED/HARD) queries.
+- $\tau$ — the decision threshold ($\tau = 0$). $g$ is deterministic and reads **only** the label-free
+  feature, never the gold stratum (leakage rule 1).
+
+**Why OPE is unchanged (the key property).** Because $g$ is a *deterministic* function of $x$,
+conditioning on $x$ fixes the branch, so $\pi_{\text{gated}}(a \mid x) = \pi_{\text{active branch}}(a
+\mid x)$ **exactly**. The gate adds no stochasticity and therefore no new propensity term: the
+target-probability matrix the active branch reports *is* the gated policy's, and the same IPS / SNIPS
+/ DR estimators (§18.4–18.6) and paired group bootstrap (§18.7) apply verbatim — no re-derivation. A
+deterministic branch yields a one-hot $\pi(\cdot \mid x)$; an `EpsilonGreedy` hard branch yields its
+$\varepsilon$-mixed $\pi(\cdot \mid x)$ — either way the estimator sees a valid conditional.
+
+**Standardization invariance of the threshold.** The evaluator z-scores contexts (fit on train only,
+§18.8). A threshold of 0 on a **binary** feature still recovers the raw indicator, so one policy object
+works on raw *or* standardized contexts. For train mean $\mu \in (0,1)$ and std $\sigma > 0$:
+
+$$z(1) = \frac{1 - \mu}{\sigma} > 0, \qquad z(0) = \frac{0 - \mu}{\sigma} = -\frac{\mu}{\sigma} < 0$$
+
+so $z > 0$ recovers the value-1 rows. A constant column (all-0 or all-1 in the fit fold) is passed
+through unchanged by the standardizer's zero-variance convention (mean 0, std 1), so $> 0$ still
+selects the 1-rows.
+
+- *Worked micro-example (the unit test).* Fit fold has 30 CTRL (`is_bridging` = 0) and 30 HARD (= 1),
+  so $\mu = 0.5$, $\sigma = 0.5$. A bridging test row maps to $z = (1 - 0.5)/0.5 = +1 > 0$ (→ hard) and
+  a control row to $z = -0.5/0.5 = -1 < 0$ (→ easy) — the gate recovers `is_bridging` on every
+  standardized row, independent of the *test* fold's class balance.
+
+**Two pre-registered verdicts.** The gate splits one promotion question into two.
+
+1. **Promote the router?** With $\pi^\star_{\text{fixed}}$ the best fixed arm by DR, on the group-wise
+   held-out fold — the §18.9 rule applied to the gated policy:
+
+$$\text{promote} \iff \hat{V}_{\mathrm{DR}}(\pi_{\text{gated}}) - \hat{V}_{\mathrm{DR}}(\pi^\star_{\text{fixed}})
+> 0 \quad\wedge\quad \mathrm{CI}_{\text{low}} > 0 \quad\wedge\quad \text{no CTRL regression}$$
+
+   Routing CTRL to `dense` by construction makes the CTRL-regression term hard to trip.
+
+2. **Does the bandit *earn* the hard branch?** Do **not** assume the bandit belongs on hard just
+   because a gate protects easy. Restricted to the HARD $\cup$ MED rows only, with `fixed(graph)` the
+   A5.3 tiered default for hard queries:
+
+$$\text{earns} \iff \hat{V}_{\mathrm{DR}}(\pi_{\text{linucb}}) - \hat{V}_{\mathrm{DR}}(\pi_{\text{fixed(graph)}})
+> 0 \quad\wedge\quad \mathrm{CI}_{\text{low}} > 0$$
+
+   If this fails, the hard branch should stay the fixed arm: the *gate* is worth keeping, the *bandit*
+   is not. This is why the router does not silently inherit the A6.1 rejection — it re-poses the bandit
+   question on exactly the rows where routing can matter.
+
+**Relation to A5.3 and the literature.** A5.3's tiered router is *already* a deterministic gate
+(multi-hop → `graph`, single-shot → `hybrid`). The gated router **generalizes** it: same deterministic
+front, but the hard branch may be a *learned* policy, and verdict 2 is exactly the test of whether
+learning beats the fixed A5.3 tier. This is the query-complexity routing of **Adaptive-RAG** (Jeong et
+al., 2024) — route by a cheap complexity signal, spend heavy retrieval only where it pays — with two
+differences: our gate is a single interpretable feature rather than a trained classifier, and the hard
+policy is a bandit whose promotion is gated behind an OPE certificate rather than assumed.
+
 ---
 
 ## 19. References
@@ -2140,6 +2270,8 @@ rigorous negative** — both ship the infra.
   §16.2.
 - Li, Chu, Langford & Schapire (2010), *A Contextual-Bandit Approach to Personalized News Article
   Recommendation* — **disjoint LinUCB** (the ridge + UCB score of §18.8).
+- Jeong et al. (2024), *Adaptive-RAG: Learning to Adapt Retrieval-Augmented LLMs through Question
+  Complexity* — query-complexity **routing** (no-/single-/multi-step); the gated router of §18.10.
 - Dudík, Langford & Li (2011), *Doubly Robust Policy Evaluation and Learning* — the **DR** estimator
   of §18.6 (control variate + IPS residual correction).
 - Horvitz & Thompson (1952), *A Generalization of Sampling Without Replacement From a Finite

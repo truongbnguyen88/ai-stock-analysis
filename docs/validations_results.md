@@ -802,7 +802,7 @@ AGENTIC_BRIDGE_MAX_ENTITIES=0 PYTHONPATH=src python -m stock_agent rag eval-mult
 
 ---
 
-## 2026-07-05 — A6.1: retrieval contextual bandit + off-policy evaluation (infra shipped; verdict = local run) ⏳
+## 2026-07-05 — A6.1: retrieval contextual bandit + off-policy evaluation (verdict 2026-07-08: **REJECT** — keep default-OFF) ❌
 
 **Question.** A5.3 showed the best retrieval config is **context-dependent** (HARD bridges → graph,
 CTRL → hybrid/dense). Can a **learned contextual-bandit policy** realize that per-query lift — beating
@@ -828,11 +828,84 @@ the best fixed arm on **CTRL**). Else keep default-OFF and **record the negative
 (HARD/MED/CTRL). Sensitivity-test $\lambda_c \in \{0, 0.05, 0.1\}$ via `--lambda-cost`. Likely outcome:
 tuned hybrid(+graph) is strong → a **modest win or a rigorous negative**.
 
-**Status — infra COMPLETE & GREEN; numbers PENDING.** Slices A6.1a–f shipped, `make check` green,
-default-OFF (read path byte-identical to A5.3). CI pins the mechanics against hand-computed goldens and
-a synthetic reward matrix with a *known* contextual optimum (bandit promotes; no-signal rejects). The
-**verdict run is local** (needs the ingested corpus + A5 graph; \$0 retrieval, no LLM) and is **not yet
-executed** — this entry will be updated with the DR table + promote/reject once it runs.
+**Status — infra COMPLETE & GREEN; verdict EXECUTED 2026-07-08 → REJECT.** Slices A6.1a–f shipped,
+`make check` green, default-OFF (read path byte-identical to A5.3). CI pins the mechanics against
+hand-computed goldens and a synthetic reward matrix with a *known* contextual optimum (bandit promotes;
+no-signal rejects). The local verdict run has now executed (\$0 retrieval, no LLM) — numbers below.
+
+**Verdict (local run, 2026-07-08; `outputs/rag_eval/policy_eval_linucb_seed42.json`).** LinUCB α=1,
+seed 42, `n_train=129 / n_test=83`, λ_c=0.05, 1000-resample **group** bootstrap over the 212-Q
+multi-hop benchmark. DR is the pre-registered headline; `true_value` is the \$0-oracle full-information
+value (ground-truth check).
+
+| candidate | DR | DR 95% CI | IPS | SNIPS | true_value | ESS |
+|---|---|---|---|---|---|---|
+| fixed(dense) | 0.414 | [0.185, 0.616] | 0.392 | 0.406 | 0.355 | 16 |
+| fixed(reranked) | 0.257 | [0.139, 0.373] | 0.347 | 0.360 | 0.328 | 16 |
+| fixed(hybrid) | 0.287 | [−0.073, 0.546] | 0.445 | 0.308 | 0.387 | 24 |
+| fixed(hybrid+rerank) | 0.309 | [0.184, 0.454] | 0.228 | 0.344 | 0.317 | 11 |
+| fixed(graph) | 0.345 | [0.174, 0.469] | 0.347 | 0.360 | **0.437** | 16 |
+| **linucb(α=1)** | **0.438** | [0.325, 0.533] | 0.442 | 0.458 | **0.441** | 16 |
+| epsilon_greedy(0.1) | 0.433 | [0.242, 0.593] | 0.407 | 0.421 | 0.403 | 19 |
+
+`best_fixed = fixed(dense)` (argmax DR). **Δ = DR(linucb) − DR(dense) = +0.0239**, paired group-bootstrap
+95% CI **[−0.208, +0.273]**.
+
+Per-stratum (bandit vs. fixed):
+
+| stratum | n | DR bandit | DR fixed | Δ |
+|---|---|---|---|---|
+| HARD | 41 | 0.338 | 0.228 | **+0.110** |
+| MED | 15 | 0.648 | 0.343 | **+0.305** |
+| CTRL | 27 | 0.473 | 0.736 | **−0.263** |
+
+**Decision: `promote = false` — keep `adaptive_retrieval=False`.** The pre-registered rule fails on **two
+independent counts**: (1) the Δ 95% CI **includes 0** (Δ=+0.0239 ∈ [−0.208, +0.273]) — the effect is
+statistically indistinguishable from zero; (2) a **CTRL regression** (−0.263) — the rule forbids losing
+to the best fixed arm on control queries. Either alone blocks promotion; both fire. This is the
+pre-registered **rigorous negative** — the logging + OPE + bandit infra is the shipped deliverable.
+
+**Honest read (direction vs. certainty).** Point estimates favor the bandit: linucb is top on **DR
+(0.438), SNIPS (0.458), and — tellingly — `true_value` (0.441, highest of all 7 candidates)**, and it
+wins HARD (+0.11) and MED (+0.30) convincingly. On the \$0 oracle it *is* the best policy in the set.
+But the test is underpowered and there's a real CTRL loss, so it cannot be certified:
+- **Tiny effective sample.** Deterministic policies under a uniform log credit only rows where the logged
+  arm matched the pick (`w ∈ {0,5}`), so **ESS ≈ 16 of 83**. A group bootstrap over ~16 effective points
+  cannot resolve a +0.024 gap → CI width ~0.48. A *power* problem, not proof the bandit is bad.
+- **DR misranks the fixed arms.** DR calls **dense** best-fixed (0.414), but the oracle `true_value` says
+  **graph** is best-fixed (0.437 vs dense 0.355). The `best_fixed` anchor is itself noisy; anchored on the
+  oracle, linucb (0.441) only *ties* graph (0.437) overall — and is still CTRL-negative.
+- **The CTRL loss inverts the illustrative guess.** The example expected the bandit to *win* CTRL via
+  cheap `hybrid`; in reality the best CTRL arm is **dense** (cost 0.0) and the bandit over-retrieves on
+  control — λ_c=0.05 didn't steer it to dense. Concrete lever for a re-attempt (or A6.2): larger/swept
+  λ_c, a variance-reduced logging design (stratified / propensity-blended μ to lift ESS), or richer
+  "dense-is-sufficient" features.
+
+**Sensitivity sweep (executed 2026-07-08; `outputs/rag_eval/policy_eval_linucb_seed42_lambda_sweep.json`).**
+Tested the hypothesis "a larger cost penalty makes the unified bandit pick cheap `dense` on easy queries,
+fixing the CTRL regression." Built the quality matrix **once** (λ_c=0) and re-scored `R(λ_c) = quality −
+λ_c·cost` through the verbatim `evaluate_offline` — the λ_c=0.05 re-score reproduces the headline verdict
+exactly (Δ=+0.0239, CI [−0.208,+0.273], per-stratum identical), validating build-once-recost ≡ fresh run.
+
+| λ_c | Δ_DR | 95% CI | HARD Δ | MED Δ | CTRL Δ | promote |
+|---|---|---|---|---|---|---|
+| 0.05 | +0.0239 | [−0.208, +0.273] | +0.110 | +0.305 | −0.263 | ✗ |
+| 0.10 | +0.0133 | [−0.216, +0.260] | +0.097 | +0.294 | −0.270 | ✗ |
+| 0.20 | −0.0033 | [−0.209, +0.268] | +0.081 | +0.272 | −0.284 | ✗ |
+| 0.30 | −0.0171 | [−0.216, +0.248] | +0.064 | +0.254 | −0.291 | ✗ |
+
+**Hypothesis refuted, instructively.** (1) The gradient runs *backwards*: raising λ_c worsens CTRL
+(−0.263→−0.291), shrinks the real HARD/MED wins, and turns Δ negative by λ_c=0.20 — no sweet spot; the
+shipped λ_c=0.05 is already the most favorable value. (2) Mechanism: `dense` is the cheapest arm (cost 0),
+so λ_c is invariant for it and only taxes the heavier arms the bandit *wins* with on HARD/MED. (3) **Sharp
+finding — the CTRL loss is ~97% retrieval-quality, not cost:** extrapolating the near-linear CTRL trend to
+λ_c=0 leaves ≈ −0.256, i.e. on CTRL the bandit routes easy queries to arms scoring ~0.47 coverage where
+`dense` scores ~0.74 — a **featurization/routing** failure the label-free features can't prevent, not a
+cost-accounting artifact. (4) CIs stay ~[−0.21,+0.26] across the sweep — the ESS≈16 power limit is a
+property of the logging design, not the reward scale. **Conclusion:** cost tuning is *not* the lever; the
+two real levers are (a) features that separate "dense-is-sufficient" easy queries and (b) a higher-ESS
+logging design. Promotion scoped to MED/HARD would require a *gated* policy (force `dense` on easy by
+construction), since at this feature resolution the bandit demonstrably cannot learn that routing itself.
 
 **Reproduce** (local, **\$0** — retrieval-only, no LLM):
 ```bash
@@ -841,4 +914,90 @@ PYTHONPATH=src python -m stock_agent rag policy-eval \
   --queries configs/rag_eval_multistep_generated.json --policy linucb \
   --test-frac 0.3 --seed 42 --out outputs/rag_eval/policy_eval_linucb.json
 # Sensitivity: rerun with --lambda-cost 0 and 0.1; compare with --policy epsilon_greedy.
+```
+
+## 2026-07-08 — A6.1 follow-up: gated router (deterministic gate → bandit on hard) ❌
+
+**Question.** The A6.1 verdict rejected the *unified* bandit on two counts — the Δ CI included 0 **and**
+it regressed CTRL (−0.263) — and diagnosed the CTRL loss as ~97% a **routing/featurization** failure
+(the bandit sent easy queries to arms scoring ~0.47 coverage where `dense` scores ~0.74). It predicted:
+*"promotion scoped to MED/HARD would require a gated policy (force `dense` on easy by construction)."*
+This follow-up builds exactly that and asks **two** pre-registered questions: (1) does the **gated
+router** `gated(dense | linucb)` beat the best fixed arm past the CI with no CTRL regression? (2) does
+the bandit **earn** the hard branch — beat `fixed(graph)` (the A5.3 tiered default) on HARD+MED only,
+rather than being *assumed* onto it? Theory → [rag_concepts.md §18.10](rag_concepts.md); mechanism →
+[rag_implementation_notes.md §A6.1](rag_implementation_notes.md).
+
+**Design.** A `GatedPolicy` composes two branches by a **deterministic, label-free** gate: `hard` iff
+`is_bridging` = 1 (threshold `x[j] > 0`, standardization-invariant for a 0/1 feature), else `easy` →
+`dense`. Because the gate is deterministic given `x`, $\pi_{\text{gated}}(a \mid x) =
+\pi_{\text{active branch}}(a \mid x)$ **exactly**, so the identical DR / IPS / SNIPS + paired group
+bootstrap harness (A6.1) applies with no re-derivation. Same reward matrix, same group-wise split
+(`n_train=129 / n_test=83`), same LinUCB α=1, seed 42, λ_c=0.05 as the A6.1 run — so the two are
+directly comparable. `evaluate_gated` scores 5 fixed + 2 learned + 2 gated candidates.
+
+**Verdict (local run, 2026-07-08; `outputs/rag_eval/gated_eval_seed42.json`).**
+
+| candidate | DR | DR 95% CI | true_value | ESS |
+|---|---|---|---|---|
+| **gated(dense \| linucb)** | **0.524** | [+0.327, +0.660] | 0.443 | 17 |
+| gated(dense \| fixed graph) | 0.496 | [+0.320, +0.627] | **0.453** | 16 |
+| linucb(α=1) | 0.438 | [+0.325, +0.533] | 0.441 | 16 |
+| fixed(dense) *(best fixed)* | 0.414 | [+0.185, +0.616] | 0.355 | 16 |
+| fixed(graph) | 0.345 | [+0.174, +0.469] | 0.437 | 16 |
+
+**[1] Promote the gated router? — REJECT.** `best_fixed = fixed(dense)`. **Δ = DR(gated) − DR(dense) =
++0.1096**, paired 95% CI **[−0.0564, +0.2872]**, exact one-sided bootstrap **P(Δ>0) = 86.8%**
+(868/1000 group-resamples positive). Per-stratum (gated − best fixed): HARD **+0.110**
+(n=41), MED **+0.305** (n=15), **CTRL +0.000 (n=27)**. The rule fails on **one** count — the Δ CI
+includes 0 — but **the CTRL regression is gone** (−0.263 → **exactly 0.000**: the gate routes CTRL to
+`dense`, which *is* `best_fixed`, so the strata match by construction). This is a **strict improvement**
+over the A6.1 unified bandit (failed 2 counts): the gate fixed precisely the failure A6.1 diagnosed,
+and the pooled point estimate quadrupled (**+0.0239 → +0.1096**). It is now the single best policy by DR
+(0.524). It still cannot be **certified**: at **ESS ≈ 17** the CI width (~0.34) cannot resolve a +0.11
+gap — the same power limit as A6.1, a property of the uniform-log design, invariant to the gate.
+
+**Follow-up (b), 2026-07-08 — exact bootstrap probability.** The pre-registered rule gates on
+`CI_low > 0`, not on P(Δ>0); a natural question is *how close* the +0.1096 delta came. The exact
+one-sided bootstrap probability the gated router beats best-fixed is **P(Δ>0) = 86.8%** (the fraction
+of the 1000 paired group-resamples with Δ>0 — the same resamples the CI is read from). This is a touch
+below the ~89% Gaussian approximation `Φ(0.1096 / (0.343/(2·1.96))) ≈ 0.896`, because the bootstrap
+distribution is mildly left-skewed. Promotion under the pre-registered two-sided-95% CI is equivalent
+to **P(Δ>0) ≥ 97.5%**; at 86.8% the router is *suggestive but uncertifiable* — it does **not** overturn
+the REJECT, it quantifies the gap to certification (≈ 11 pts of bootstrap mass, i.e. more effective
+samples, not a different point estimate). Recorded as a first-class harness field `delta_p_positive`
+(printed by the CLI, stored in the verdict JSON) so the CI and its one-sided companion stay consistent.
+
+**[2] Does the bandit earn the hard branch? — NO.** On the **HARD ∪ MED** rows only (n=56), `linucb`
+vs `fixed(graph)`: **Δ = −0.0250**, CI **[−0.0945, +0.0458]**, exact **P(Δ>0) = 28.9%** (the bandit is
+*more likely worse* than the fixed graph tier than better) → `linucb` DR ≤ `fixed(graph)`. The \$0
+oracle agrees: `gated(dense | fixed graph)` `true_value` **0.4528 ≥** `gated(dense | linucb)` **0.4435**.
+So even *within* the hard branch the learned policy does not beat the A5.3 fixed default — the bandit is
+**superfluous**; the deterministic gate + `fixed(graph)` captures the available lift.
+
+**Decision: `promote = false` — keep `adaptive_retrieval=False`; A5.3's tiered router is vindicated.**
+The two verdicts compose cleanly: (1) the gate is the *right fix* for the A6.1 CTRL regression (removed
+by construction, point estimate now clearly positive) but the residual HARD/MED lift is **uncertifiable
+at this ESS**; (2) the *learned* hard branch adds nothing over `fixed(graph)`. The architecture the data
+supports is therefore **deterministic gate → fixed graph on hard = exactly A5.3** — no learned policy is
+justified. This is the pre-registered **rigorous negative**; the gate + two-verdict harness are the
+shipped, green deliverable. The only lever left with upside is a **higher-ESS logging design**
+(stratified / propensity-blended μ), not a different policy class — that would be an A6.2 concern.
+
+**A6.1 (contextual bandit) is now CLOSED** across three tests — the unified bandit (2 fails), the λ_c
+cost sweep (refuted), and the gated router (1 fail + exact P(Δ>0)=86.8% < 97.5%). All roads reduce to
+*deterministic-gate → fixed-graph = A5.3*; a **learned contextual policy is not justified at this
+logging design**. Next phase: **A6.2 (Full RL for Retrieval)** — the agentic loop as a finite-horizon
+MDP (state = query + evidence-summary; action = {STOP} ∪ {(config, scope)}; PPO primary), which reuses
+this reward oracle + featurizer + group split + OPE harness verbatim. A6.2's first job is the very
+lever A6.1 could not turn: a **higher-ESS / propensity-blended logging design** so a learned policy is
+even *testable* with power. See `docs/ADVANCED_RAG_TODO.md` §A6.2.
+
+**Reproduce** (local, **\$0** — retrieval-only, no LLM):
+```bash
+# Same prereqs as the A6.1 run above (ingested corpus + graph for configs/graph_universe.txt).
+EMBEDDING_PROVIDER=voyage PYTHONPATH=src python -m stock_agent rag gated-eval \
+  --queries configs/rag_eval_multistep_generated.json \
+  --easy-arm dense --gate-feature is_bridging --hard-fixed-arm graph \
+  --test-frac 0.3 --seed 42 --out outputs/rag_eval/gated_eval_seed42.json
 ```

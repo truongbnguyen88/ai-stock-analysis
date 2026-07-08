@@ -1570,3 +1570,112 @@ hand-rolled numpy normal equations (no sklearn). (d) `λ_c=0.05`; sensitivity-te
 verdict run via `--lambda-cost`. (e) Best fixed selected by **DR** (not true value) — the honest
 deploy-time comparison. (f) Standardize contexts (train-fit) so LinUCB's `√(xᵀA⁻¹x)` bonus and the
 ridge conditioning are scale-sane; constant/bias columns pass through unchanged.
+
+### A6.1 — Verdict run (local, 2026-07-08): **REJECT, keep default-OFF**
+
+Ran `rag policy-eval --policy linucb --seed 42 --n-boot 1000` over the 212-Q benchmark against the
+ingested `voyage-voyage-4` corpus + graph (`EMBEDDING_PROVIDER=voyage`, $0 retrieval, no LLM). Output:
+`outputs/rag_eval/policy_eval_linucb_seed42.json`. `n_train=129 / n_test=83`, λ_c=0.05.
+
+DR headline: `linucb 0.438` > `best_fixed = fixed(dense) 0.414` → **Δ=+0.0239**, group-bootstrap 95% CI
+**[−0.208, +0.273]**. Per-stratum Δ (bandit−fixed): **HARD +0.110, MED +0.305, CTRL −0.263**.
+
+**`promote = false`** — fails the pre-registered rule on two independent counts: (1) Δ CI includes 0
+(underpowered), (2) CTRL regression (rule forbids a CTRL loss). Full DR/IPS/SNIPS/true_value table +
+interpretation → [validations_results.md](validations_results.md) (2026-07-05 entry, now resolved).
+
+Mechanistic lessons the run surfaced (feed A6.2 / any re-attempt):
+- **OPE is variance-bound here.** Deterministic π under uniform μ ⇒ importance weights `w ∈ {0,5}`, so
+  **ESS ≈ 16 of 83** — the estimator physically cannot resolve a ~0.024 gap. The bottleneck is the
+  *logging design*, not the policy: a stratified or propensity-blended μ (raise ESS) is the highest-value
+  fix before re-running. The infra already reports ESS per candidate so this is observable, not guessed.
+- **DR misranks the fixed arms.** DR picks `dense` as best-fixed (0.414) but the $0 oracle `true_value`
+  says `graph` (0.437 > dense 0.355) — within the `|DR−true|<0.15` test tolerance yet enough to flip the
+  *ranking*. `best_fixed` selection by DR (decision (e)) is honest for deploy-time but is itself noisy at
+  this ESS; the oracle column is what caught it.
+- **CTRL regression is real, and inverts the illustrative guess.** Best CTRL arm is cheap `dense`
+  (cost 0.0); the bandit routes control queries to worse retrievers. **λ_c sweep (2026-07-08, executed;
+  `policy_eval_linucb_seed42_lambda_sweep.json`) refuted the cost-tuning hypothesis:** λ_c ∈
+  {0.05,0.1,0.2,0.3} makes CTRL *monotonically worse* (−0.263→−0.291), shrinks the HARD/MED wins, and
+  turns Δ negative by λ_c=0.20 — no sweet spot (shipped 0.05 is already best). Extrapolating the CTRL
+  trend to λ_c=0 leaves ≈−0.256, so **~97% of the CTRL loss is retrieval-quality, not cost** — the bandit
+  misroutes easy queries to arms scoring ~0.47 where `dense` scores ~0.74. Cost is a red herring; the real
+  levers are (a) a "dense-is-sufficient" feature so the policy can recognize easy queries, and (b) a
+  higher-ESS logging design (stratified/propensity-blended μ) since the ~[−0.21,+0.26] CI is invariant to
+  λ_c. Promotion scoped to MED/HARD would need a *gated* policy (force `dense` on easy by construction),
+  not a re-tuned bandit. Efficiency note: the sweep re-scored one λ_c=0 quality matrix (retrieval is
+  λ_c-independent) rather than re-running retrieval 4×; the λ_c=0.05 re-score reproduced the headline
+  verdict exactly, validating the shortcut.
+
+**State after verdict.** `adaptive_retrieval` stays `False`; no policy is persisted (nothing to serve).
+Infra (logging + OPE + LinUCB/ε-greedy + gated `PolicyRetriever`) is the shipped, green deliverable.
+Branch `feat/adv-rag-a6.1-bandits`. Next: PR the infra as a rigorous negative, or proceed to A6.2 (full
+RL/MDP) which can reuse this reward oracle, featurizer, group-split, and OPE harness verbatim.
+
+### A6.1 — Gated-router follow-up (`rag/policy.py::GatedPolicy`, `rag/policy_eval.py::evaluate_gated`, `rag gated-eval`)
+
+**Role.** Direct response to the A6.1 verdict's own diagnosis ("promotion scoped to MED/HARD would
+need a *gated* policy — force `dense` on easy by construction"). Instead of one bandit over all queries,
+a **deterministic label-free gate** routes easy → cheap `dense`, hard → the branch under test; then two
+pre-registered questions decide whether the router *and* its learned hard branch are justified. Chosen by
+the user over jumping to A6.2, with the explicit refinement: **do not assume the bandit belongs on the
+hard branch — make it earn it** vs the A5.3 fixed default.
+
+**Key files & mechanism (step-by-step).**
+1. `rag/policy.py::GatedPolicy(easy, hard, *, gate_index, gate_threshold=0.0)` — a `Policy` that delegates
+   `act`/`prob` to `hard` if `x[gate_index] > gate_threshold` else `easy`. Composes **any** two policies
+   (arm-space checked in `__init__`). Because the gate is deterministic given `x`, the active branch's
+   propensity **is** the gated propensity — OPE needs no change. `build_gated_policy(hard, *,
+   easy_arm="dense", gate_feature="is_bridging")` resolves the gate index from `FEATURE_NAMES` (lazy
+   import) and wraps a `FixedPolicy(easy_arm)` as the easy branch.
+2. **Standardization invariance.** The evaluator z-scores contexts (train-fit). Threshold `> 0` on a 0/1
+   feature still recovers `is_bridging == 1`: for train mean μ∈(0,1), value 1 → (1−μ)/σ > 0, value 0 →
+   −μ/σ < 0; a constant column passes through. So the *same* `GatedPolicy` object works on raw or
+   standardized contexts — no separate raw-context plumbing (proved + tested in
+   `test_gate_recovers_is_bridging_after_train_fit_standardization`).
+3. `rag/policy_eval.py::evaluate_gated(train, test, *, easy_arm="dense", gate_feature="is_bridging",
+   hard_fixed_arm="graph", …)` — reuses the A6.1 machinery verbatim (`_fit_standardizer`, `synthesize_log`,
+   `fit_learned_policies`, `_evaluate_policy`, `_paired_delta`). Candidates = 5 fixed + linucb + ε-greedy +
+   `gated(dense|graph)` + `gated(dense|linucb)`. **Verdict 1** = `_paired_delta(gated(dense|linucb),
+   best_fixed)` → promote iff Δ>0 ∧ CI_low>0 ∧ no CTRL regression. **Verdict 2** (refinement 2) = on
+   `strata ∈ {HARD,MED}` only, `_paired_delta(linucb, fixed(graph))` → earns iff Δ>0 ∧ CI_low>0.
+   `GatedEvalReport.to_json_dict` nests the verdict-2 result under a `hard_branch` block.
+4. `cli/app.py::rag gated-eval` — mirrors `rag policy-eval` (build reward matrix once via `build_dataset`,
+   group-split, `evaluate_gated`), prints `_format_gated_eval` (value table + both verdicts), writes
+   `outputs/rag_eval/gated_eval_*.json`. Same `$0` local path (voyage embeddings + local retrieval, no LLM).
+
+**Verdict (local, 2026-07-08; `gated_eval_seed42.json`; same split/seed/λ_c as the A6.1 run — comparable).**
+- **[1] Promote? REJECT.** `best_fixed = fixed(dense)`; Δ = DR(gated) − DR(dense) = **+0.1096**, CI
+  **[−0.0564, +0.2872]**, exact **P(Δ>0) = 86.8%** (868/1000 group-resamples positive). Per-stratum HARD
+  **+0.110** / MED **+0.305** / **CTRL +0.000**. Fails on the CI count only — but the A6.1 **CTRL
+  regression is gone** (−0.263 → exactly 0: the gate routes CTRL to `dense`, which is `best_fixed`, so the
+  strata are identical by construction). Pooled Δ quadrupled (+0.0239 → +0.1096) and `gated(dense|linucb)`
+  is the top policy by DR (0.524). Still uncertifiable: ESS ≈ 17 → CI width ~0.34 cannot resolve +0.11 (the
+  same logging-design power limit, invariant to the gate).
+- **[2] Bandit earns hard branch? NO.** On HARD+MED (n=56) `linucb` vs `fixed(graph)`: Δ = **−0.0250**, CI
+  [−0.0945, +0.0458], exact **P(Δ>0) = 28.9%** (bandit *more likely worse* than the fixed graph tier);
+  oracle `true_value` agrees (gated+graph 0.4528 ≥ gated+linucb 0.4435). The learned hard branch does not
+  beat the A5.3 fixed default.
+
+**Follow-up (b) — exact bootstrap probability (2026-07-08).** Added `delta_p_positive` as a first-class
+harness field: `ope.bootstrap_delta_stats` returns `(lo, hi, p_positive)` from **one** resampling pass
+(refactored the shared core `_bootstrap_samples`; `bootstrap_ci` stays byte-identical), and `_paired_delta`
+threads it into both verdict reports (top-level for [1], nested `hard_branch` for [2]), the JSON, and the
+CLI (`P(Δ>0)=…`). `p_positive = mean(Δ_resample > 0)` — the exact one-sided bootstrap achieved-significance
+for `H1: Δ>0`, read from the **same** resamples as the CI so the two never disagree. The pre-registered rule
+gates on `CI_low > 0` (≡ P(Δ>0) ≥ 97.5% for a two-sided-95% percentile interval), not on P(Δ>0), so the
+field is **reported, not a criterion**. Result: the +0.1096 gated delta is 86.8% (below the ~89% Gaussian
+approx — mild left-skew, and well below 97.5%) ⇒ **REJECT unchanged**; concept math in `rag_concepts.md`
+§18.9. Tests: `test_ope.py::test_delta_stats_*` (CI-consistency + all-positive/all-negative goldens),
+`test_policy_eval.py` JSON-schema assertion extended.
+
+**What it means / next — A6.1 CLOSED.** The gate is the *correct fix* for the A6.1 CTRL regression (removed by
+construction; point estimate now clearly positive), but (a) the residual HARD/MED lift is not certifiable
+at this ESS (P(Δ>0)=86.8% < 97.5%), and (b) the learned hard branch is superfluous over `fixed(graph)`. The
+architecture the data supports is **deterministic gate → fixed graph on hard = exactly A5.3's tiered
+router**, which is therefore vindicated — no learned policy is justified. `adaptive_retrieval` stays
+`False`. Across all three A6.1 tests (unified bandit, λ_c sweep, gated router) the verdict is REJECT; **the
+contextual-bandit track is CLOSED.** The only remaining lever with upside is a **higher-ESS logging design**
+(stratified / propensity-blended μ) — cost tuning and policy class are both ruled out — which is the opening
+move of **A6.2 (Full RL for Retrieval)**: the agentic loop as an MDP (PPO), reusing this reward oracle +
+featurizer + group split + OPE harness verbatim. See `docs/ADVANCED_RAG_TODO.md` §A6.2.

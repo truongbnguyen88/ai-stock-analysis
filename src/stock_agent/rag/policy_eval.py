@@ -31,7 +31,7 @@ import numpy as np
 
 from stock_agent.rag.ope import (
     OPEEstimate,
-    bootstrap_ci,
+    bootstrap_delta_stats,
     dr_value,
     fit_q_ridge,
     importance_weights,
@@ -44,6 +44,7 @@ from stock_agent.rag.policy import (
     LinUCB,
     Policy,
     UniformPolicy,
+    build_gated_policy,
     target_prob_matrix,
 )
 from stock_agent.rag.policy_features import featurize
@@ -269,6 +270,7 @@ class PolicyEvalReport:
     bandit: str
     delta_dr: float
     delta_ci: tuple[float, float]
+    delta_p_positive: float  # exact one-sided bootstrap P(Δ>0) — reported, not gated
     per_stratum: list[StratumDelta]
     promote: bool
     rationale: str
@@ -285,6 +287,7 @@ class PolicyEvalReport:
             "bandit": self.bandit,
             "delta_dr": self.delta_dr,
             "delta_ci": list(self.delta_ci),
+            "delta_p_positive": self.delta_p_positive,
             "per_stratum": [s.to_json_dict() for s in self.per_stratum],
             "promote": self.promote,
             "rationale": self.rationale,
@@ -375,13 +378,17 @@ def _paired_delta(
     ridge_lambda: float,
     n_boot: int,
     seed: int,
-) -> tuple[float, tuple[float, float], list[StratumDelta]]:
+) -> tuple[float, tuple[float, float], float, list[StratumDelta]]:
     """Paired DR delta ``DR(bandit) − DR(fixed)`` with a group bootstrap CI + per-stratum breakdown.
 
     The reward model ``q_hat`` (policy-independent) is fit once on the test log; only the importance
     weights and target-prob matrices differ between the two policies. The bootstrap resamples the
     SAME groups for both DR values each draw (paired) so the CI is on their difference — the
     pre-registered promotion statistic. Per-stratum deltas reuse those weights/``q_hat`` on masks.
+
+    Returns ``(point, ci, p_positive, per_stratum)`` where ``p_positive = P(Δ > 0)`` is the exact
+    one-sided bootstrap probability the paired delta is positive (companion to the CI, reported not
+    gated — see ``bootstrap_delta_stats``).
     """
     q_weights = fit_q_ridge(test_x, actions, rewards, n_arms=n_arms, ridge_lambda=ridge_lambda)
     q_hat_all = predict_q(test_x, q_weights)
@@ -395,7 +402,10 @@ def _paired_delta(
 
     full = np.arange(len(rewards))
     point = _delta(full)
-    ci = bootstrap_ci(_delta, len(rewards), groups=groups, n_boot=n_boot, seed=seed)
+    lo, hi, p_positive = bootstrap_delta_stats(
+        _delta, len(rewards), groups=groups, n_boot=n_boot, seed=seed
+    )
+    ci = (lo, hi)
 
     per_stratum: list[StratumDelta] = []
     for s in _STRATA:
@@ -406,7 +416,7 @@ def _paired_delta(
         dr_b = dr_value(actions[idx], rewards[idx], w_b[idx], bandit_tp[idx], q_hat_all[idx])
         dr_f = dr_value(actions[idx], rewards[idx], w_f[idx], fixed_tp[idx], q_hat_all[idx])
         per_stratum.append(StratumDelta(s, int(mask.sum()), dr_b, dr_f, dr_b - dr_f))
-    return point, ci, per_stratum
+    return point, ci, p_positive, per_stratum
 
 
 def evaluate_offline(
@@ -487,7 +497,7 @@ def evaluate_offline(
     bandit_name = learned[bandit].name
 
     # 5) pre-registered verdict: paired DR delta clears the group bootstrap 95% CI AND no CTRL loss.
-    delta, delta_ci, per_stratum = _paired_delta(
+    delta, delta_ci, delta_p_pos, per_stratum = _paired_delta(
         target_probs[bandit_name],
         target_probs[best_fixed],
         test_x,
@@ -516,6 +526,7 @@ def evaluate_offline(
         bandit=bandit_name,
         delta_dr=delta,
         delta_ci=delta_ci,
+        delta_p_positive=delta_p_pos,
         per_stratum=per_stratum,
         promote=promote,
         rationale=rationale,
@@ -536,4 +547,258 @@ def _verdict_rationale(
     return (
         f"PROMOTE: {bandit} beats {best_fixed} by Δ={delta:+.4f}, "
         f"CI [{lo:+.4f}, {hi:+.4f}] > 0, no CTRL regression."
+    )
+
+
+# ---- gated router (A6.1 verdict follow-up) -----------------------------------
+@dataclass(frozen=True)
+class GatedEvalReport:
+    """Gated-router verdict: overall promotion **and** whether the bandit earns the hard branch.
+
+    Two pre-registered questions (see ``evaluate_gated``): (1) does ``gated(easy_arm | linucb)``
+    beat the best fixed arm on the held-out fold (paired group-bootstrap CI, no CTRL regression)?
+    (2) does ``linucb`` beat ``fixed(graph)`` on the HARD+MED rows only — i.e. does the bandit
+    *earn* the hard branch, or stay the A5.3 fixed default? The nested ``hard_branch`` answers (2).
+    """
+
+    arms: tuple[str, ...]
+    n_train: int
+    n_test: int
+    seed: int
+    lambda_cost: float
+    gate_feature: str
+    easy_arm: str
+    values: list[PolicyValue]
+    best_fixed: str
+    # Verdict 1 — promote the gated router (headline = gated(easy_arm | linucb)) vs best fixed arm.
+    gated_policy: str
+    delta_dr: float
+    delta_ci: tuple[float, float]
+    delta_p_positive: float  # exact one-sided bootstrap P(Δ>0) for verdict 1 — reported, not gated
+    per_stratum: list[StratumDelta]
+    promote: bool
+    rationale: str
+    # Verdict 2 — does the bandit EARN the hard branch? linucb vs fixed(graph) on HARD+MED only.
+    hard_bandit: str
+    hard_fixed: str
+    hard_n: int
+    hard_delta_dr: float
+    hard_delta_ci: tuple[float, float]
+    hard_delta_p_positive: float  # exact one-sided bootstrap P(Δ>0) for verdict 2
+    hard_per_stratum: list[StratumDelta]
+    bandit_earns_hard: bool
+    hard_rationale: str
+
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "arms": list(self.arms),
+            "n_train": self.n_train,
+            "n_test": self.n_test,
+            "seed": self.seed,
+            "lambda_cost": self.lambda_cost,
+            "gate_feature": self.gate_feature,
+            "easy_arm": self.easy_arm,
+            "values": [v.to_json_dict() for v in self.values],
+            "best_fixed": self.best_fixed,
+            "gated_policy": self.gated_policy,
+            "delta_dr": self.delta_dr,
+            "delta_ci": list(self.delta_ci),
+            "delta_p_positive": self.delta_p_positive,
+            "per_stratum": [s.to_json_dict() for s in self.per_stratum],
+            "promote": self.promote,
+            "rationale": self.rationale,
+            "hard_branch": {
+                "bandit": self.hard_bandit,
+                "fixed": self.hard_fixed,
+                "n": self.hard_n,
+                "delta_dr": self.hard_delta_dr,
+                "delta_ci": list(self.hard_delta_ci),
+                "delta_p_positive": self.hard_delta_p_positive,
+                "per_stratum": [s.to_json_dict() for s in self.hard_per_stratum],
+                "bandit_earns_hard": self.bandit_earns_hard,
+                "rationale": self.hard_rationale,
+            },
+        }
+
+
+def _hard_branch_rationale(delta: float, ci: tuple[float, float], bandit: str, fixed: str) -> str:
+    """One-liner: does the bandit earn the hard branch, or does it stay the fixed default?"""
+    lo, hi = ci
+    if delta <= 0:
+        return f"HARD BRANCH = {fixed}: {bandit} DR ≤ {fixed} on HARD+MED (Δ={delta:+.4f})."
+    if lo <= 0:
+        return (
+            f"HARD BRANCH = {fixed}: {bandit} leads by Δ={delta:+.4f} on HARD+MED but the 95% CI "
+            f"[{lo:+.4f}, {hi:+.4f}] includes 0 (not certified — keep the fixed default)."
+        )
+    return (
+        f"HARD BRANCH = {bandit}: beats {fixed} on HARD+MED by Δ={delta:+.4f}, "
+        f"CI [{lo:+.4f}, {hi:+.4f}] > 0 — the bandit earns the branch."
+    )
+
+
+def evaluate_gated(
+    train: Dataset,
+    test: Dataset,
+    *,
+    easy_arm: str = "dense",
+    gate_feature: str = "is_bridging",
+    hard_fixed_arm: str = "graph",
+    alpha: float = 1.0,
+    epsilon: float = 0.1,
+    ridge_lambda: float = 1.0,
+    lambda_cost: float = 0.05,
+    standardize: bool = True,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> GatedEvalReport:
+    """Evaluate the gated router and answer the two pre-registered questions.
+
+    **Verdict 1 (promotion).** Does ``gated(easy_arm | linucb)`` beat the best fixed arm on the
+    group-wise held-out fold — clearing the paired group-bootstrap 95% CI with no CTRL regression?
+    The gate (``gate_feature`` = ``is_bridging``) routes easy queries to ``easy_arm`` (cheap
+    ``dense``) so the bandit never touches the CTRL queries it regressed on in the A6.1 verdict.
+
+    **Verdict 2 (does the bandit earn the hard branch?).** Restricted to HARD+MED rows only, does
+    ``linucb`` beat ``fixed(hard_fixed_arm)`` (=graph, the A5.3 tiered default) clearing the CI? If
+    not, the hard branch should stay the fixed arm — the bandit is not *assumed* onto it (refinement
+    2). ``linucb`` is fit on the full train log (it only serves hard queries once gated).
+
+    The logged folds + standardizer are built exactly as ``evaluate_offline`` (train-fit z-score;
+    mu-train seed, mu-test seed+1), so the two harnesses agree; only the candidate set and the two
+    verdicts differ. The gate reads the standardized context: ``x[gate_index] > 0`` recovers
+    ``is_bridging == 1`` because a 0/1 feature's standardized images straddle 0 (see GatedPolicy).
+    """
+    arms = train.arm_names
+    n_arms = train.n_arms
+    if standardize:
+        mean, std = _fit_standardizer(train.contexts)  # fit on TRAIN only (leakage-safe)
+        train_x = _standardize(train.contexts, mean, std)
+        test_x = _standardize(test.contexts, mean, std)
+    else:
+        train_x, test_x = train.contexts, test.contexts
+
+    # Logged folds under uniform mu (context-independent log; identical to evaluate_offline).
+    mu_train = UniformPolicy(n_arms, seed=seed)
+    a_tr, _, r_tr = synthesize_log(train_x, train.reward_matrix, mu_train)
+    mu_test = UniformPolicy(n_arms, seed=seed + 1)
+    a_te, p_te, r_te = synthesize_log(test_x, test.reward_matrix, mu_test)
+
+    learned = fit_learned_policies(
+        train_x,
+        a_tr,
+        r_tr,
+        n_arms=n_arms,
+        alpha=alpha,
+        epsilon=epsilon,
+        ridge_lambda=ridge_lambda,
+        seed=seed,
+    )
+    linucb = learned["linucb"]
+    graph_fixed = FixedPolicy(hard_fixed_arm, arm_names=arms)
+
+    # Candidates: 5 fixed + 2 learned standalone + 2 gated (cheap gate + fixed-graph / bandit hard).
+    gated_bandit = build_gated_policy(
+        linucb, easy_arm=easy_arm, gate_feature=gate_feature, arm_names=arms
+    )
+    gated_graph = build_gated_policy(
+        graph_fixed, easy_arm=easy_arm, gate_feature=gate_feature, arm_names=arms
+    )
+    candidates: dict[str, Policy] = {
+        f"fixed({name})": FixedPolicy(name, arm_names=arms) for name in arms
+    }
+    candidates.update({p.name: p for p in learned.values()})
+    candidates[gated_graph.name] = gated_graph
+    candidates[gated_bandit.name] = gated_bandit
+
+    values: list[PolicyValue] = []
+    target_probs: dict[str, np.ndarray] = {}
+    for name, policy in candidates.items():
+        v, tp = _evaluate_policy(
+            policy,
+            test_x,
+            a_te,
+            p_te,
+            r_te,
+            test.reward_matrix,
+            test.groups,
+            n_arms=n_arms,
+            ridge_lambda=ridge_lambda,
+            n_boot=n_boot,
+            seed=seed,
+        )
+        values.append(v)
+        target_probs[name] = tp
+
+    fixed_values = [v for v in values if v.name.startswith("fixed(")]
+    best_fixed = max(fixed_values, key=lambda v: v.dr).name
+
+    # Verdict 1: gated(easy|linucb) vs best fixed — the promotion decision.
+    delta, delta_ci, delta_p_pos, per_stratum = _paired_delta(
+        target_probs[gated_bandit.name],
+        target_probs[best_fixed],
+        test_x,
+        a_te,
+        p_te,
+        r_te,
+        test.groups,
+        test.strata,
+        n_arms=n_arms,
+        ridge_lambda=ridge_lambda,
+        n_boot=n_boot,
+        seed=seed,
+    )
+    ctrl_regression = any(s.stratum == "CTRL" and s.delta < -1e-9 for s in per_stratum)
+    promote = delta > 0 and delta_ci[0] > 0 and not ctrl_regression
+    rationale = _verdict_rationale(delta, delta_ci, ctrl_regression, gated_bandit.name, best_fixed)
+
+    # Verdict 2: does the bandit earn the hard branch? linucb vs fixed(graph) on HARD+MED only.
+    hard_idx = np.flatnonzero(np.isin(test.strata, ("HARD", "MED")))
+    h_per: list[StratumDelta]
+    if hard_idx.size == 0:  # degenerate fold with no hard rows — nothing to earn.
+        h_delta, h_ci, h_p_pos, h_per, earns = 0.0, (0.0, 0.0), 0.0, [], False
+    else:
+        h_delta, h_ci, h_p_pos, h_per = _paired_delta(
+            target_probs[linucb.name][hard_idx],
+            target_probs[graph_fixed.name][hard_idx],
+            test_x[hard_idx],
+            a_te[hard_idx],
+            p_te[hard_idx],
+            r_te[hard_idx],
+            test.groups[hard_idx],
+            test.strata[hard_idx],
+            n_arms=n_arms,
+            ridge_lambda=ridge_lambda,
+            n_boot=n_boot,
+            seed=seed,
+        )
+        earns = h_delta > 0 and h_ci[0] > 0
+    hard_rationale = _hard_branch_rationale(h_delta, h_ci, linucb.name, graph_fixed.name)
+
+    return GatedEvalReport(
+        arms=arms,
+        n_train=train.n,
+        n_test=test.n,
+        seed=seed,
+        lambda_cost=lambda_cost,
+        gate_feature=gate_feature,
+        easy_arm=easy_arm,
+        values=values,
+        best_fixed=best_fixed,
+        gated_policy=gated_bandit.name,
+        delta_dr=delta,
+        delta_ci=delta_ci,
+        delta_p_positive=delta_p_pos,
+        per_stratum=per_stratum,
+        promote=promote,
+        rationale=rationale,
+        hard_bandit=linucb.name,
+        hard_fixed=graph_fixed.name,
+        hard_n=int(hard_idx.size),
+        hard_delta_dr=h_delta,
+        hard_delta_ci=h_ci,
+        hard_delta_p_positive=h_p_pos,
+        hard_per_stratum=h_per,
+        bandit_earns_hard=earns,
+        hard_rationale=hard_rationale,
     )
