@@ -2033,6 +2033,34 @@ where $X_a$ / $r_a$ are the logged contexts / rewards for the rows that pulled a
 logged rows keeps $\hat{\theta}_a = 0$ (DR then leans entirely on the IPS correction for it — correct).
 $\lambda > 0$ keeps $X_a^\top X_a + \lambda I$ invertible on tiny/collinear data.
 
+**Worked example tying §§18.4–18.6 together (the `test_ope.py` goldens).** Three logged rows, two
+arms, target policy $\pi$ = "always arm 0", under a *non-uniform* logger $\mu$ (propensities need not
+be flat for OPE to work — only positive):
+
+| row | logged action | propensity `μ` | reward `r` | `π` takes it? | weight `w = π/μ` |
+|---|---|---|---|---|---|
+| 1 | arm 0 | 0.5 | 1.0 | yes (prob 1) | 2 |
+| 2 | arm 1 | 0.5 | 0.0 | no (prob 0) | 0 |
+| 3 | arm 0 | 0.25 | 0.4 | yes (prob 1) | 4 |
+
+- **IPS** $= \frac{1}{3}\big(2\cdot 1 + 0\cdot 0 + 4\cdot 0.4\big) = \frac{3.6}{3} = 1.2$ — **outside
+  $[0,1]$**. Row 2 (which $\pi$ would never pick) drops out, and the two surviving rows carry weight
+  mass $2 + 4 = 6$ while IPS still divides by $N = 3$, so it over-counts. This is the scale/variance
+  pathology of §18.4 made concrete: an "average reward" that exceeds the maximum reward any arm can
+  earn. In expectation $\mathbb{E}_\mu[\sum_i w_i] = N$, so IPS is still *unbiased* — but any single
+  sample can drift far, and here it did.
+- **SNIPS** $= \frac{2\cdot 1 + 0 + 4\cdot 0.4}{2 + 0 + 4} = \frac{3.6}{6} = 0.6$ — back **inside** the
+  reward hull $[\min r, \max r] = [0,1]$, because it divides by the *realized* weight mass $6$ rather
+  than $N$. Same three numbers, a sane estimate — the §18.5 convex-hull property in action.
+- **DR** with $\hat{q}\equiv 0$ collapses to IPS $= 1.2$ (the direct term vanishes). A $\hat{q}$ that
+  actually explained the reward would leave only a small residual to importance-weight, pulling the
+  estimate back toward the $0.6$ region with far less variance — which is why DR is the headline.
+
+These are exactly the values `test_ips_golden` ($1.2$), `test_snips_golden` ($0.6$), and
+`test_dr_equals_ips_when_qhat_zero` assert, so the doc and the code agree by construction. The same
+mechanism, at the real evaluation's $K=5$ deterministic-policy scale, is why the verdict's confidence
+intervals are wide: only $\approx 1/K$ of rows survive the weighting (§18.7).
+
 ### 18.7 Trust diagnostics — effective sample size and the group bootstrap
 
 **Kish effective sample size** measures how many *independent* rows the reweighting effectively leaves:

@@ -844,11 +844,17 @@ seeded sampler, seed logged in the dataset header.
 
 ---
 
-### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra; verdict = local run)
+### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra) · verdict 2026-07-08 = **REJECT (keep default-OFF)**
 
-> **Status: INFRA COMPLETE & GREEN (slices A6.1a–f shipped, `make check` green, default-OFF).** The
-> **verdict numbers are a pending local run** (`rag policy-eval` over the 212-Q benchmark — needs the
-> ingested corpus + A5 graph, like the A1/A5.3 local runs; $0 retrieval, no LLM). Mechanism →
+> **Status: INFRA COMPLETE & GREEN (slices A6.1a–f shipped, `make check` green, default-OFF).
+> Verdict EXECUTED 2026-07-08 → REJECT: `promote=false`, `adaptive_retrieval` stays False.** LinUCB α=1,
+> seed 42, n_train=129/n_test=83: DR(linucb) 0.438 vs best-fixed(dense) 0.414 → Δ=+0.0239, group-boot 95%
+> CI [−0.208, +0.273]; per-stratum HARD +0.110 / MED +0.305 / **CTRL −0.263**. Fails the pre-registered
+> rule twice (CI includes 0 **and** CTRL regression) — a rigorous negative; the logging+OPE+bandit infra
+> is the deliverable. Numbers + honest read (underpowered: ESS≈16; DR misranks fixed arms) →
+> [validations_results.md](validations_results.md) (2026-07-05 entry, resolved) and
+> [rag_implementation_notes.md §A6.1](rag_implementation_notes.md). Output:
+> `outputs/rag_eval/policy_eval_linucb_seed42.json`. Mechanism →
 > [rag_implementation_notes.md §A6.1](rag_implementation_notes.md); theory → [rag_concepts.md
 > §18](rag_concepts.md). Conceptual background → [rl_rag_pre_questions.md](rl_rag_pre_questions.md)
 > (MDP/reward framing) and [rag_concepts.md §17](rag_concepts.md) (the A6.0 benchmark this consumes).

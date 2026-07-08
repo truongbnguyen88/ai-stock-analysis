@@ -802,7 +802,7 @@ AGENTIC_BRIDGE_MAX_ENTITIES=0 PYTHONPATH=src python -m stock_agent rag eval-mult
 
 ---
 
-## 2026-07-05 — A6.1: retrieval contextual bandit + off-policy evaluation (infra shipped; verdict = local run) ⏳
+## 2026-07-05 — A6.1: retrieval contextual bandit + off-policy evaluation (verdict 2026-07-08: **REJECT** — keep default-OFF) ❌
 
 **Question.** A5.3 showed the best retrieval config is **context-dependent** (HARD bridges → graph,
 CTRL → hybrid/dense). Can a **learned contextual-bandit policy** realize that per-query lift — beating
@@ -828,11 +828,84 @@ the best fixed arm on **CTRL**). Else keep default-OFF and **record the negative
 (HARD/MED/CTRL). Sensitivity-test $\lambda_c \in \{0, 0.05, 0.1\}$ via `--lambda-cost`. Likely outcome:
 tuned hybrid(+graph) is strong → a **modest win or a rigorous negative**.
 
-**Status — infra COMPLETE & GREEN; numbers PENDING.** Slices A6.1a–f shipped, `make check` green,
-default-OFF (read path byte-identical to A5.3). CI pins the mechanics against hand-computed goldens and
-a synthetic reward matrix with a *known* contextual optimum (bandit promotes; no-signal rejects). The
-**verdict run is local** (needs the ingested corpus + A5 graph; \$0 retrieval, no LLM) and is **not yet
-executed** — this entry will be updated with the DR table + promote/reject once it runs.
+**Status — infra COMPLETE & GREEN; verdict EXECUTED 2026-07-08 → REJECT.** Slices A6.1a–f shipped,
+`make check` green, default-OFF (read path byte-identical to A5.3). CI pins the mechanics against
+hand-computed goldens and a synthetic reward matrix with a *known* contextual optimum (bandit promotes;
+no-signal rejects). The local verdict run has now executed (\$0 retrieval, no LLM) — numbers below.
+
+**Verdict (local run, 2026-07-08; `outputs/rag_eval/policy_eval_linucb_seed42.json`).** LinUCB α=1,
+seed 42, `n_train=129 / n_test=83`, λ_c=0.05, 1000-resample **group** bootstrap over the 212-Q
+multi-hop benchmark. DR is the pre-registered headline; `true_value` is the \$0-oracle full-information
+value (ground-truth check).
+
+| candidate | DR | DR 95% CI | IPS | SNIPS | true_value | ESS |
+|---|---|---|---|---|---|---|
+| fixed(dense) | 0.414 | [0.185, 0.616] | 0.392 | 0.406 | 0.355 | 16 |
+| fixed(reranked) | 0.257 | [0.139, 0.373] | 0.347 | 0.360 | 0.328 | 16 |
+| fixed(hybrid) | 0.287 | [−0.073, 0.546] | 0.445 | 0.308 | 0.387 | 24 |
+| fixed(hybrid+rerank) | 0.309 | [0.184, 0.454] | 0.228 | 0.344 | 0.317 | 11 |
+| fixed(graph) | 0.345 | [0.174, 0.469] | 0.347 | 0.360 | **0.437** | 16 |
+| **linucb(α=1)** | **0.438** | [0.325, 0.533] | 0.442 | 0.458 | **0.441** | 16 |
+| epsilon_greedy(0.1) | 0.433 | [0.242, 0.593] | 0.407 | 0.421 | 0.403 | 19 |
+
+`best_fixed = fixed(dense)` (argmax DR). **Δ = DR(linucb) − DR(dense) = +0.0239**, paired group-bootstrap
+95% CI **[−0.208, +0.273]**.
+
+Per-stratum (bandit vs. fixed):
+
+| stratum | n | DR bandit | DR fixed | Δ |
+|---|---|---|---|---|
+| HARD | 41 | 0.338 | 0.228 | **+0.110** |
+| MED | 15 | 0.648 | 0.343 | **+0.305** |
+| CTRL | 27 | 0.473 | 0.736 | **−0.263** |
+
+**Decision: `promote = false` — keep `adaptive_retrieval=False`.** The pre-registered rule fails on **two
+independent counts**: (1) the Δ 95% CI **includes 0** (Δ=+0.0239 ∈ [−0.208, +0.273]) — the effect is
+statistically indistinguishable from zero; (2) a **CTRL regression** (−0.263) — the rule forbids losing
+to the best fixed arm on control queries. Either alone blocks promotion; both fire. This is the
+pre-registered **rigorous negative** — the logging + OPE + bandit infra is the shipped deliverable.
+
+**Honest read (direction vs. certainty).** Point estimates favor the bandit: linucb is top on **DR
+(0.438), SNIPS (0.458), and — tellingly — `true_value` (0.441, highest of all 7 candidates)**, and it
+wins HARD (+0.11) and MED (+0.30) convincingly. On the \$0 oracle it *is* the best policy in the set.
+But the test is underpowered and there's a real CTRL loss, so it cannot be certified:
+- **Tiny effective sample.** Deterministic policies under a uniform log credit only rows where the logged
+  arm matched the pick (`w ∈ {0,5}`), so **ESS ≈ 16 of 83**. A group bootstrap over ~16 effective points
+  cannot resolve a +0.024 gap → CI width ~0.48. A *power* problem, not proof the bandit is bad.
+- **DR misranks the fixed arms.** DR calls **dense** best-fixed (0.414), but the oracle `true_value` says
+  **graph** is best-fixed (0.437 vs dense 0.355). The `best_fixed` anchor is itself noisy; anchored on the
+  oracle, linucb (0.441) only *ties* graph (0.437) overall — and is still CTRL-negative.
+- **The CTRL loss inverts the illustrative guess.** The example expected the bandit to *win* CTRL via
+  cheap `hybrid`; in reality the best CTRL arm is **dense** (cost 0.0) and the bandit over-retrieves on
+  control — λ_c=0.05 didn't steer it to dense. Concrete lever for a re-attempt (or A6.2): larger/swept
+  λ_c, a variance-reduced logging design (stratified / propensity-blended μ to lift ESS), or richer
+  "dense-is-sufficient" features.
+
+**Sensitivity sweep (executed 2026-07-08; `outputs/rag_eval/policy_eval_linucb_seed42_lambda_sweep.json`).**
+Tested the hypothesis "a larger cost penalty makes the unified bandit pick cheap `dense` on easy queries,
+fixing the CTRL regression." Built the quality matrix **once** (λ_c=0) and re-scored `R(λ_c) = quality −
+λ_c·cost` through the verbatim `evaluate_offline` — the λ_c=0.05 re-score reproduces the headline verdict
+exactly (Δ=+0.0239, CI [−0.208,+0.273], per-stratum identical), validating build-once-recost ≡ fresh run.
+
+| λ_c | Δ_DR | 95% CI | HARD Δ | MED Δ | CTRL Δ | promote |
+|---|---|---|---|---|---|---|
+| 0.05 | +0.0239 | [−0.208, +0.273] | +0.110 | +0.305 | −0.263 | ✗ |
+| 0.10 | +0.0133 | [−0.216, +0.260] | +0.097 | +0.294 | −0.270 | ✗ |
+| 0.20 | −0.0033 | [−0.209, +0.268] | +0.081 | +0.272 | −0.284 | ✗ |
+| 0.30 | −0.0171 | [−0.216, +0.248] | +0.064 | +0.254 | −0.291 | ✗ |
+
+**Hypothesis refuted, instructively.** (1) The gradient runs *backwards*: raising λ_c worsens CTRL
+(−0.263→−0.291), shrinks the real HARD/MED wins, and turns Δ negative by λ_c=0.20 — no sweet spot; the
+shipped λ_c=0.05 is already the most favorable value. (2) Mechanism: `dense` is the cheapest arm (cost 0),
+so λ_c is invariant for it and only taxes the heavier arms the bandit *wins* with on HARD/MED. (3) **Sharp
+finding — the CTRL loss is ~97% retrieval-quality, not cost:** extrapolating the near-linear CTRL trend to
+λ_c=0 leaves ≈ −0.256, i.e. on CTRL the bandit routes easy queries to arms scoring ~0.47 coverage where
+`dense` scores ~0.74 — a **featurization/routing** failure the label-free features can't prevent, not a
+cost-accounting artifact. (4) CIs stay ~[−0.21,+0.26] across the sweep — the ESS≈16 power limit is a
+property of the logging design, not the reward scale. **Conclusion:** cost tuning is *not* the lever; the
+two real levers are (a) features that separate "dense-is-sufficient" easy queries and (b) a higher-ESS
+logging design. Promotion scoped to MED/HARD would require a *gated* policy (force `dense` on easy by
+construction), since at this feature resolution the bandit demonstrably cannot learn that routing itself.
 
 **Reproduce** (local, **\$0** — retrieval-only, no LLM):
 ```bash

@@ -1570,3 +1570,44 @@ hand-rolled numpy normal equations (no sklearn). (d) `λ_c=0.05`; sensitivity-te
 verdict run via `--lambda-cost`. (e) Best fixed selected by **DR** (not true value) — the honest
 deploy-time comparison. (f) Standardize contexts (train-fit) so LinUCB's `√(xᵀA⁻¹x)` bonus and the
 ridge conditioning are scale-sane; constant/bias columns pass through unchanged.
+
+### A6.1 — Verdict run (local, 2026-07-08): **REJECT, keep default-OFF**
+
+Ran `rag policy-eval --policy linucb --seed 42 --n-boot 1000` over the 212-Q benchmark against the
+ingested `voyage-voyage-4` corpus + graph (`EMBEDDING_PROVIDER=voyage`, $0 retrieval, no LLM). Output:
+`outputs/rag_eval/policy_eval_linucb_seed42.json`. `n_train=129 / n_test=83`, λ_c=0.05.
+
+DR headline: `linucb 0.438` > `best_fixed = fixed(dense) 0.414` → **Δ=+0.0239**, group-bootstrap 95% CI
+**[−0.208, +0.273]**. Per-stratum Δ (bandit−fixed): **HARD +0.110, MED +0.305, CTRL −0.263**.
+
+**`promote = false`** — fails the pre-registered rule on two independent counts: (1) Δ CI includes 0
+(underpowered), (2) CTRL regression (rule forbids a CTRL loss). Full DR/IPS/SNIPS/true_value table +
+interpretation → [validations_results.md](validations_results.md) (2026-07-05 entry, now resolved).
+
+Mechanistic lessons the run surfaced (feed A6.2 / any re-attempt):
+- **OPE is variance-bound here.** Deterministic π under uniform μ ⇒ importance weights `w ∈ {0,5}`, so
+  **ESS ≈ 16 of 83** — the estimator physically cannot resolve a ~0.024 gap. The bottleneck is the
+  *logging design*, not the policy: a stratified or propensity-blended μ (raise ESS) is the highest-value
+  fix before re-running. The infra already reports ESS per candidate so this is observable, not guessed.
+- **DR misranks the fixed arms.** DR picks `dense` as best-fixed (0.414) but the $0 oracle `true_value`
+  says `graph` (0.437 > dense 0.355) — within the `|DR−true|<0.15` test tolerance yet enough to flip the
+  *ranking*. `best_fixed` selection by DR (decision (e)) is honest for deploy-time but is itself noisy at
+  this ESS; the oracle column is what caught it.
+- **CTRL regression is real, and inverts the illustrative guess.** Best CTRL arm is cheap `dense`
+  (cost 0.0); the bandit routes control queries to worse retrievers. **λ_c sweep (2026-07-08, executed;
+  `policy_eval_linucb_seed42_lambda_sweep.json`) refuted the cost-tuning hypothesis:** λ_c ∈
+  {0.05,0.1,0.2,0.3} makes CTRL *monotonically worse* (−0.263→−0.291), shrinks the HARD/MED wins, and
+  turns Δ negative by λ_c=0.20 — no sweet spot (shipped 0.05 is already best). Extrapolating the CTRL
+  trend to λ_c=0 leaves ≈−0.256, so **~97% of the CTRL loss is retrieval-quality, not cost** — the bandit
+  misroutes easy queries to arms scoring ~0.47 where `dense` scores ~0.74. Cost is a red herring; the real
+  levers are (a) a "dense-is-sufficient" feature so the policy can recognize easy queries, and (b) a
+  higher-ESS logging design (stratified/propensity-blended μ) since the ~[−0.21,+0.26] CI is invariant to
+  λ_c. Promotion scoped to MED/HARD would need a *gated* policy (force `dense` on easy by construction),
+  not a re-tuned bandit. Efficiency note: the sweep re-scored one λ_c=0 quality matrix (retrieval is
+  λ_c-independent) rather than re-running retrieval 4×; the λ_c=0.05 re-score reproduced the headline
+  verdict exactly, validating the shortcut.
+
+**State after verdict.** `adaptive_retrieval` stays `False`; no policy is persisted (nothing to serve).
+Infra (logging + OPE + LinUCB/ε-greedy + gated `PolicyRetriever`) is the shipped, green deliverable.
+Branch `feat/adv-rag-a6.1-bandits`. Next: PR the infra as a rigorous negative, or proceed to A6.2 (full
+RL/MDP) which can reuse this reward oracle, featurizer, group-split, and OPE harness verbatim.
