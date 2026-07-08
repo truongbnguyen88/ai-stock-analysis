@@ -915,3 +915,67 @@ PYTHONPATH=src python -m stock_agent rag policy-eval \
   --test-frac 0.3 --seed 42 --out outputs/rag_eval/policy_eval_linucb.json
 # Sensitivity: rerun with --lambda-cost 0 and 0.1; compare with --policy epsilon_greedy.
 ```
+
+## 2026-07-08 — A6.1 follow-up: gated router (deterministic gate → bandit on hard) ❌
+
+**Question.** The A6.1 verdict rejected the *unified* bandit on two counts — the Δ CI included 0 **and**
+it regressed CTRL (−0.263) — and diagnosed the CTRL loss as ~97% a **routing/featurization** failure
+(the bandit sent easy queries to arms scoring ~0.47 coverage where `dense` scores ~0.74). It predicted:
+*"promotion scoped to MED/HARD would require a gated policy (force `dense` on easy by construction)."*
+This follow-up builds exactly that and asks **two** pre-registered questions: (1) does the **gated
+router** `gated(dense | linucb)` beat the best fixed arm past the CI with no CTRL regression? (2) does
+the bandit **earn** the hard branch — beat `fixed(graph)` (the A5.3 tiered default) on HARD+MED only,
+rather than being *assumed* onto it? Theory → [rag_concepts.md §18.10](rag_concepts.md); mechanism →
+[rag_implementation_notes.md §A6.1](rag_implementation_notes.md).
+
+**Design.** A `GatedPolicy` composes two branches by a **deterministic, label-free** gate: `hard` iff
+`is_bridging` = 1 (threshold `x[j] > 0`, standardization-invariant for a 0/1 feature), else `easy` →
+`dense`. Because the gate is deterministic given `x`, $\pi_{\text{gated}}(a \mid x) =
+\pi_{\text{active branch}}(a \mid x)$ **exactly**, so the identical DR / IPS / SNIPS + paired group
+bootstrap harness (A6.1) applies with no re-derivation. Same reward matrix, same group-wise split
+(`n_train=129 / n_test=83`), same LinUCB α=1, seed 42, λ_c=0.05 as the A6.1 run — so the two are
+directly comparable. `evaluate_gated` scores 5 fixed + 2 learned + 2 gated candidates.
+
+**Verdict (local run, 2026-07-08; `outputs/rag_eval/gated_eval_seed42.json`).**
+
+| candidate | DR | DR 95% CI | true_value | ESS |
+|---|---|---|---|---|
+| **gated(dense \| linucb)** | **0.524** | [+0.327, +0.660] | 0.443 | 17 |
+| gated(dense \| fixed graph) | 0.496 | [+0.320, +0.627] | **0.453** | 16 |
+| linucb(α=1) | 0.438 | [+0.325, +0.533] | 0.441 | 16 |
+| fixed(dense) *(best fixed)* | 0.414 | [+0.185, +0.616] | 0.355 | 16 |
+| fixed(graph) | 0.345 | [+0.174, +0.469] | 0.437 | 16 |
+
+**[1] Promote the gated router? — REJECT.** `best_fixed = fixed(dense)`. **Δ = DR(gated) − DR(dense) =
++0.1096**, paired 95% CI **[−0.0564, +0.2872]**. Per-stratum (gated − best fixed): HARD **+0.110**
+(n=41), MED **+0.305** (n=15), **CTRL +0.000 (n=27)**. The rule fails on **one** count — the Δ CI
+includes 0 — but **the CTRL regression is gone** (−0.263 → **exactly 0.000**: the gate routes CTRL to
+`dense`, which *is* `best_fixed`, so the strata match by construction). This is a **strict improvement**
+over the A6.1 unified bandit (failed 2 counts): the gate fixed precisely the failure A6.1 diagnosed,
+and the pooled point estimate quadrupled (**+0.0239 → +0.1096**). It is now the single best policy by DR
+(0.524). It still cannot be **certified**: at **ESS ≈ 17** the CI width (~0.34) cannot resolve a +0.11
+gap — the same power limit as A6.1, a property of the uniform-log design, invariant to the gate.
+
+**[2] Does the bandit earn the hard branch? — NO.** On the **HARD ∪ MED** rows only (n=56), `linucb`
+vs `fixed(graph)`: **Δ = −0.0250**, CI **[−0.0945, +0.0458]** → `linucb` DR ≤ `fixed(graph)`. The \$0
+oracle agrees: `gated(dense | fixed graph)` `true_value` **0.4528 ≥** `gated(dense | linucb)` **0.4435**.
+So even *within* the hard branch the learned policy does not beat the A5.3 fixed default — the bandit is
+**superfluous**; the deterministic gate + `fixed(graph)` captures the available lift.
+
+**Decision: `promote = false` — keep `adaptive_retrieval=False`; A5.3's tiered router is vindicated.**
+The two verdicts compose cleanly: (1) the gate is the *right fix* for the A6.1 CTRL regression (removed
+by construction, point estimate now clearly positive) but the residual HARD/MED lift is **uncertifiable
+at this ESS**; (2) the *learned* hard branch adds nothing over `fixed(graph)`. The architecture the data
+supports is therefore **deterministic gate → fixed graph on hard = exactly A5.3** — no learned policy is
+justified. This is the pre-registered **rigorous negative**; the gate + two-verdict harness are the
+shipped, green deliverable. The only lever left with upside is a **higher-ESS logging design**
+(stratified / propensity-blended μ), not a different policy class — that would be an A6.2 concern.
+
+**Reproduce** (local, **\$0** — retrieval-only, no LLM):
+```bash
+# Same prereqs as the A6.1 run above (ingested corpus + graph for configs/graph_universe.txt).
+EMBEDDING_PROVIDER=voyage PYTHONPATH=src python -m stock_agent rag gated-eval \
+  --queries configs/rag_eval_multistep_generated.json \
+  --easy-arm dense --gate-feature is_bridging --hard-fixed-arm graph \
+  --test-frac 0.3 --seed 42 --out outputs/rag_eval/gated_eval_seed42.json
+```

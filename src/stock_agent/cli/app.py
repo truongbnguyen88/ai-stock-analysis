@@ -57,8 +57,10 @@ from stock_agent.rag.pipeline import (
 )
 from stock_agent.rag.policy import ARMS
 from stock_agent.rag.policy_eval import (
+    GatedEvalReport,
     PolicyEvalReport,
     build_dataset,
+    evaluate_gated,
     evaluate_offline,
     split_dataset,
 )
@@ -140,9 +142,7 @@ def research(
     output: Annotated[
         Path | None, typer.Option("--output", "-o", help="Write the memo Markdown to this file")
     ] = None,
-    no_news: Annotated[
-        bool, typer.Option("--no-news", help="Skip the news summary")
-    ] = False,
+    no_news: Annotated[bool, typer.Option("--no-news", help="Skip the news summary")] = False,
     company: Annotated[
         str | None, typer.Option("--company", help="Company name to improve news relevance")
     ] = None,
@@ -327,8 +327,9 @@ def conformal_calibrate(
     from stock_agent.providers.registry import build_default_registry
 
     typer.echo("Calibrating conformal interval-corrections (offline; this takes a while) …")
-    art = calibrate(build_default_registry(settings), settings, universe_path=universe,
-                    basket_size=basket_size)
+    art = calibrate(
+        build_default_registry(settings), settings, universe_path=universe, basket_size=basket_size
+    )
     path = conformal_path(settings)
     art.save(path)
     typer.echo(f"\nSaved {path}  (cutoff {art.cal_cutoff}, target {art.ci_level:.0%}):")
@@ -553,8 +554,12 @@ def ingest_news(
     typer.echo(f"Ingesting GDELT {selected} {start} → {end} (exclusive) …")
     try:
         results = ingest(
-            start_d, end_d, project=project, streams=tuple(selected),
-            require_business_theme=biz, include_topic_names=names,
+            start_d,
+            end_d,
+            project=project,
+            streams=tuple(selected),
+            require_business_theme=biz,
+            include_topic_names=names,
         )
     except RuntimeError as exc:
         typer.echo(str(exc))
@@ -761,9 +766,7 @@ _ALLOWED_FORMS: tuple[DocumentType, ...] = ("10-K", "10-Q", "8-K", "20-F")
 
 @documents_app.command("download-sec")
 def download_sec(
-    ticker: Annotated[
-        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
-    ] = None,
+    ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")] = None,
     download_all: Annotated[
         bool, typer.Option("--all", help="Download for every ticker in the universe file")
     ] = False,
@@ -797,7 +800,7 @@ def download_sec(
     if not settings.sec_user_agent:
         typer.echo(
             "SEC_USER_AGENT is not set. SEC fair-access requires a contact User-Agent — "
-            "add SEC_USER_AGENT=\"Your Name your@email.com\" to your .env."
+            'add SEC_USER_AGENT="Your Name your@email.com" to your .env.'
         )
         raise typer.Exit(code=1)
 
@@ -867,9 +870,7 @@ def _ingest_tickers(download_all: bool, ticker: str | None, universe: Path) -> l
 
 @documents_app.command("ingest")
 def ingest(
-    ticker: Annotated[
-        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
-    ] = None,
+    ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")] = None,
     ingest_all: Annotated[
         bool, typer.Option("--all", help="Ingest every ticker in the universe file")
     ] = False,
@@ -923,9 +924,7 @@ def ingest(
 
 @documents_app.command("backfill-sparse")
 def backfill_sparse_cmd(
-    ticker: Annotated[
-        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
-    ] = None,
+    ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")] = None,
     backfill_all: Annotated[
         bool, typer.Option("--all", help="Backfill every ticker in the universe file")
     ] = False,
@@ -959,9 +958,7 @@ def backfill_sparse_cmd(
 
 @documents_app.command("extract-graph")
 def extract_graph_cmd(
-    ticker: Annotated[
-        str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")
-    ] = None,
+    ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Ticker, e.g. NVDA")] = None,
     extract_all: Annotated[
         bool, typer.Option("--all", help="Extract for every ticker in the universe file")
     ] = False,
@@ -998,8 +995,10 @@ def extract_graph_cmd(
             break
         chunks = select_extraction_chunks(
             build_chunks(
-                sym, documents_dir=settings.documents_dir,
-                chunk_tokens=settings.rag_chunk_tokens, chunk_overlap=settings.rag_chunk_overlap,
+                sym,
+                documents_dir=settings.documents_dir,
+                chunk_tokens=settings.rag_chunk_tokens,
+                chunk_overlap=settings.rag_chunk_overlap,
             ),
             settings.graph_sections,
             alias_map,
@@ -1007,8 +1006,12 @@ def extract_graph_cmd(
         remaining = None if ceiling is None else ceiling - used
         try:
             res = extract_edges(
-                sym, chunks, llm=llm, alias_map=alias_map,
-                min_confidence=settings.graph_min_confidence, max_calls=remaining,
+                sym,
+                chunks,
+                llm=llm,
+                alias_map=alias_map,
+                min_confidence=settings.graph_min_confidence,
+                max_calls=remaining,
             )
         except GraphExtractBudgetExceeded as exc:
             typer.echo(f"Aborting at {sym}: {exc}")
@@ -1061,7 +1064,7 @@ def refresh(
     if not settings.sec_user_agent:
         typer.echo(
             "SEC_USER_AGENT is not set. SEC fair-access requires a contact User-Agent — "
-            "add SEC_USER_AGENT=\"Your Name your@email.com\" to your .env."
+            'add SEC_USER_AGENT="Your Name your@email.com" to your .env.'
         )
         raise typer.Exit(code=1)
     if forms:
@@ -1080,8 +1083,12 @@ def refresh(
     cache = DiskCache(settings.cache_dir, settings.cache_ttl_seconds)
     provider = SecEdgarProvider(settings, cache)
     dl = bulk_download(
-        tickers, provider, documents_dir=settings.documents_dir,
-        forms=forms_t, limit=limit, since=since_floor,
+        tickers,
+        provider,
+        documents_dir=settings.documents_dir,
+        forms=forms_t,
+        limit=limit,
+        since=since_floor,
     )
     changed = [r.ticker for r in dl.per_ticker if r.downloaded]
     typer.echo(
@@ -1095,9 +1102,14 @@ def refresh(
         sparse_store = build_sparse_store(settings)  # keep BM25 index in lockstep (A3)
         try:
             ing = bulk_ingest(
-                changed, documents_dir=settings.documents_dir, embedder=embedder, store=store,
-                chunk_tokens=settings.rag_chunk_tokens, chunk_overlap=settings.rag_chunk_overlap,
-                max_embed_tokens=settings.rag_max_embed_tokens, incremental=True,
+                changed,
+                documents_dir=settings.documents_dir,
+                embedder=embedder,
+                store=store,
+                chunk_tokens=settings.rag_chunk_tokens,
+                chunk_overlap=settings.rag_chunk_overlap,
+                max_embed_tokens=settings.rag_max_embed_tokens,
+                incremental=True,
                 sparse_store=sparse_store,
             )
         except EmbedBudgetExceeded as exc:
@@ -1267,9 +1279,7 @@ def rag_ask(
     for i, st in enumerate(result.trace, start=1):
         scope = f" [{st.ticker}]" if st.ticker else ""
         typer.echo(f"  step {i}: {st.query!r}{scope} → {st.n_retrieved} chunks")
-    typer.echo(
-        f"  ({result.n_steps} steps, {result.n_evidence} evidence chunks)\n"
-    )
+    typer.echo(f"  ({result.n_steps} steps, {result.n_evidence} evidence chunks)\n")
     typer.echo(result.answer.answer)
     for cite in result.answer.citations:
         typer.echo(f"  [{cite.marker}] {cite.label}")
@@ -1404,8 +1414,13 @@ def rag_eval(
                 f"unknown system(s) {unknown}; choose from {list(LATTICE_SYSTEMS)}"
             )
         reports = _eval_lattice(
-            settings, labeled, corpus,
-            system_names=names, rerank_provider=rerank, diagnostic=diagnostic, top_k=k,
+            settings,
+            labeled,
+            corpus,
+            system_names=names,
+            rerank_provider=rerank,
+            diagnostic=diagnostic,
+            top_k=k,
         )
     else:
         embedders = {n: _named_embedder(n, settings) for n in compare.split(",") if n.strip()}
@@ -1655,6 +1670,143 @@ def rag_policy_eval(
 
     ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out = out or Path(f"outputs/rag_eval/policy_eval_{ts}.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(report.to_json_dict(), indent=2), encoding="utf-8")
+    typer.echo(f"\nWrote verdict to {out}")
+
+
+def _format_gated_eval(report: GatedEvalReport) -> str:
+    """Human-readable gated-router verdict: value table + the two pre-registered decisions."""
+    lines = [
+        f"Gated-router eval — {report.n_train} train / {report.n_test} test "
+        f"(seed={report.seed}, λ_c={report.lambda_cost:g}, gate={report.gate_feature}, "
+        f"easy={report.easy_arm}, arms={list(report.arms)})",
+        "",
+        f"  {'policy':<32}{'DR':>8}{'  95% CI':>18}{'true':>8}{'ESS':>8}",
+    ]
+    for v in sorted(report.values, key=lambda x: x.dr, reverse=True):
+        ci = f"[{v.dr_ci[0]:+.3f},{v.dr_ci[1]:+.3f}]"
+        lines.append(f"  {v.name:<32}{v.dr:>8.3f}{ci:>18}{v.true_value:>8.3f}{v.ess:>8.1f}")
+    # Verdict 1 — promote the gated router vs the best fixed arm.
+    lines += [
+        "",
+        "  [1] PROMOTE gated router?",
+        f"    gated      : {report.gated_policy}",
+        f"    best fixed : {report.best_fixed}",
+        f"    Δ DR       : {report.delta_dr:+.4f}  CI [{report.delta_ci[0]:+.4f}, "
+        f"{report.delta_ci[1]:+.4f}]",
+        "    per-stratum (gated − best fixed):",
+    ]
+    for s in report.per_stratum:
+        lines.append(
+            f"      {s.stratum:<5} n={s.n:<4} gated={s.dr_bandit:+.3f} "
+            f"fixed={s.dr_fixed:+.3f} Δ={s.delta:+.4f}"
+        )
+    lines.append(f"    VERDICT: {report.rationale}")
+    # Verdict 2 — does the bandit EARN the hard branch (vs the fixed graph default) on HARD+MED?
+    lines += [
+        "",
+        f"  [2] Does the bandit EARN the hard branch?  (n={report.hard_n} HARD+MED rows)",
+        f"    {report.hard_bandit} vs {report.hard_fixed}",
+        f"    Δ DR       : {report.hard_delta_dr:+.4f}  CI [{report.hard_delta_ci[0]:+.4f}, "
+        f"{report.hard_delta_ci[1]:+.4f}]",
+        f"    VERDICT: {report.hard_rationale}",
+    ]
+    return "\n".join(lines)
+
+
+@rag_app.command("gated-eval")
+def rag_gated_eval(
+    queries: Annotated[
+        Path, typer.Option("--queries", "-q", help="Benchmark JSON (list of MultiHopQuery)")
+    ] = Path("configs/rag_eval_multistep_generated.json"),
+    easy_arm: Annotated[
+        str, typer.Option("--easy-arm", help="Cheap arm the gate routes easy queries to")
+    ] = "dense",
+    gate_feature: Annotated[
+        str, typer.Option("--gate-feature", help="Label-free deploy-time gate signal")
+    ] = "is_bridging",
+    hard_fixed_arm: Annotated[
+        str, typer.Option("--hard-fixed-arm", help="Fixed default the bandit must beat on HARD+MED")
+    ] = "graph",
+    test_frac: Annotated[
+        float, typer.Option("--test-frac", help="Group-wise held-out fraction (leakage-safe)")
+    ] = 0.3,
+    seed: Annotated[
+        int, typer.Option("--seed", help="RNG seed (split + mu-logs + bootstrap)")
+    ] = 42,
+    alpha: Annotated[float, typer.Option("--alpha", help="LinUCB exploration weight")] = 1.0,
+    epsilon: Annotated[
+        float, typer.Option("--epsilon", help="epsilon-greedy exploration rate")
+    ] = 0.1,
+    lambda_cost: Annotated[
+        float | None,
+        typer.Option("--lambda-cost", help="Cost weight λ_c (default settings.reward_lambda_cost)"),
+    ] = None,
+    top_k: Annotated[
+        int | None, typer.Option("--top-k", help="Retrieval depth (default settings.rag_top_k)")
+    ] = None,
+    graph_universe: Annotated[
+        Path, typer.Option("--graph-universe", help="Graph universe file (in_graph_universe flag)")
+    ] = Path("configs/graph_universe.txt"),
+    n_boot: Annotated[
+        int, typer.Option("--n-boot", help="Group-bootstrap resamples for the CIs")
+    ] = 1000,
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Verdict JSON path (default timestamped)")
+    ] = None,
+) -> None:
+    """Evaluate the gated router: easy→cheap arm, hard→bandit — the A6.1-verdict follow-up (local).
+
+    Same reward matrix + group split as `rag policy-eval`, but judges `gated(easy_arm | linucb)`
+    instead of the bare bandit, and answers TWO pre-registered questions: (1) does the gated router
+    beat the best fixed arm (paired group-bootstrap CI, no CTRL regression)? and (2) does the bandit
+    *earn* the hard branch — beat `fixed(hard_fixed_arm)` on the HARD+MED rows only, rather than
+    being assumed onto it? Writes the verdict JSON (with the nested `hard_branch` block) for docs.
+    """
+    from datetime import UTC, datetime
+
+    settings = get_settings()
+    configure_logging(settings)
+    if not queries.exists():
+        typer.echo(f"Benchmark not found: {queries} (generate via `rag gen-multistep`).")
+        raise typer.Exit(code=1)
+    if easy_arm not in ARMS or hard_fixed_arm not in ARMS:
+        typer.echo(f"--easy-arm/--hard-fixed-arm must be one of {list(ARMS)}.")
+        raise typer.Exit(code=1)
+
+    labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    alias_map = load_alias_map()
+    universe = load_universe(graph_universe) if graph_universe.exists() else None
+    # ARMS order == reward-matrix column order == policy action order (non-negotiable alignment).
+    systems = {name: build_arm_system(name, settings) for name in ARMS}
+    dataset = build_dataset(
+        labeled,
+        systems,
+        settings=settings,
+        alias_map=alias_map,
+        graph_universe=universe,
+        lambda_cost=lambda_cost,
+        top_k=top_k,
+    )
+    train, test = split_dataset(dataset, labeled, test_frac=test_frac, seed=seed)
+    lam = lambda_cost if lambda_cost is not None else settings.reward_lambda_cost
+    report = evaluate_gated(
+        train,
+        test,
+        easy_arm=easy_arm,
+        gate_feature=gate_feature,
+        hard_fixed_arm=hard_fixed_arm,
+        alpha=alpha,
+        epsilon=epsilon,
+        lambda_cost=lam,
+        n_boot=n_boot,
+        seed=seed,
+    )
+    typer.echo(_format_gated_eval(report))
+
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    out = out or Path(f"outputs/rag_eval/gated_eval_{ts}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report.to_json_dict(), indent=2), encoding="utf-8")
     typer.echo(f"\nWrote verdict to {out}")

@@ -2131,6 +2131,83 @@ precise failure A5.3 warned about. If the rule fails we keep `adaptive_retrieval
 way. Pre-registered likely outcome: tuned hybrid(+graph) is a strong baseline, so a **modest win or a
 rigorous negative** — both ship the infra.
 
+### 18.10 The gated router — deterministic routing in front of the bandit
+
+**Why.** The A6.1 verdict was REJECT: the bandit *regressed the CTRL stratum* — it sent easy,
+single-filing questions to heavy retrievers where cheap `dense` already suffices — and the $\lambda_c$
+cost sweep showed cost-tuning cannot repair it (~97% of the CTRL loss was retrieval-quality, not
+cost). The gate removes that failure **by construction**, rather than hoping the bandit learns to
+avoid it from $\approx 16$ effective samples (§18.7).
+
+**The policy.** A gated router is a deterministic two-branch mixture: a label-free gate $g$ maps a
+context to a branch, and each branch is itself any policy.
+
+$$\pi_{\text{gated}}(a \mid x) = \mathbb{1}[g(x) = \text{hard}] \pi_{\text{hard}}(a \mid x)
++ \mathbb{1}[g(x) = \text{easy}] \pi_{\text{easy}}(a \mid x)$$
+
+$\pi_{\text{easy}}$ is the cheap fixed arm (`dense`, cost 0) and $\pi_{\text{hard}}$ is the branch under
+test (a fixed arm, or the bandit). The gate is a threshold on one feature:
+
+$$g(x) = \text{hard} \iff x_j > \tau$$
+
+- $x_j$ — the value of the gate feature on this query. We use `is_bridging` (index $j$): 1 if a bridge
+  phrasing is present, else 0. Plain English: *"does the answer likely live in a related company's own
+  filings?"* — the exact cue that separates easy (CTRL) from hard (MED/HARD) queries.
+- $\tau$ — the decision threshold ($\tau = 0$). $g$ is deterministic and reads **only** the label-free
+  feature, never the gold stratum (leakage rule 1).
+
+**Why OPE is unchanged (the key property).** Because $g$ is a *deterministic* function of $x$,
+conditioning on $x$ fixes the branch, so $\pi_{\text{gated}}(a \mid x) = \pi_{\text{active branch}}(a
+\mid x)$ **exactly**. The gate adds no stochasticity and therefore no new propensity term: the
+target-probability matrix the active branch reports *is* the gated policy's, and the same IPS / SNIPS
+/ DR estimators (§18.4–18.6) and paired group bootstrap (§18.7) apply verbatim — no re-derivation. A
+deterministic branch yields a one-hot $\pi(\cdot \mid x)$; an `EpsilonGreedy` hard branch yields its
+$\varepsilon$-mixed $\pi(\cdot \mid x)$ — either way the estimator sees a valid conditional.
+
+**Standardization invariance of the threshold.** The evaluator z-scores contexts (fit on train only,
+§18.8). A threshold of 0 on a **binary** feature still recovers the raw indicator, so one policy object
+works on raw *or* standardized contexts. For train mean $\mu \in (0,1)$ and std $\sigma > 0$:
+
+$$z(1) = \frac{1 - \mu}{\sigma} > 0, \qquad z(0) = \frac{0 - \mu}{\sigma} = -\frac{\mu}{\sigma} < 0$$
+
+so $z > 0$ recovers the value-1 rows. A constant column (all-0 or all-1 in the fit fold) is passed
+through unchanged by the standardizer's zero-variance convention (mean 0, std 1), so $> 0$ still
+selects the 1-rows.
+
+- *Worked micro-example (the unit test).* Fit fold has 30 CTRL (`is_bridging` = 0) and 30 HARD (= 1),
+  so $\mu = 0.5$, $\sigma = 0.5$. A bridging test row maps to $z = (1 - 0.5)/0.5 = +1 > 0$ (→ hard) and
+  a control row to $z = -0.5/0.5 = -1 < 0$ (→ easy) — the gate recovers `is_bridging` on every
+  standardized row, independent of the *test* fold's class balance.
+
+**Two pre-registered verdicts.** The gate splits one promotion question into two.
+
+1. **Promote the router?** With $\pi^\star_{\text{fixed}}$ the best fixed arm by DR, on the group-wise
+   held-out fold — the §18.9 rule applied to the gated policy:
+
+$$\text{promote} \iff \hat{V}_{\mathrm{DR}}(\pi_{\text{gated}}) - \hat{V}_{\mathrm{DR}}(\pi^\star_{\text{fixed}})
+> 0 \quad\wedge\quad \mathrm{CI}_{\text{low}} > 0 \quad\wedge\quad \text{no CTRL regression}$$
+
+   Routing CTRL to `dense` by construction makes the CTRL-regression term hard to trip.
+
+2. **Does the bandit *earn* the hard branch?** Do **not** assume the bandit belongs on hard just
+   because a gate protects easy. Restricted to the HARD $\cup$ MED rows only, with `fixed(graph)` the
+   A5.3 tiered default for hard queries:
+
+$$\text{earns} \iff \hat{V}_{\mathrm{DR}}(\pi_{\text{linucb}}) - \hat{V}_{\mathrm{DR}}(\pi_{\text{fixed(graph)}})
+> 0 \quad\wedge\quad \mathrm{CI}_{\text{low}} > 0$$
+
+   If this fails, the hard branch should stay the fixed arm: the *gate* is worth keeping, the *bandit*
+   is not. This is why the router does not silently inherit the A6.1 rejection — it re-poses the bandit
+   question on exactly the rows where routing can matter.
+
+**Relation to A5.3 and the literature.** A5.3's tiered router is *already* a deterministic gate
+(multi-hop → `graph`, single-shot → `hybrid`). The gated router **generalizes** it: same deterministic
+front, but the hard branch may be a *learned* policy, and verdict 2 is exactly the test of whether
+learning beats the fixed A5.3 tier. This is the query-complexity routing of **Adaptive-RAG** (Jeong et
+al., 2024) — route by a cheap complexity signal, spend heavy retrieval only where it pays — with two
+differences: our gate is a single interpretable feature rather than a trained classifier, and the hard
+policy is a bandit whose promotion is gated behind an OPE certificate rather than assumed.
+
 ---
 
 ## 19. References
@@ -2168,6 +2245,8 @@ rigorous negative** — both ship the infra.
   §16.2.
 - Li, Chu, Langford & Schapire (2010), *A Contextual-Bandit Approach to Personalized News Article
   Recommendation* — **disjoint LinUCB** (the ridge + UCB score of §18.8).
+- Jeong et al. (2024), *Adaptive-RAG: Learning to Adapt Retrieval-Augmented LLMs through Question
+  Complexity* — query-complexity **routing** (no-/single-/multi-step); the gated router of §18.10.
 - Dudík, Langford & Li (2011), *Doubly Robust Policy Evaluation and Learning* — the **DR** estimator
   of §18.6 (control variate + IPS residual correction).
 - Horvitz & Thompson (1952), *A Generalization of Sampling Without Replacement From a Finite

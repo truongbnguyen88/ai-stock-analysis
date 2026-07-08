@@ -844,7 +844,7 @@ seeded sampler, seed logged in the dataset header.
 
 ---
 
-### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra) · verdict 2026-07-08 = **REJECT (keep default-OFF)**
+### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra) · verdict 2026-07-08 = **REJECT** · gated-router follow-up 2026-07-08 = **REJECT (A5.3 vindicated)**
 
 > **Status: INFRA COMPLETE & GREEN (slices A6.1a–f shipped, `make check` green, default-OFF).
 > Verdict EXECUTED 2026-07-08 → REJECT: `promote=false`, `adaptive_retrieval` stays False.** LinUCB α=1,
@@ -871,6 +871,22 @@ seeded sampler, seed logged in the dataset header.
 > does not produce (training IS the verdict run). So `adaptive_retrieval` / `bandit_policy` are inert
 > flags until a promotion + a policy-persistence step (a small follow-up, only if the verdict says
 > promote).
+>
+> **Gated-router follow-up (2026-07-08 → REJECT; A5.3 vindicated).** Built the gate the A6.1 verdict
+> called for: `GatedPolicy` + `build_gated_policy` (`rag/policy.py`), `evaluate_gated` +
+> `GatedEvalReport` (`rag/policy_eval.py`), `rag gated-eval` CLI — a **deterministic label-free gate**
+> (`is_bridging`) routes easy→`dense`, hard→branch-under-test; deterministic gate ⇒ OPE machinery reused
+> verbatim. Two pre-registered verdicts (same split/seed/λ_c as A6.1): **(1) promote gated router?** Δ =
+> DR(gated) − DR(dense) = **+0.1096**, CI **[−0.056, +0.287]** → REJECT (CI includes 0), **but the A6.1
+> CTRL regression is gone** (−0.263 → **exactly 0**, by construction) and Δ quadrupled — a strict
+> improvement, still power-limited (ESS≈17). **(2) does the bandit earn the hard branch?** on HARD+MED
+> `linucb` vs `fixed(graph)`: Δ = **−0.0250** → **NO** (oracle `true_value` agrees). ⇒ The architecture
+> the data supports is **deterministic gate → fixed graph = exactly A5.3's tiered router**; no learned
+> policy is justified. `adaptive_retrieval` stays False. Output: `outputs/rag_eval/gated_eval_seed42.json`;
+> theory → [rag_concepts.md §18.10](rag_concepts.md); mechanism + numbers →
+> [rag_implementation_notes.md §A6.1](rag_implementation_notes.md) and
+> [validations_results.md](validations_results.md) (2026-07-08 entry). Only remaining lever: higher-ESS
+> logging (stratified/propensity-blended μ) — an A6.2 concern.
 
 **What A6.1 is.** Treat retrieval as a **one-shot decision**: a featurized query (context `x`) → a
 **policy** picks one of ~5 retrieval **configs** (arms `a`) → earns **reward** `r` = quality − cost.

@@ -10,7 +10,7 @@ Arms are integer indices ``0..K-1`` in the fixed ``ARMS`` order below — the SA
 index, the reward matrix, and the importance weights all line up without a name lookup. Policies are
 name-agnostic in their math; ``FixedPolicy`` resolves an arm name against ``ARMS`` for ergonomics.
 
-Four policies:
+Five policies:
 
 - **UniformPolicy** — the logging policy ``mu`` (``mu(a|x)=1/K``, full support ⇒ OPE is exact).
   This is what synthesizes the logged dataset in A6.1f.
@@ -22,6 +22,10 @@ Four policies:
   ``b_a = sum r x`` give ``theta_a = A_a^{-1} b_a``; pick the arm maximizing
   ``theta_a . x + alpha*sqrt(x . A_a^{-1} x)`` (mean + optimism). Fit offline in one pass over the
   train log; deterministic argmax ⇒ ``pi`` is a one-hot.
+- **GatedPolicy** — a two-branch router (the A6.1 verdict follow-up). A label-free gate sends easy
+  queries to a cheap *easy* branch and the rest to a *hard* branch (a fixed arm or the bandit), so
+  the bandit never touches the easy queries it regressed on. ``pi(a|x)`` delegates to the active
+  branch, so it composes with any of the above.
 
 ``target_prob_matrix(policy, contexts)`` turns any policy into the ``[N, K]`` ``pi(a|x_i)`` matrix
 the OPE layer consumes — the single bridge from this module to ``rag.ope``.
@@ -231,3 +235,84 @@ def baseline_fixed_policy(*, multihop: bool, arm_names: Sequence[str] = ARMS) ->
     """Pre-registered ``FixedPolicy`` baseline (multi-hop ⇒ graph, single-shot ⇒ hybrid)."""
     arm = DEFAULT_MULTIHOP_ARM if multihop else DEFAULT_SINGLESHOT_ARM
     return FixedPolicy(arm, arm_names=arm_names)
+
+
+class GatedPolicy:
+    """Two-branch router: a cheap **easy** branch and a **hard** branch, split by a label-free gate.
+
+    Motivation (A6.1 verdict): the contextual bandit *regressed* on easy (CTRL) queries because it
+    misrouted them to heavy retrievers where cheap ``dense`` already suffices, and the ``lambda_c``
+    sweep showed cost-tuning cannot fix it (~97% of the loss was retrieval-quality, not cost). A
+    gate removes that failure **by construction**: a deploy-time predicate routes easy queries to
+    the cheap arm and sends only hard queries to the ``hard`` branch (a fixed arm, or the bandit
+    that must *earn* the branch).
+
+    Gate: ``hard`` iff ``x[gate_index] > gate_threshold``, else ``easy``. With the default
+    ``gate_threshold=0.0`` and ``gate_index`` = the ``is_bridging`` feature, the gate recovers
+    ``is_bridging == 1`` under **both** raw (0/1) and train-fit **z-standardized** contexts: a 0/1
+    feature's standardized images straddle 0 — value ``1`` maps to ``(1-mean)/std > 0`` and value
+    ``0`` to ``-mean/std < 0`` for any ``0 < mean < 1``; a constant column (all-0 or all-1 in the
+    fit fold) passes through unchanged, so ``> 0`` still selects the ``1`` rows. Hence the *same*
+    policy object works whether or not the caller standardizes — no separate raw-context plumbing.
+
+    ``pi(a|x)`` delegates to whichever branch the gate selects, so ``GatedPolicy`` composes with any
+    ``Policy`` on either branch. Because the gate is a **deterministic** function of ``x``,
+    conditioning on ``x`` fixes the branch and ``pi_gated(.|x) == pi_activebranch(.|x)`` exactly —
+    so the propensity the active branch reports is already the correct gated propensity for OPE
+    (a deterministic branch ⇒ one-hot ``pi``; an ``EpsilonGreedy`` branch ⇒ its eps-mixed ``pi``).
+    """
+
+    def __init__(
+        self,
+        easy: Policy,
+        hard: Policy,
+        *,
+        gate_index: int,
+        gate_threshold: float = 0.0,
+        name: str | None = None,
+    ) -> None:
+        if easy.n_arms != hard.n_arms:
+            raise ValueError(
+                f"branch arm-space mismatch: easy has {easy.n_arms} arms, hard has {hard.n_arms}"
+            )
+        self.easy = easy
+        self.hard = hard
+        self.gate_index = int(gate_index)
+        self.gate_threshold = float(gate_threshold)
+        self.n_arms = easy.n_arms
+        self.name = name or f"gated({easy.name}|{hard.name})"
+
+    def is_hard(self, x: np.ndarray) -> bool:
+        """Gate predicate: True ⇒ route to the hard branch (``x[gate_index] > gate_threshold``)."""
+        return bool(x[self.gate_index] > self.gate_threshold)
+
+    def _branch(self, x: np.ndarray) -> Policy:
+        return self.hard if self.is_hard(x) else self.easy
+
+    def act(self, x: np.ndarray) -> tuple[int, float]:
+        # The active branch's propensity IS the gated propensity (gate deterministic given x).
+        return self._branch(x).act(x)
+
+    def prob(self, action: int, x: np.ndarray) -> float:
+        return self._branch(x).prob(action, x)
+
+
+def build_gated_policy(
+    hard: Policy,
+    *,
+    easy_arm: str = "dense",
+    gate_feature: str = "is_bridging",
+    arm_names: Sequence[str] = ARMS,
+) -> GatedPolicy:
+    """Compose the pre-registered gated router: easy queries ⇒ ``easy_arm``, hard ⇒ ``hard`` policy.
+
+    ``easy_arm`` defaults to the cheapest arm (``dense``, cost 0) — the A6.1 finding is that CTRL
+    queries are already well served by it. The gate feature index is resolved from ``FEATURE_NAMES``
+    (lazy import so this module stays free of featurizer imports at load time); the gate uses only
+    that label-free feature, never the gold stratum (leakage rule 1).
+    """
+    from stock_agent.rag.policy_features import FEATURE_NAMES
+
+    gate_index = FEATURE_NAMES.index(gate_feature)  # ValueError on an unknown feature name
+    easy = FixedPolicy(easy_arm, arm_names=arm_names)
+    return GatedPolicy(easy, hard, gate_index=gate_index, name=f"gated({easy_arm}|{hard.name})")
