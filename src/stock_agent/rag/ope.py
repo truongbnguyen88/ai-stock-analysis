@@ -166,6 +166,25 @@ def bootstrap_ci(
     concatenates their member rows — honouring the A6.0 group structure (anti-pseudo-replication).
     Deterministic given ``seed``. Returns the ``(alpha/2, 1-alpha/2)`` percentiles.
     """
+    boot = _bootstrap_samples(estimate_fn, n, groups=groups, n_boot=n_boot, seed=seed)
+    lo = float(np.quantile(boot, alpha / 2))
+    hi = float(np.quantile(boot, 1 - alpha / 2))
+    return lo, hi
+
+
+def _bootstrap_samples(
+    estimate_fn: Callable[[np.ndarray], float],
+    n: int,
+    *,
+    groups: np.ndarray | None = None,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> np.ndarray:
+    """The raw ``[n_boot]`` bootstrap distribution of ``estimate_fn`` (groups resampled if given).
+
+    Shared core for ``bootstrap_ci`` and ``bootstrap_delta_stats`` so both read the SAME resamples
+    for a given seed — the CI and the one-sided P(estimate>0) are then mutually consistent.
+    """
     rng = np.random.default_rng(seed)
     if groups is None:
         unique_groups = np.arange(n)
@@ -179,9 +198,32 @@ def bootstrap_ci(
         drawn = rng.choice(unique_groups, size=g_count, replace=True)
         idx = np.concatenate([members[g] for g in drawn])
         boot[b] = estimate_fn(idx)
+    return boot
+
+
+def bootstrap_delta_stats(
+    estimate_fn: Callable[[np.ndarray], float],
+    n: int,
+    *,
+    groups: np.ndarray | None = None,
+    n_boot: int = 1000,
+    seed: int = 42,
+    alpha: float = 0.05,
+) -> tuple[float, float, float]:
+    """Percentile CI **and** the one-sided bootstrap ``P(estimate > 0)`` from ONE resampling pass.
+
+    ``p_positive`` = fraction of bootstrap replicates that are strictly positive — the bootstrap
+    achieved-significance for the one-sided alternative ``H1: Δ > 0`` (ties at exactly 0 are
+    measure-zero for continuous DR values, so ``> 0`` vs ``>= 0`` is immaterial). This is the exact
+    empirical companion to the CI: it does not gate the pre-registered promote rule (that gates on
+    ``CI_low > 0``) but quantifies *how close* a within-CI delta came. Same ``seed``/``groups`` as
+    ``bootstrap_ci`` ⇒ the returned ``(lo, hi)`` are identical to ``bootstrap_ci``'s.
+    """
+    boot = _bootstrap_samples(estimate_fn, n, groups=groups, n_boot=n_boot, seed=seed)
     lo = float(np.quantile(boot, alpha / 2))
     hi = float(np.quantile(boot, 1 - alpha / 2))
-    return lo, hi
+    p_positive = float(np.mean(boot > 0.0))
+    return lo, hi, p_positive
 
 
 # ---- high-level convenience --------------------------------------------------

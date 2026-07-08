@@ -2131,6 +2131,31 @@ precise failure A5.3 warned about. If the rule fails we keep `adaptive_retrieval
 way. Pre-registered likely outcome: tuned hybrid(+graph) is a strong baseline, so a **modest win or a
 rigorous negative** — both ship the infra.
 
+**Exact one-sided probability — the CI's companion.** The paired bootstrap yields a whole distribution
+of resampled deltas $\{\Delta^{(b)}\}_{b=1}^{B}$; the CI reads its 2.5 / 97.5 percentiles, but the same
+resamples also give the exact one-sided probability the effect is **positive** — just count the sign:
+
+$$\hat{P}(\Delta > 0) = \frac{1}{B}\sum_{b=1}^{B} \mathbb{1}[\Delta^{(b)} > 0]$$
+
+This is the bootstrap **achieved significance** for the alternative $H_1: \Delta > 0$: the fraction of
+resampled worlds in which the policy wins. Two facts make it a *companion* to the CI, not a competitor:
+
+- **It does not move the bar.** The pre-registered rule gates on $\mathrm{CI}_{\text{low}} > 0$, which
+  for a two-sided 95% percentile interval is equivalent to $\hat{P}(\Delta>0) \ge 0.975$ — strictly
+  stronger than "more likely positive than not" ($\hat{P} > 0.5$). We **report** $\hat{P}(\Delta>0)$;
+  we do not promote on it. Its job is to say *how close* a within-CI delta came to certification.
+- **It is read from the same resamples as the CI**, so the two can never disagree (harness field
+  `delta_p_positive`, one bootstrap pass shared with the interval).
+
+*Worked micro-example (the gated-router verdict, §18.10).* $\Delta = +0.1096$ with $B = 1000$ group
+resamples: $868$ came out positive, so $\hat{P}(\Delta>0) = 0.868$. The Gaussian approximation
+$\Phi(\Delta / \widehat{\mathrm{se}})$ with $\widehat{\mathrm{se}} \approx \text{width}/(2 \cdot 1.96)
+= 0.343/3.92 \approx 0.0875$ gives $\Phi(1.25) \approx 0.896$ — the exact bootstrap sits **below** the
+normal approximation because the resample distribution is mildly left-skewed. At $0.868 < 0.975$ the
+router is *suggestive but uncertifiable*: the gap to promotion is **effective samples, not a bigger
+point estimate** — exactly the ESS-bound limit §18.7 predicts, and the reason the next lever is a
+higher-ESS logging design, not a new policy class.
+
 ### 18.10 The gated router — deterministic routing in front of the bandit
 
 **Why.** The A6.1 verdict was REJECT: the bandit *regressed the CTRL stratum* — it sent easy,

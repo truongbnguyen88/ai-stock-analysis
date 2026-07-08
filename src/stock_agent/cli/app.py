@@ -1574,7 +1574,7 @@ def _format_policy_eval(report: PolicyEvalReport) -> str:
         f"  best fixed : {report.best_fixed}",
         f"  bandit     : {report.bandit}",
         f"  Δ DR       : {report.delta_dr:+.4f}  CI [{report.delta_ci[0]:+.4f}, "
-        f"{report.delta_ci[1]:+.4f}]",
+        f"{report.delta_ci[1]:+.4f}]  P(Δ>0)={report.delta_p_positive:.1%}",
         "  per-stratum (bandit − best fixed):",
     ]
     for s in report.per_stratum:
@@ -1694,7 +1694,7 @@ def _format_gated_eval(report: GatedEvalReport) -> str:
         f"    gated      : {report.gated_policy}",
         f"    best fixed : {report.best_fixed}",
         f"    Δ DR       : {report.delta_dr:+.4f}  CI [{report.delta_ci[0]:+.4f}, "
-        f"{report.delta_ci[1]:+.4f}]",
+        f"{report.delta_ci[1]:+.4f}]  P(Δ>0)={report.delta_p_positive:.1%}",
         "    per-stratum (gated − best fixed):",
     ]
     for s in report.per_stratum:
@@ -1709,7 +1709,7 @@ def _format_gated_eval(report: GatedEvalReport) -> str:
         f"  [2] Does the bandit EARN the hard branch?  (n={report.hard_n} HARD+MED rows)",
         f"    {report.hard_bandit} vs {report.hard_fixed}",
         f"    Δ DR       : {report.hard_delta_dr:+.4f}  CI [{report.hard_delta_ci[0]:+.4f}, "
-        f"{report.hard_delta_ci[1]:+.4f}]",
+        f"{report.hard_delta_ci[1]:+.4f}]  P(Δ>0)={report.hard_delta_p_positive:.1%}",
         f"    VERDICT: {report.hard_rationale}",
     ]
     return "\n".join(lines)

@@ -947,7 +947,8 @@ directly comparable. `evaluate_gated` scores 5 fixed + 2 learned + 2 gated candi
 | fixed(graph) | 0.345 | [+0.174, +0.469] | 0.437 | 16 |
 
 **[1] Promote the gated router? — REJECT.** `best_fixed = fixed(dense)`. **Δ = DR(gated) − DR(dense) =
-+0.1096**, paired 95% CI **[−0.0564, +0.2872]**. Per-stratum (gated − best fixed): HARD **+0.110**
++0.1096**, paired 95% CI **[−0.0564, +0.2872]**, exact one-sided bootstrap **P(Δ>0) = 86.8%**
+(868/1000 group-resamples positive). Per-stratum (gated − best fixed): HARD **+0.110**
 (n=41), MED **+0.305** (n=15), **CTRL +0.000 (n=27)**. The rule fails on **one** count — the Δ CI
 includes 0 — but **the CTRL regression is gone** (−0.263 → **exactly 0.000**: the gate routes CTRL to
 `dense`, which *is* `best_fixed`, so the strata match by construction). This is a **strict improvement**
@@ -956,8 +957,20 @@ and the pooled point estimate quadrupled (**+0.0239 → +0.1096**). It is now th
 (0.524). It still cannot be **certified**: at **ESS ≈ 17** the CI width (~0.34) cannot resolve a +0.11
 gap — the same power limit as A6.1, a property of the uniform-log design, invariant to the gate.
 
+**Follow-up (b), 2026-07-08 — exact bootstrap probability.** The pre-registered rule gates on
+`CI_low > 0`, not on P(Δ>0); a natural question is *how close* the +0.1096 delta came. The exact
+one-sided bootstrap probability the gated router beats best-fixed is **P(Δ>0) = 86.8%** (the fraction
+of the 1000 paired group-resamples with Δ>0 — the same resamples the CI is read from). This is a touch
+below the ~89% Gaussian approximation `Φ(0.1096 / (0.343/(2·1.96))) ≈ 0.896`, because the bootstrap
+distribution is mildly left-skewed. Promotion under the pre-registered two-sided-95% CI is equivalent
+to **P(Δ>0) ≥ 97.5%**; at 86.8% the router is *suggestive but uncertifiable* — it does **not** overturn
+the REJECT, it quantifies the gap to certification (≈ 11 pts of bootstrap mass, i.e. more effective
+samples, not a different point estimate). Recorded as a first-class harness field `delta_p_positive`
+(printed by the CLI, stored in the verdict JSON) so the CI and its one-sided companion stay consistent.
+
 **[2] Does the bandit earn the hard branch? — NO.** On the **HARD ∪ MED** rows only (n=56), `linucb`
-vs `fixed(graph)`: **Δ = −0.0250**, CI **[−0.0945, +0.0458]** → `linucb` DR ≤ `fixed(graph)`. The \$0
+vs `fixed(graph)`: **Δ = −0.0250**, CI **[−0.0945, +0.0458]**, exact **P(Δ>0) = 28.9%** (the bandit is
+*more likely worse* than the fixed graph tier than better) → `linucb` DR ≤ `fixed(graph)`. The \$0
 oracle agrees: `gated(dense | fixed graph)` `true_value` **0.4528 ≥** `gated(dense | linucb)` **0.4435**.
 So even *within* the hard branch the learned policy does not beat the A5.3 fixed default — the bandit is
 **superfluous**; the deterministic gate + `fixed(graph)` captures the available lift.
@@ -970,6 +983,15 @@ supports is therefore **deterministic gate → fixed graph on hard = exactly A5.
 justified. This is the pre-registered **rigorous negative**; the gate + two-verdict harness are the
 shipped, green deliverable. The only lever left with upside is a **higher-ESS logging design**
 (stratified / propensity-blended μ), not a different policy class — that would be an A6.2 concern.
+
+**A6.1 (contextual bandit) is now CLOSED** across three tests — the unified bandit (2 fails), the λ_c
+cost sweep (refuted), and the gated router (1 fail + exact P(Δ>0)=86.8% < 97.5%). All roads reduce to
+*deterministic-gate → fixed-graph = A5.3*; a **learned contextual policy is not justified at this
+logging design**. Next phase: **A6.2 (Full RL for Retrieval)** — the agentic loop as a finite-horizon
+MDP (state = query + evidence-summary; action = {STOP} ∪ {(config, scope)}; PPO primary), which reuses
+this reward oracle + featurizer + group split + OPE harness verbatim. A6.2's first job is the very
+lever A6.1 could not turn: a **higher-ESS / propensity-blended logging design** so a learned policy is
+even *testable* with power. See `docs/ADVANCED_RAG_TODO.md` §A6.2.
 
 **Reproduce** (local, **\$0** — retrieval-only, no LLM):
 ```bash

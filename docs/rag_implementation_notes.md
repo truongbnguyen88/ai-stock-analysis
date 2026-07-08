@@ -1646,19 +1646,36 @@ hard branch — make it earn it** vs the A5.3 fixed default.
 
 **Verdict (local, 2026-07-08; `gated_eval_seed42.json`; same split/seed/λ_c as the A6.1 run — comparable).**
 - **[1] Promote? REJECT.** `best_fixed = fixed(dense)`; Δ = DR(gated) − DR(dense) = **+0.1096**, CI
-  **[−0.0564, +0.2872]**. Per-stratum HARD **+0.110** / MED **+0.305** / **CTRL +0.000**. Fails on the CI
-  count only — but the A6.1 **CTRL regression is gone** (−0.263 → exactly 0: the gate routes CTRL to
-  `dense`, which is `best_fixed`, so the strata are identical by construction). Pooled Δ quadrupled
-  (+0.0239 → +0.1096) and `gated(dense|linucb)` is the top policy by DR (0.524). Still uncertifiable: ESS
-  ≈ 17 → CI width ~0.34 cannot resolve +0.11 (the same logging-design power limit, invariant to the gate).
+  **[−0.0564, +0.2872]**, exact **P(Δ>0) = 86.8%** (868/1000 group-resamples positive). Per-stratum HARD
+  **+0.110** / MED **+0.305** / **CTRL +0.000**. Fails on the CI count only — but the A6.1 **CTRL
+  regression is gone** (−0.263 → exactly 0: the gate routes CTRL to `dense`, which is `best_fixed`, so the
+  strata are identical by construction). Pooled Δ quadrupled (+0.0239 → +0.1096) and `gated(dense|linucb)`
+  is the top policy by DR (0.524). Still uncertifiable: ESS ≈ 17 → CI width ~0.34 cannot resolve +0.11 (the
+  same logging-design power limit, invariant to the gate).
 - **[2] Bandit earns hard branch? NO.** On HARD+MED (n=56) `linucb` vs `fixed(graph)`: Δ = **−0.0250**, CI
-  [−0.0945, +0.0458]; oracle `true_value` agrees (gated+graph 0.4528 ≥ gated+linucb 0.4435). The learned
-  hard branch does not beat the A5.3 fixed default.
+  [−0.0945, +0.0458], exact **P(Δ>0) = 28.9%** (bandit *more likely worse* than the fixed graph tier);
+  oracle `true_value` agrees (gated+graph 0.4528 ≥ gated+linucb 0.4435). The learned hard branch does not
+  beat the A5.3 fixed default.
 
-**What it means / next.** The gate is the *correct fix* for the A6.1 CTRL regression (removed by
+**Follow-up (b) — exact bootstrap probability (2026-07-08).** Added `delta_p_positive` as a first-class
+harness field: `ope.bootstrap_delta_stats` returns `(lo, hi, p_positive)` from **one** resampling pass
+(refactored the shared core `_bootstrap_samples`; `bootstrap_ci` stays byte-identical), and `_paired_delta`
+threads it into both verdict reports (top-level for [1], nested `hard_branch` for [2]), the JSON, and the
+CLI (`P(Δ>0)=…`). `p_positive = mean(Δ_resample > 0)` — the exact one-sided bootstrap achieved-significance
+for `H1: Δ>0`, read from the **same** resamples as the CI so the two never disagree. The pre-registered rule
+gates on `CI_low > 0` (≡ P(Δ>0) ≥ 97.5% for a two-sided-95% percentile interval), not on P(Δ>0), so the
+field is **reported, not a criterion**. Result: the +0.1096 gated delta is 86.8% (below the ~89% Gaussian
+approx — mild left-skew, and well below 97.5%) ⇒ **REJECT unchanged**; concept math in `rag_concepts.md`
+§18.9. Tests: `test_ope.py::test_delta_stats_*` (CI-consistency + all-positive/all-negative goldens),
+`test_policy_eval.py` JSON-schema assertion extended.
+
+**What it means / next — A6.1 CLOSED.** The gate is the *correct fix* for the A6.1 CTRL regression (removed by
 construction; point estimate now clearly positive), but (a) the residual HARD/MED lift is not certifiable
-at this ESS, and (b) the learned hard branch is superfluous over `fixed(graph)`. The architecture the data
-supports is **deterministic gate → fixed graph on hard = exactly A5.3's tiered router**, which is therefore
-vindicated — no learned policy is justified. `adaptive_retrieval` stays `False`. The only remaining lever
-with upside is a **higher-ESS logging design** (stratified / propensity-blended μ), an A6.2 concern; cost
-tuning and policy class are both ruled out.
+at this ESS (P(Δ>0)=86.8% < 97.5%), and (b) the learned hard branch is superfluous over `fixed(graph)`. The
+architecture the data supports is **deterministic gate → fixed graph on hard = exactly A5.3's tiered
+router**, which is therefore vindicated — no learned policy is justified. `adaptive_retrieval` stays
+`False`. Across all three A6.1 tests (unified bandit, λ_c sweep, gated router) the verdict is REJECT; **the
+contextual-bandit track is CLOSED.** The only remaining lever with upside is a **higher-ESS logging design**
+(stratified / propensity-blended μ) — cost tuning and policy class are both ruled out — which is the opening
+move of **A6.2 (Full RL for Retrieval)**: the agentic loop as an MDP (PPO), reusing this reward oracle +
+featurizer + group split + OPE harness verbatim. See `docs/ADVANCED_RAG_TODO.md` §A6.2.

@@ -271,12 +271,30 @@ def test_bandit_earns_hard_branch_on_within_hard_structure() -> None:
 def test_gated_report_json_has_nested_hard_branch_block() -> None:
     report = evaluate_gated(_split_optimum(30, 30), _split_optimum(30, 30), n_boot=50, seed=1)
     d = report.to_json_dict()
-    for key in ("gate_feature", "easy_arm", "gated_policy", "best_fixed", "promote", "per_stratum"):
+    for key in (
+        "gate_feature",
+        "easy_arm",
+        "gated_policy",
+        "best_fixed",
+        "promote",
+        "per_stratum",
+        "delta_p_positive",  # exact one-sided bootstrap P(Δ>0), verdict 1 (A6.1-b)
+    ):
         assert key in d
     hard = d["hard_branch"]
-    for key in ("bandit", "fixed", "n", "delta_dr", "delta_ci", "bandit_earns_hard", "rationale"):
+    for key in (
+        "bandit",
+        "fixed",
+        "n",
+        "delta_dr",
+        "delta_ci",
+        "delta_p_positive",  # verdict 2
+        "bandit_earns_hard",
+        "rationale",
+    ):
         assert key in hard
     assert d["gate_feature"] == "is_bridging" and d["easy_arm"] == "dense"
+    assert 0.0 <= d["delta_p_positive"] <= 1.0 and 0.0 <= hard["delta_p_positive"] <= 1.0
 
 
 def test_gate_recovers_is_bridging_after_train_fit_standardization() -> None:

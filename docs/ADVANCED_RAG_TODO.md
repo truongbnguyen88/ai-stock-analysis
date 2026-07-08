@@ -844,7 +844,7 @@ seeded sampler, seed logged in the dataset header.
 
 ---
 
-### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra) · verdict 2026-07-08 = **REJECT** · gated-router follow-up 2026-07-08 = **REJECT (A5.3 vindicated)**
+### A6.1 — Contextual bandits + off-policy evaluation (the MVP; ship first) ✅ (infra) · verdict 2026-07-08 = **REJECT** · gated-router follow-up 2026-07-08 = **REJECT (A5.3 vindicated)** · **TRACK CLOSED** → A6.2
 
 > **Status: INFRA COMPLETE & GREEN (slices A6.1a–f shipped, `make check` green, default-OFF).
 > Verdict EXECUTED 2026-07-08 → REJECT: `promote=false`, `adaptive_retrieval` stays False.** LinUCB α=1,
@@ -887,6 +887,16 @@ seeded sampler, seed logged in the dataset header.
 > [rag_implementation_notes.md §A6.1](rag_implementation_notes.md) and
 > [validations_results.md](validations_results.md) (2026-07-08 entry). Only remaining lever: higher-ESS
 > logging (stratified/propensity-blended μ) — an A6.2 concern.
+>
+> **Follow-up (b) — exact bootstrap P(Δ>0) (2026-07-08):** added `delta_p_positive` as a first-class
+> harness field (`ope.bootstrap_delta_stats`, one resample pass shared with the CI). Verdict [1]
+> **P(Δ>0) = 86.8%** (868/1000 resamples positive; below the ~89% Gaussian approx — mild left-skew, and
+> far below the 97.5% the `CI_low>0` rule implies) and verdict [2] **P(Δ>0) = 28.9%** (bandit *more likely
+> worse* than fixed graph). Reported, not a criterion ⇒ **verdict unchanged: REJECT.** Theory →
+> [rag_concepts.md §18.9](rag_concepts.md). **A6.1 (contextual-bandit) TRACK CLOSED** — three tests
+> (unified bandit, λ_c sweep, gated router) all REJECT; a learned contextual policy is not justified at
+> this logging design. Next: **A6.2 (Full RL for Retrieval)**, whose first move is the higher-ESS logging
+> lever A6.1 could not turn (see §A6.2).
 
 **What A6.1 is.** Treat retrieval as a **one-shot decision**: a featurized query (context `x`) → a
 **policy** picks one of ~5 retrieval **configs** (arms `a`) → earns **reward** `r` = quality − cost.

@@ -31,7 +31,7 @@ import numpy as np
 
 from stock_agent.rag.ope import (
     OPEEstimate,
-    bootstrap_ci,
+    bootstrap_delta_stats,
     dr_value,
     fit_q_ridge,
     importance_weights,
@@ -270,6 +270,7 @@ class PolicyEvalReport:
     bandit: str
     delta_dr: float
     delta_ci: tuple[float, float]
+    delta_p_positive: float  # exact one-sided bootstrap P(Δ>0) — reported, not gated
     per_stratum: list[StratumDelta]
     promote: bool
     rationale: str
@@ -286,6 +287,7 @@ class PolicyEvalReport:
             "bandit": self.bandit,
             "delta_dr": self.delta_dr,
             "delta_ci": list(self.delta_ci),
+            "delta_p_positive": self.delta_p_positive,
             "per_stratum": [s.to_json_dict() for s in self.per_stratum],
             "promote": self.promote,
             "rationale": self.rationale,
@@ -376,13 +378,17 @@ def _paired_delta(
     ridge_lambda: float,
     n_boot: int,
     seed: int,
-) -> tuple[float, tuple[float, float], list[StratumDelta]]:
+) -> tuple[float, tuple[float, float], float, list[StratumDelta]]:
     """Paired DR delta ``DR(bandit) − DR(fixed)`` with a group bootstrap CI + per-stratum breakdown.
 
     The reward model ``q_hat`` (policy-independent) is fit once on the test log; only the importance
     weights and target-prob matrices differ between the two policies. The bootstrap resamples the
     SAME groups for both DR values each draw (paired) so the CI is on their difference — the
     pre-registered promotion statistic. Per-stratum deltas reuse those weights/``q_hat`` on masks.
+
+    Returns ``(point, ci, p_positive, per_stratum)`` where ``p_positive = P(Δ > 0)`` is the exact
+    one-sided bootstrap probability the paired delta is positive (companion to the CI, reported not
+    gated — see ``bootstrap_delta_stats``).
     """
     q_weights = fit_q_ridge(test_x, actions, rewards, n_arms=n_arms, ridge_lambda=ridge_lambda)
     q_hat_all = predict_q(test_x, q_weights)
@@ -396,7 +402,10 @@ def _paired_delta(
 
     full = np.arange(len(rewards))
     point = _delta(full)
-    ci = bootstrap_ci(_delta, len(rewards), groups=groups, n_boot=n_boot, seed=seed)
+    lo, hi, p_positive = bootstrap_delta_stats(
+        _delta, len(rewards), groups=groups, n_boot=n_boot, seed=seed
+    )
+    ci = (lo, hi)
 
     per_stratum: list[StratumDelta] = []
     for s in _STRATA:
@@ -407,7 +416,7 @@ def _paired_delta(
         dr_b = dr_value(actions[idx], rewards[idx], w_b[idx], bandit_tp[idx], q_hat_all[idx])
         dr_f = dr_value(actions[idx], rewards[idx], w_f[idx], fixed_tp[idx], q_hat_all[idx])
         per_stratum.append(StratumDelta(s, int(mask.sum()), dr_b, dr_f, dr_b - dr_f))
-    return point, ci, per_stratum
+    return point, ci, p_positive, per_stratum
 
 
 def evaluate_offline(
@@ -488,7 +497,7 @@ def evaluate_offline(
     bandit_name = learned[bandit].name
 
     # 5) pre-registered verdict: paired DR delta clears the group bootstrap 95% CI AND no CTRL loss.
-    delta, delta_ci, per_stratum = _paired_delta(
+    delta, delta_ci, delta_p_pos, per_stratum = _paired_delta(
         target_probs[bandit_name],
         target_probs[best_fixed],
         test_x,
@@ -517,6 +526,7 @@ def evaluate_offline(
         bandit=bandit_name,
         delta_dr=delta,
         delta_ci=delta_ci,
+        delta_p_positive=delta_p_pos,
         per_stratum=per_stratum,
         promote=promote,
         rationale=rationale,
@@ -564,6 +574,7 @@ class GatedEvalReport:
     gated_policy: str
     delta_dr: float
     delta_ci: tuple[float, float]
+    delta_p_positive: float  # exact one-sided bootstrap P(Δ>0) for verdict 1 — reported, not gated
     per_stratum: list[StratumDelta]
     promote: bool
     rationale: str
@@ -573,6 +584,7 @@ class GatedEvalReport:
     hard_n: int
     hard_delta_dr: float
     hard_delta_ci: tuple[float, float]
+    hard_delta_p_positive: float  # exact one-sided bootstrap P(Δ>0) for verdict 2
     hard_per_stratum: list[StratumDelta]
     bandit_earns_hard: bool
     hard_rationale: str
@@ -591,6 +603,7 @@ class GatedEvalReport:
             "gated_policy": self.gated_policy,
             "delta_dr": self.delta_dr,
             "delta_ci": list(self.delta_ci),
+            "delta_p_positive": self.delta_p_positive,
             "per_stratum": [s.to_json_dict() for s in self.per_stratum],
             "promote": self.promote,
             "rationale": self.rationale,
@@ -600,6 +613,7 @@ class GatedEvalReport:
                 "n": self.hard_n,
                 "delta_dr": self.hard_delta_dr,
                 "delta_ci": list(self.hard_delta_ci),
+                "delta_p_positive": self.hard_delta_p_positive,
                 "per_stratum": [s.to_json_dict() for s in self.hard_per_stratum],
                 "bandit_earns_hard": self.bandit_earns_hard,
                 "rationale": self.hard_rationale,
@@ -720,7 +734,7 @@ def evaluate_gated(
     best_fixed = max(fixed_values, key=lambda v: v.dr).name
 
     # Verdict 1: gated(easy|linucb) vs best fixed — the promotion decision.
-    delta, delta_ci, per_stratum = _paired_delta(
+    delta, delta_ci, delta_p_pos, per_stratum = _paired_delta(
         target_probs[gated_bandit.name],
         target_probs[best_fixed],
         test_x,
@@ -742,9 +756,9 @@ def evaluate_gated(
     hard_idx = np.flatnonzero(np.isin(test.strata, ("HARD", "MED")))
     h_per: list[StratumDelta]
     if hard_idx.size == 0:  # degenerate fold with no hard rows — nothing to earn.
-        h_delta, h_ci, h_per, earns = 0.0, (0.0, 0.0), [], False
+        h_delta, h_ci, h_p_pos, h_per, earns = 0.0, (0.0, 0.0), 0.0, [], False
     else:
-        h_delta, h_ci, h_per = _paired_delta(
+        h_delta, h_ci, h_p_pos, h_per = _paired_delta(
             target_probs[linucb.name][hard_idx],
             target_probs[graph_fixed.name][hard_idx],
             test_x[hard_idx],
@@ -774,6 +788,7 @@ def evaluate_gated(
         gated_policy=gated_bandit.name,
         delta_dr=delta,
         delta_ci=delta_ci,
+        delta_p_positive=delta_p_pos,
         per_stratum=per_stratum,
         promote=promote,
         rationale=rationale,
@@ -782,6 +797,7 @@ def evaluate_gated(
         hard_n=int(hard_idx.size),
         hard_delta_dr=h_delta,
         hard_delta_ci=h_ci,
+        hard_delta_p_positive=h_p_pos,
         hard_per_stratum=h_per,
         bandit_earns_hard=earns,
         hard_rationale=hard_rationale,
