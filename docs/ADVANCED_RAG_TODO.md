@@ -1043,6 +1043,12 @@ Ridge backend = hand-rolled numpy normal equations (no sklearn dep). (4) `λ_c`=
 
 ### A6.2 — Full reinforcement learning for RAG (the agentic loop as an MDP)
 
+> **Detailed execution plan (slice-by-slice, module/interface designs, TransitionCache, action-space
+> cardinality, tests):** [a6_2_plan.md](a6_2_plan.md). Design brief (MDP/state/action/reward, worked
+> trajectories): [rl_rag_pre_questions.md](rl_rag_pre_questions.md) Q2–Q5. This section stays the
+> plan-of-record summary; the detail lives in `a6_2_plan.md`. **Status: EXECUTING** (branch
+> `feat/adv-rag-a6.2-rl`; slices A6.2a→g).
+
 **Idea.** A6.1 optimizes a *single* retrieval choice. A6.2 learns the **whole multi-hop trajectory** —
 generalizing the A4 ReAct loop (whose policy is currently a fixed LLM prompt) and the A5 entity-bridge
 (a fixed heuristic) into **one learned sequential policy**. This is the genuine RL phase.
