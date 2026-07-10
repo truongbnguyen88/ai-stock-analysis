@@ -249,7 +249,17 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   `summarize_evidence`, `featurize_state` (**label-free** — structural test asserts no aspect/label
   param). Tests reproduce the Q4 `s_0 → s_1` deltas (`n_discovered_unretrieved 0→1`, `budget 3→2`,
   `last_new_chunks 0→6`). ruff+mypy clean, 7 pass. Committed on `feat/adv-rag-a6.2-rl`.
-- [ ] A6.2b — action space + templates
+- [x] **A6.2b — action space + templates** ✅ (2026-07-10) — `rag/rl/action.py` +
+  `tests/unit/test_rl_action.py` (14 tests). Shipped: `Action` (frozen, self-validating: STOP |
+  `(config, scope_kind∈{SELF,DISCOVERED}, scope_slot)`), `ScopeKind`, `DiscoveredEntity`
+  (ticker+alias name), `RetrievalRequest` (`arm`, `query`, `scope_ticker`), `build_action_space`
+  / `named_action_space` (`"pruned"`=7, `"full"`=16), `is_legal`, `action_to_request`,
+  `action_label`. **Pinned config-major order** (STOP@0, then per config: self, disc#0…disc#J-1) —
+  a policy's logits index into it, so a golden test freezes it. **Query template B is label-free**:
+  self→plain `question`; discovered#j→`"{name} {question}"` + `ChunkFilter(ticker=...)` scope — the
+  deployable correction of the pre-questions Q3 illustration (which prepended an aspect span = a
+  gold label ⇒ undeployable). `KNOWN_ARMS = LATTICE_SYSTEMS ∪ {graph}` (reused from `read_path`).
+  ruff+mypy clean, 14 pass. Committed on `feat/adv-rag-a6.2-rl`.
 - [ ] A6.2c — env + TransitionCache
 - [ ] A6.2d — REINFORCE (numpy) + BC
 - [ ] A6.2e — PPO (torch, `[rl]`)
@@ -260,10 +270,21 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
 - **On A6.2a:** state = static `featurize()` (11-dim, unchanged) ⊕ dynamic evidence block; the crux
   feature is `n_discovered_unretrieved` (env passes the *count*; env owns the `searched` set + the
   discovered *set* for action slots via `discovered_unretrieved_entities`).
-- **Next = A6.2b** (`rag/rl/action.py`): discrete action space (`STOP` + `(config, scope)`), the
-  deterministic query template (B) `"{entity} {question}"`, and label-free lexicographic
-  discovered-entity ordering (cap `J=2`). Default action space = pruned `{hybrid,graph}×{self,disc#1,
-  disc#2}+STOP=7` (§3b); full-16 as an ablation. Then A6.2c wires `state` + `action` into the env.
+- **On A6.2b:** action space is a **pinned config-major list** — index 0 = STOP, then per config in
+  order `(config, self), (config, disc#0), …, (config, disc#J-1)`. Pruned (default,
+  `configs=("hybrid","graph")`, J=2) = 7 actions; full (`LATTICE_SYSTEMS ∪ {graph}`, J=2) = 16. This
+  order supersedes the Q4 illustrative interleaving (`a=1 hybrid@self, a=2 graph@self, …`) — the
+  illustration was not load-bearing; the frozen order is what checkpoints index into. Template B is
+  **label-free** (`"{name} {question}"`, NOT the Q3 `"{name} {aspect-span}"` which would leak).
+  `action_to_request` returns `None` for STOP or an out-of-range discovered slot; `is_legal` mirrors
+  that masking boundary (env no-ops / policy masks with `-inf`).
+- **Next = A6.2c** (`rag/rl/env.py`): wire `state` + `action` into a Gym-style `reset`/`step` MDP with
+  a `TransitionCache`. The env owns: the seed `self_ticker` (from the episode row), the `searched`
+  set, the deduped union (`research.agentic._dedup_union`), the anti-loop `(query, scope)` key
+  (`ChunkFilter.model_dump_json()`), and the discovered-entity list — built by resolving
+  `discovered_unretrieved_entities` (tickers) to `DiscoveredEntity(ticker, name)` via the alias map,
+  **sorted lexicographically by ticker, capped at J** (label-free order feeding the action slots).
+  Reward = potential shaping with `Φ = coverage` (the only labels touchpoint) + `DEFAULT_ARM_COSTS`.
 - **Invariants to keep:** state stays label-free; group-wise `split_multihop` only; `TransitionCache`
   in the env (§3a) so PPO rollouts don't re-hit the corpus; CI torch-free (numpy REINFORCE is the
   floor; PPO in the `[rl]` extra, lazy import, day-1 segfault smoke test).
