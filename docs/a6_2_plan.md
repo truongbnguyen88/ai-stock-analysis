@@ -260,7 +260,22 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   deployable correction of the pre-questions Q3 illustration (which prepended an aspect span = a
   gold label ⇒ undeployable). `KNOWN_ARMS = LATTICE_SYSTEMS ∪ {graph}` (reused from `read_path`).
   ruff+mypy clean, 14 pass. Committed on `feat/adv-rag-a6.2-rl`.
-- [ ] A6.2c — env + TransitionCache
+- [x] **A6.2c — env + TransitionCache** ✅ (2026-07-10) — `rag/rl/env.py` +
+  `tests/unit/test_rl_env.py` (9 tests). Shipped: `RagRetrievalEnv` (minimal Gym-style
+  `reset(i)`/`step(a)` → `(state, reward, done, StepInfo)`; no gymnasium, no RNG), `TransitionCache`
+  (memoize `(arm, scope_ticker, query)` → chunks; hit/miss counters), `StepInfo`,
+  `default_retriever_factory` (arm → `build_graph_system`/`build_named_system`, injectable).
+  **Reward** = potential shaping `γ·Φ(s') − Φ(s) − λ_c·cost(arm)` on search; **STOP → 0, terminal**
+  (telescopes to `γ^n·Φ(s_n)` = densified terminal coverage, Ng–Harada). Φ = `coverage(union,
+  aspects)` (the **only** labels touchpoint, simulator-only); union via A4 `_dedup_union`
+  (byte-identical to the ReAct loop). State `n_discovered_unretrieved` = **raw** count; action
+  **slots capped at J**; illegal slot → no-op step (dominated); horizon `T` bounds every episode.
+  **Cache key subsumes the plan's `episode_id`** — the templated query already carries the
+  question, so retrieval shares across episodes. Lazy source resolution mirrors `PolicyRetriever`.
+  Tests: Q4 worked NVDA→MU trajectory (evidence blocks `[0,3,0,0,0,0,0]→[1,2,1,1,1,1,1]→
+  [2,1,2,2,1,0,1]`), telescoping identity, cache hit/miss + memoize, reward-hacking sentinel (<0),
+  slot masking, **env-level leakage guard** (state label-independent, reward not), lifecycle guards.
+  ruff+mypy clean, 9 pass. Committed on `feat/adv-rag-a6.2-rl`.
 - [ ] A6.2d — REINFORCE (numpy) + BC
 - [ ] A6.2e — PPO (torch, `[rl]`)
 - [ ] A6.2f — train CLI + checkpointing
@@ -278,13 +293,19 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   **label-free** (`"{name} {question}"`, NOT the Q3 `"{name} {aspect-span}"` which would leak).
   `action_to_request` returns `None` for STOP or an out-of-range discovered slot; `is_legal` mirrors
   that masking boundary (env no-ops / policy masks with `-inf`).
-- **Next = A6.2c** (`rag/rl/env.py`): wire `state` + `action` into a Gym-style `reset`/`step` MDP with
-  a `TransitionCache`. The env owns: the seed `self_ticker` (from the episode row), the `searched`
-  set, the deduped union (`research.agentic._dedup_union`), the anti-loop `(query, scope)` key
-  (`ChunkFilter.model_dump_json()`), and the discovered-entity list — built by resolving
-  `discovered_unretrieved_entities` (tickers) to `DiscoveredEntity(ticker, name)` via the alias map,
-  **sorted lexicographically by ticker, capped at J** (label-free order feeding the action slots).
-  Reward = potential shaping with `Φ = coverage` (the only labels touchpoint) + `DEFAULT_ARM_COSTS`.
+- **On A6.2c:** the env owns the trajectory state (union, `_scoped` set, discovered list, `step_idx`,
+  `_phi`). `reset(i)` requires an explicit index — the **trainer** owns iteration order + any seeded
+  shuffle (env is RNG-free). Anti-loop is handled by dedup + the `TransitionCache` (a repeat is a
+  cache hit → 0 new chunks), not a separate `issued` set — the cache key `(arm, scope, query)` IS the
+  anti-loop key. `coverage`/`_dedup_union` are **lazy-imported** from `research/` (cycle guard, same
+  as `rag.reward`). `gamma` defaults to 1.0 (exact terminal-coverage objective); training may set
+  `<1` for credit front-loading. `StepInfo` is telemetry-only (never in the learner's math).
+- **Next = A6.2d** (`rag/rl/policy.py` + `reinforce.py`): numpy `LinearSoftmaxPolicy` (logits `Wx`,
+  softmax, `act`/`log_prob`/analytic `grad_log_prob`, **action masking** via `env.legal_mask()` →
+  `-inf` logit; optional linear value baseline) + `rollout`/`reinforce_update`/`behavior_clone`. BC
+  expert = the A4 loop replayed into the action space (self-search=`(prod-arm, self)`, bridge=`(arm,
+  disc_j)`, terminal `STOP`). Tests: finite-diff grad check, REINFORCE converges on a 2-arm/2-step
+  toy, BC reduces cross-entropy, seeded determinism, masking respected. **CI floor** (numpy, no torch).
 - **Invariants to keep:** state stays label-free; group-wise `split_multihop` only; `TransitionCache`
   in the env (§3a) so PPO rollouts don't re-hit the corpus; CI torch-free (numpy REINFORCE is the
   floor; PPO in the `[rl]` extra, lazy import, day-1 segfault smoke test).
