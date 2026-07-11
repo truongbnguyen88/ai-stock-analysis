@@ -26,7 +26,10 @@
 14. [The four retrieval configurations (dense / reranked / hybrid / hybrid+rerank)](#14-the-four-retrieval-configurations-dense--reranked--hybrid--hybridrerank)
 15. [Agentic RAG — the ReAct loop for multi-hop retrieval](#15-agentic-rag--the-react-loop-for-multi-hop-retrieval)
 16. [GraphRAG — knowledge graphs and graph-augmented retrieval](#16-graphrag--knowledge-graphs-and-graph-augmented-retrieval)
-17. [References](#17-references)
+17. [Multi-hop benchmark construction — span-isolation, stratification, leakage-safe splits](#17-multi-hop-benchmark-construction--span-isolation-stratification-leakage-safe-splits)
+18. [Contextual bandits + off-policy evaluation (retrieval as a one-shot decision)](#18-contextual-bandits--off-policy-evaluation-retrieval-as-a-one-shot-decision)
+19. [Full RL for retrieval — MDP, policy gradients, REINFORCE, behavior cloning](#19-full-rl-for-retrieval--mdp-policy-gradients-reinforce-behavior-cloning)
+20. [References](#20-references)
 
 ---
 
@@ -2235,7 +2238,203 @@ policy is a bandit whose promotion is gated behind an OPE certificate rather tha
 
 ---
 
-## 19. References
+## 19. Full RL for retrieval — MDP, policy gradients, REINFORCE, behavior cloning
+
+> **Scope.** This section covers the A6.2d layer: the MDP the retrieval loop becomes, the
+> policy-gradient theorem, REINFORCE with reward-to-go, value baselines, and behavior cloning — the
+> theory behind [`rag/rl/policy.py`](../src/stock_agent/rag/rl/policy.py) and
+> [`rag/rl/reinforce.py`](../src/stock_agent/rag/rl/reinforce.py). PPO (clipped surrogate, GAE) is
+> deferred to A6.2e and appended here then. Potential-based shaping (§19.8) is the reward the returns
+> in §19.5 are built from.
+
+### 19.1 From one-shot bandit (§18) to a sequential MDP
+
+§18 framed a *single* retrieval as a contextual bandit: observe a query context, pull one arm, collect
+one reward. A6.2 lifts that to the full multi-hop loop of §15 — **which** retriever, **where** to point
+it, **when** to stop — as a finite-horizon **Markov decision process (MDP)**. The distinction that
+matters: in a bandit the action does not change the next context; in an MDP each retrieval *appends to
+the evidence union*, which changes the next state (e.g. it surfaces a newly-named-but-unretrieved
+entity to bridge to). Credit must now be assigned *across* steps, not within one.
+
+Formally the MDP is a tuple $(\mathcal{S}, \mathcal{A}, P, r, \gamma, T)$:
+
+- **State** $s_t \in \mathcal{S}$ — the 18-dim label-free vector of §A6.2a (static query block ⊕ dynamic
+  evidence summary). "Label-free" is load-bearing: $s_t$ is a function of the trajectory-so-far only,
+  so a policy trained here runs unchanged on a real, unlabeled query.
+- **Action** $a_t \in \mathcal{A}$ — the discrete space of §A6.2b: `STOP` or a `(config, scope)`
+  retrieval. Illegal actions (a discovered slot with no entity) are masked.
+- **Transition** $P(s_{t+1} \mid s_t, a_t)$ — **deterministic** here: the action templates to a query,
+  the *real* retriever runs against the *fixed* corpus, the chunks fold into the deduped union. A
+  deterministic, memoized transition (the `TransitionCache`) is what makes unlimited on-policy rollouts
+  free and fast.
+- **Reward** $r_t$ — potential-based shaping on coverage minus a cost penalty (§19.8).
+- **Discount** $\gamma \in (0, 1]$ and **horizon** $T = 3$ (`agentic_max_steps`).
+
+### 19.2 The objective
+
+A stochastic policy $\pi_\theta(a \mid s)$ (parameters $\theta$) induces a distribution over
+trajectories $\tau = (s_0, a_0, r_0, s_1, \dots, s_T)$. We maximize the expected discounted return:
+
+$$J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\left[ R(\tau) \right], \quad R(\tau) = \sum_{t=0}^{T-1} \gamma^t r_t$$
+
+Every quantity is plain: $\pi_\theta(a \mid s)$ is the probability the policy takes action $a$ in state
+$s$; $\gamma^t$ down-weights a reward earned $t$ steps in the future; $R(\tau)$ is one episode's total
+(discounted) reward; $J(\theta)$ averages that over the randomness in the policy's own action choices
+(the env is deterministic, so *all* the randomness is the policy's sampling).
+
+### 19.3 The policy: linear softmax + the score function
+
+Each action gets a weight row; the per-action bias is folded in by appending a constant $1$ to the
+state, $x = [s; 1] \in \mathbb{R}^{d+1}$, so a single matrix $W \in \mathbb{R}^{K \times (d+1)}$ (with
+$K$ actions) holds everything:
+
+$$z = W x, \qquad \pi_\theta(a \mid s) = \frac{\exp(z_a)}{\sum_{k} \exp(z_k)}$$
+
+$z$ is the vector of **logits** (one real score per action); softmax turns them into a probability
+distribution. Masking sets $z_k = -\infty$ for illegal $k$, so those actions get probability $0$ and
+never contribute; `STOP` is always legal, so at least one logit is finite and the softmax is defined.
+
+The **score function** is the gradient of the log-probability. Using the standard softmax identity
+$\partial \log \pi_\theta(a \mid s) / \partial z_k = \mathbb{1}[k = a] - \pi_\theta(k \mid s)$ and the
+chain rule through $z_k = W_{k,:} x$:
+
+$$\frac{\partial \log \pi_\theta(a \mid s)}{\partial W_{k,:}} = \left( \mathbb{1}[k = a] - \pi_\theta(k \mid s) \right) x$$
+
+In words: the gradient row for action $k$ is the state $x$ scaled by "did we take $k$" ($\mathbb{1}[k=a]$,
+which is $1$ for the action actually taken and $0$ otherwise) minus "how likely was $k$"
+($\pi_\theta(k \mid s)$). Taking action $a$ pushes its logit up and pushes every action's logit down in
+proportion to its current probability — a soft winner-take-all. This closed form (`grad_log_prob`) is
+why the numpy learner needs no autodiff; a finite-difference test pins it.
+
+### 19.4 The policy-gradient theorem (derivation)
+
+We cannot differentiate $J$ by sampling naively, because the *distribution* we sample from depends on
+$\theta$. The **likelihood-ratio (log-derivative) trick** $\nabla p = p \nabla \log p$ moves the
+gradient inside the expectation:
+
+$$\nabla_\theta J(\theta) = \nabla_\theta \sum_\tau p_\theta(\tau) R(\tau) = \sum_\tau p_\theta(\tau) \nabla_\theta \log p_\theta(\tau) R(\tau) = \mathbb{E}_{\tau \sim \pi_\theta}\left[ R(\tau) \nabla_\theta \log p_\theta(\tau) \right]$$
+
+The trajectory density factorizes over the initial-state distribution $\rho$, the policy, and the
+dynamics $P$:
+
+$$p_\theta(\tau) = \rho(s_0) \prod_{t=0}^{T-1} \pi_\theta(a_t \mid s_t) P(s_{t+1} \mid s_t, a_t) \quad\Longrightarrow\quad \nabla_\theta \log p_\theta(\tau) = \sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t \mid s_t)$$
+
+The key cancellation: $\rho$ and $P$ do **not** depend on $\theta$, so their log-gradients vanish. This
+is why the algorithm needs **no model of the transition dynamics** — the black-box retriever can stay
+black-box. Substituting back:
+
+$$\nabla_\theta J(\theta) = \mathbb{E}_{\tau}\left[ \left( \sum_{t} \nabla_\theta \log \pi_\theta(a_t \mid s_t) \right) R(\tau) \right]$$
+
+### 19.5 REINFORCE with reward-to-go
+
+Weighting *every* score term by the *whole* return $R(\tau)$ is valid but needlessly noisy: an action at
+step $t$ cannot have caused rewards earned *before* $t$. Dropping those (zero-expectation) cross terms
+gives the **reward-to-go** form:
+
+$$\nabla_\theta J(\theta) = \mathbb{E}_{\tau}\left[ \sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t \mid s_t) G_t \right], \qquad G_t = \sum_{k \ge t} \gamma^{k-t} r_k$$
+
+$G_t$ (the reward-to-go) is the discounted sum of rewards *from step $t$ onward* — the part of the
+return the action at $t$ can actually influence. (`discounted_returns_to_go` computes it by a backward
+pass $G_t = r_t + \gamma G_{t+1}$; convention note: we use $G_t$ as the weight, the common
+undiscounted-weighting variant of REINFORCE, rather than the strict $\gamma^t G_t$.) The Monte-Carlo
+estimator over $N$ sampled episodes, and one ascent step:
+
+$$\hat{g} = \frac{1}{N} \sum_{i=1}^{N} \sum_{t} \left( G_t^{(i)} - b(s_t^{(i)}) \right) \nabla_\theta \log \pi_\theta\left(a_t^{(i)} \mid s_t^{(i)}\right), \qquad \theta \leftarrow \theta + \eta \hat{g}$$
+
+with learning rate $\eta$ and a baseline $b$ (next). This is exactly `reinforce_update`.
+
+### 19.6 Baselines and variance reduction
+
+The Monte-Carlo estimator is unbiased but high-variance (a single episode's return is a noisy sample).
+Subtracting a **baseline** $b(s_t)$ that depends on the state but *not* the action leaves the gradient
+unbiased, because in expectation the baseline term is zero:
+
+$$\mathbb{E}_{a \sim \pi_\theta(\cdot \mid s)}\left[ b(s) \nabla_\theta \log \pi_\theta(a \mid s) \right] = b(s) \sum_a \pi_\theta(a \mid s) \frac{\nabla_\theta \pi_\theta(a \mid s)}{\pi_\theta(a \mid s)} = b(s) \nabla_\theta \sum_a \pi_\theta(a \mid s) = b(s) \nabla_\theta 1 = 0$$
+
+The last step uses $\sum_a \pi_\theta(a \mid s) = 1$ (probabilities sum to one, for any $\theta$, so its
+gradient is zero). What a good baseline *does* buy is lower variance: the **advantage**
+$A_t = G_t - b(s_t)$ measures whether an action did better or worse than *typical from that state*, so
+only genuinely-better-than-average actions get reinforced. `LinearValueBaseline` fits
+$b(s) = \theta_v^\top [s; 1]$ by ridge least squares to the observed returns; `reinforce_update`
+subtracts the *pre-fit* baseline (so this batch's gradient stays unbiased) and refits *after*, ready
+for the next step.
+
+### 19.7 Behavior cloning (BC) — supervised warm start
+
+Rather than learn from reward, BC learns to *imitate* an expert by maximum likelihood: minimize the
+cross-entropy of the expert action $e_i$ under the policy over $M$ demonstration states:
+
+$$\mathrm{CE}(\theta) = -\frac{1}{M} \sum_{i=1}^{M} \log \pi_\theta(e_i \mid s_i), \qquad \nabla_\theta \mathrm{CE}(\theta) = -\frac{1}{M} \sum_{i} \nabla_\theta \log \pi_\theta(e_i \mid s_i)$$
+
+A gradient-*descent* step on cross-entropy is a gradient-*ascent* step on log-likelihood — i.e. the
+**same score-function update** as REINFORCE with the advantage pinned to $+1$ on the expert action.
+That is why `behavior_clone` reuses `grad_log_prob`. The expert here (`bridge_expert_rollout`) scripts
+the A4/A5 heuristic into the action space — self-search, then bridge the first
+discovered-but-unretrieved entity while budget allows, then `STOP`. It is deliberately a **weak
+teacher** (a warm start, not a target): it demonstrates *scope* and *stop* but never varies the
+*config*, so cloning it cannot teach config selection — that must come from reward.
+
+### 19.8 Potential-based reward shaping (Ng–Harada) — why densifying is free
+
+The natural reward is **sparse**: coverage is only known at the end of the episode. Sparse terminal
+rewards make credit assignment hard. **Potential-based shaping** densifies it without changing the
+optimum. With a potential $\Phi(s) = \mathrm{coverage}(\mathrm{union}(s))$ (the fraction of gold aspects
+the accumulated evidence covers — the *only* place labels enter, and simulator-side only), the shaped
+per-step reward on a search step is:
+
+$$r_t = \underbrace{\gamma \Phi(s_{t+1}) - \Phi(s_t)}_{\text{shaping (progress in coverage)}} - \underbrace{\lambda_c c(a_t)}_{\text{cost penalty}}, \qquad r_{\text{STOP}} = 0$$
+
+where $c(a_t)$ is the arm's cost proxy and $\lambda_c$ (`reward_lambda_cost`) prices it. The shaping term
+**telescopes** along a trajectory:
+
+$$\sum_{t=0}^{n-1} \gamma^t \left( \gamma \Phi(s_{t+1}) - \Phi(s_t) \right) = \gamma^n \Phi(s_n) - \Phi(s_0)$$
+
+With an empty initial union $\Phi(s_0) = 0$, the discounted shaping return equals $\gamma^n \Phi(s_n)$ —
+the discounted **terminal coverage**. So the dense reward and the sparse terminal-coverage reward have
+the *same* return up to discounting, but the dense one credits each step the moment progress is made.
+**Ng, Harada & Russell (1999)** prove this is not luck: a shaping term of the exact form
+$F(s, s') = \gamma \Phi(s') - \Phi(s)$ is the necessary-and-sufficient shape that leaves the set of
+optimal policies unchanged for *every* reward and transition function. The cost penalty is a genuine
+(non-shaping) objective term — it is what makes a high-recall-but-useless arm a net negative (the
+reward-hacking sentinel test).
+
+### 19.9 Worked micro-examples (the exact values the tests assert)
+
+- **Reward-to-go.** Rewards $(r_0, r_1, r_2) = (1, 2, 3)$, $\gamma = 0.5$: $G_2 = 3$;
+  $G_1 = 2 + 0.5 \cdot 3 = 3.5$; $G_0 = 1 + 0.5 \cdot 3.5 = 2.75$. → `test_discounted_returns_to_go`.
+- **Shaping telescopes.** Coverage path $\Phi(s_0)=0, \Phi(s_1)=0.5, \Phi(s_2)=1.0$, $\gamma=0.9$,
+  $\lambda_c=0$: $r_0 = 0.9 \cdot 0.5 - 0 = 0.45$; $r_1 = 0.9 \cdot 1.0 - 0.5 = 0.4$; discounted return
+  $= 0.45 + 0.9 \cdot 0.4 = 0.81 = 0.9^2 \cdot 1.0 = \gamma^2 \Phi(s_2)$. →
+  `test_shaping_telescopes_to_discounted_terminal_coverage`.
+- **REINFORCE recovers a state-dependent optimum.** A 2-step, 3-action toy (`STOP`, arm A, arm B)
+  rewards A at step 0 and B at step 1; the optimum (A then B, return $2$) requires *using the state*
+  (the one-hot step), not just the bias. From a uniform start, REINFORCE with a linear baseline drives
+  the greedy policy to A@step0, B@step1 and mean return $> 1.5$. → `test_reinforce_converges_on_toy`.
+
+### 19.10 Assumptions, failure modes, and what A6.2e/g add
+
+- **On-policy sample cost.** The gradient is valid only for trajectories drawn from the *current*
+  $\pi_\theta$, so every update needs fresh rollouts. The deterministic, memoized transition
+  (`TransitionCache`) removes the *retrieval* cost of that, but not the rollout count — hence PPO's
+  sample-reuse (A6.2e).
+- **Monte-Carlo variance.** Single-trajectory returns are noisy; the baseline and a large batch cut
+  variance, but REINFORCE is still higher-variance than actor-critic. PPO adds a learned critic, GAE
+  advantage estimation, and a trust region.
+- **Tiny data.** ~149 train episodes at $T=3$ is a small-data regime — a real overfitting risk;
+  train-vs-held-out gap reporting (A6.2g) is the guard, and a rigorous *negative* (learned ≈ the fixed
+  A4 loop + router) is a pre-registered acceptable outcome.
+- **Weak expert.** BC's demonstrator never varies the config, so BC alone cannot select configs; it is
+  a warm start only.
+- **Determinism & the leakage line.** The env holds no RNG (only the policy samples, seeded), and the
+  *state* is label-free — the gradient never sees gold aspects. Labels enter **only** through $\Phi$
+  inside the reward, simulator-side. This is what lets the frozen policy deploy on unlabeled queries.
+- **Next (A6.2e/g).** PPO clipped surrogate $L^{\mathrm{CLIP}}$, GAE($\lambda$), and entropy
+  regularization extend this section; held-out eval vs baselines, the sim-to-real gap, and the verdict
+  close A6.2.
+
+---
+
+## 20. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -2279,3 +2478,14 @@ policy is a bandit whose promotion is gated behind an OPE certificate rather tha
 - Swaminathan & Joachims (2015), *The Self-Normalized Estimator for Counterfactual Learning* — the
   **SNIPS** estimator of §18.5.
 - Kish (1965), *Survey Sampling* — the effective-sample-size (design-effect) diagnostic of §18.7.
+- Williams (1992), *Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement
+  Learning* — the **REINFORCE** estimator of §19.5.
+- Sutton, McAllester, Singh & Mansour (2000), *Policy Gradient Methods for Reinforcement Learning with
+  Function Approximation* — the **policy-gradient theorem** of §19.4.
+- Ng, Harada & Russell (1999), *Policy Invariance Under Reward Transformations: Theory and Application
+  to Reward Shaping* — **potential-based shaping** and its policy-invariance (§19.8).
+- Pomerleau (1991), *Efficient Training of Artificial Neural Networks for Autonomous Navigation* /
+  Ross, Gordon & Bagnell (2011), *A Reduction of Imitation Learning …* — **behavior cloning** and its
+  distribution-shift caveat (§19.7).
+- Schulman et al. (2017), *Proximal Policy Optimization Algorithms* / Schulman et al. (2016),
+  *High-Dimensional Continuous Control Using GAE* — PPO clipped surrogate + GAE (A6.2e, forthcoming).
