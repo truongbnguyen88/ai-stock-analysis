@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import os
 import random
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -126,6 +126,8 @@ class PPOPolicy:
         _seed_torch(seed)
         self.d = int(d)
         self.n_actions = int(n_actions)
+        self.hidden = int(hidden)  # kept so a checkpoint can rebuild the exact architecture (A6.2f)
+        self.layers = int(layers)
         self.net: Any = _build_actor_critic(self.d, self.n_actions, hidden, layers)
 
     def parameters(self) -> Any:
@@ -175,6 +177,22 @@ class PPOPolicy:
             xt = torch.as_tensor(np.asarray(x, dtype=np.float32)).unsqueeze(0)
             _, v = self.net(xt)
         return float(v.squeeze(0).item())
+
+    # ---- checkpoint weight I/O (JSON-friendly; the A6.2f freeze path) --------------------------
+    def state_arrays(self) -> dict[str, Any]:
+        """Serialize the net weights to JSON-friendly nested lists (checkpoint freeze, A6.2f).
+
+        Keyed by the torch ``state_dict`` parameter names (e.g. ``"torso.0.weight"``); reload with
+        ``load_arrays`` into a policy rebuilt with the *same* ``(d, n_actions, hidden, layers)`` so
+        the shapes and key set line up exactly.
+        """
+        return {k: v.detach().cpu().numpy().tolist() for k, v in self.net.state_dict().items()}
+
+    def load_arrays(self, arrays: Mapping[str, Any]) -> None:
+        """Load net weights previously produced by ``state_arrays`` (architecture must match)."""
+        torch = _torch()
+        state = {k: torch.as_tensor(np.asarray(v, dtype=np.float32)) for k, v in arrays.items()}
+        self.net.load_state_dict(state)
 
 
 # ---- GAE + rollout collection -----------------------------------------------------------------

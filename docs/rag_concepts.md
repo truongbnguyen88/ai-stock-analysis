@@ -2524,6 +2524,51 @@ zeroes those log-probs *before* the entropy product so they contribute $0$, not 
   torso and the held-out gap check in A6.2g); too-small $\epsilon$ throttles learning while too-large
   $\epsilon$ forfeits the trust region; $c_e$ trades exploration for policy sharpness.
 
+### 19.14 Feature standardization and the freeze/load contract (A6.2f)
+
+Training a linear or MLP policy on **raw** state features is ill-conditioned: the A6.2a state mixes a
+static query block with a dynamic evidence block whose counts (`n_chunks`, `step_idx`, …) live on
+very different scales, so a single learning rate over-steps the large-magnitude features and starves
+the small ones. The fix is **z-score standardization** of each feature.
+
+**Definition.** For feature $j$ with sample mean $\mu_j$ and standard deviation $\sigma_j$ over a
+reference set of states, the standardized value is
+
+$$\tilde{s}_j = \frac{s_j - \mu_j}{\sigma_j}.$$
+
+- $\mu_j$ — the average value of feature $j$ across the reference states (its center).
+- $\sigma_j$ — the spread of feature $j$ (its scale); after dividing, every feature has unit variance.
+- **Constant-feature guard.** If a feature never varies on the fold ($\sigma_j \approx 0$) the
+  quotient is $0/0$. We set $\sigma_j := 1$, which **centers** that feature ($s_j - \mu_j$) but does
+  not rescale it — no division by (almost) zero, and a constant column contributes nothing anyway.
+
+**Where $(\mu, \sigma)$ come from.** They are fit **once**, before training, from seeded
+uniform-random rollouts over the train fold (a zero-weight softmax policy is uniform over the legal
+actions). A random policy's reachable-state coverage is a superset of any single learned policy's, so
+this is a broad, reproducible reference distribution — and it reads only states, never labels
+(the leakage line of §19 holds: standardization is label-free).
+
+**Two placements, one transform (the correctness point).** The policies hold *no* internal
+standardizer (they are scale-agnostic), so the transform is applied by a wrapper — and *where*
+matters:
+
+| Phase | Wrapper | Why there |
+|---|---|---|
+| Train | `StandardizingEnv` (env-side) | the states the policy **samples on**, the states **recorded** in the trajectory, and the states the gradient **recomputes on** are all the *same* standardized vector. Standardizing policy-side during training would record raw states but act on standardized ones, desyncing the score-function gradient $\nabla \log \pi(a \mid s)$ from the state it was evaluated at. |
+| Inference | `StandardizedPolicy` (policy-side) | the loader applies the *same* frozen $(\mu, \sigma)$ to the incoming **raw** state before `act`, so a stored policy runs directly on the raw `RagRetrievalEnv` (and a real, unlabeled deploy) with no env wrapper. |
+
+Because both wrappers hold the *same* `Standardizer`, the two paths are behaviorally identical — the
+A6.2f round-trip test asserts that greedy actions and `action_probs` from (train env-side) and
+(load policy-side) match byte-for-byte.
+
+**The freeze/load contract.** A checkpoint that stores only weights is unsafe: the weight matrix
+$W \in \mathbb{R}^{K \times (d+1)}$ indexes into a specific feature order and action order. If either
+reorders, the stored weights silently attach to the wrong feature/action — a *silent* correctness
+bug, not a crash. The checkpoint therefore also freezes the **load-bearing orderings**
+(`STATE_FEATURE_NAMES`, the ordered `action_labels`) and the loader **refuses** any drift (feature
+names, action labels, action count, weight shape, schema version). Fail loud beats silently loading
+stale weights against a new state layout.
+
 ---
 
 ## 20. References

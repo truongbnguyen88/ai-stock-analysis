@@ -159,6 +159,88 @@ def test_ppo_converges_on_toy() -> None:
     assert history[-1].mean_return > 1.5  # near the optimum (2.0)
 
 
+# ---- A6.2f: PPO checkpoint freeze/load round-trip (torch weights → JSON → identical inference) ---
+def _fake_bridge_env() -> object:
+    """A one-episode NVDA→MU RagRetrievalEnv over a ticker-scoped FakeSystem (no corpus/LLM)."""
+    from datetime import date
+
+    from stock_agent.rag.rl.action import named_action_space
+    from stock_agent.rag.rl.env import RagRetrievalEnv
+    from stock_agent.research.multistep_eval import Aspect, MultiHopQuery
+    from stock_agent.schemas.documents import DocumentChunk
+    from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChunk
+    from stock_agent.settings import Settings
+
+    def rc(cid: str, text: str, ticker: str) -> RetrievedChunk:
+        chunk = DocumentChunk(
+            chunk_id=cid, document_id=cid.rsplit(":", 1)[0], chunk_index=0, text=text,
+            ticker=ticker, document_type="10-K", source="SEC", source_url="https://sec.gov/x",
+            filing_date=date(2026, 2, 25), section="Item 1A. Risk Factors",
+        )
+        return RetrievedChunk(chunk=chunk, score=0.9)
+
+    by_ticker: dict[str | None, list[RetrievedChunk]] = {
+        "NVDA": [rc("NVDA:0", "NVIDIA relies on Micron for HBM memory.", "NVDA")],
+        "MU": [rc("MU:0", "Micron cites critical information infrastructure rules.", "MU")],
+    }
+
+    class FakeSystem:
+        name = "fake"  # satisfies the RetrievalSystem protocol's ``name`` member
+
+        def retrieve(
+            self, query: str, *, top_k: int, where: ChunkFilter | None = None
+        ) -> EvidenceSet:
+            t = where.ticker if where is not None else None
+            return EvidenceSet(query=query, chunks=list(by_ticker.get(t, []))[:top_k])
+
+        # graph arm reuses the same canned corpus (irrelevant to the serialization round-trip).
+
+    ep = MultiHopQuery(
+        question="Which memory supplier NVIDIA depends on discloses Chinese cybersecurity rules?",
+        aspects=[
+            Aspect(name="A1", spans=["Micron"]),
+            Aspect(name="A2", spans=["critical information infrastructure"]),
+        ],
+        seed="NVDA", stratum="HARD", relation="depends_on", group_id="NVDA:MU",
+    )
+    return RagRetrievalEnv(
+        [ep], settings=Settings(_env_file=None), action_space=named_action_space("pruned"),
+        retriever_factory=lambda arm: FakeSystem(),
+        alias_map={"NVDA": ["NVIDIA"], "MU": ["Micron"]},
+        graph_universe={"NVDA", "MU"}, gamma=1.0, lambda_cost=0.05,
+    )
+
+
+def test_ppo_checkpoint_round_trip() -> None:
+    from stock_agent.rag.rl.train import (
+        StandardizingEnv,
+        TrainConfig,
+        load_checkpoint,
+        train_policy,
+    )
+
+    env = _fake_bridge_env()
+    cfg = TrainConfig(algo="ppo", iterations=5, episodes_per_batch=8, hidden=16, seed=0)
+    trained = train_policy(env, [0], cfg)  # type: ignore[arg-type]
+    assert trained.weights["kind"] == "ppo_mlp" and trained.weights["hidden"] == 16
+
+    raw0 = env.reset(0)  # type: ignore[attr-defined]
+    mask = env.legal_mask()  # type: ignore[attr-defined]
+    loaded = load_checkpoint(trained.to_dict())
+    # loader-standardized policy on the RAW state == trained raw policy on the standardized state.
+    p_ref = trained.policy.action_probs(trained.standardizer.transform(raw0), mask=mask)
+    p_load = loaded.policy.action_probs(raw0, mask=mask)
+    assert np.allclose(p_load, p_ref, atol=1e-6)
+    assert loaded.algo == "ppo"
+    # greedy trajectory identical between (std-env + raw policy) and (raw env + loaded policy).
+    from stock_agent.rag.rl.reinforce import greedy_rollout
+
+    std_env = StandardizingEnv(env, trained.standardizer)  # type: ignore[arg-type]
+    g_ref = greedy_rollout(std_env, trained.policy, 0)
+    g_load = greedy_rollout(env, loaded.policy, 0)  # type: ignore[arg-type]
+    assert list(g_ref.actions) == list(g_load.actions)
+
+
 # ---- day-1 OpenMP isolation smoke test (subprocess: cannot crash this session) -------------------
 def test_torch_lightgbm_openmp_smoke() -> None:
     """torch + lightgbm import together (KMP_DUPLICATE_LIB_OK=TRUE) without the macOS OpenMP abort.

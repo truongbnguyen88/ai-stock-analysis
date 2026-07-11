@@ -329,3 +329,69 @@ def bridge_expert_rollout(
         state, reward, done, _ = env.step(action)
         rewards.append(reward)
     return _build_trajectory(states, actions, rewards, masks)
+
+
+# ---- training loops (the numpy CI-floor drivers the A6.2f checkpointer dispatches to) ------------
+def train_reinforce(
+    env: EpisodeMDP,
+    episode_indices: Sequence[int],
+    *,
+    iterations: int,
+    episodes_per_batch: int = 16,
+    lr: float = 0.1,
+    gamma: float = 1.0,
+    seed: int = 0,
+    use_baseline: bool = True,
+    policy: LinearSoftmaxPolicy | None = None,
+) -> tuple[LinearSoftmaxPolicy, list[UpdateStats]]:
+    """REINFORCE training loop: each iteration samples episodes, rolls out, takes one gradient step.
+
+    ``episode_indices`` are the training episodes (e.g. the group-split train fold). Each iteration
+    draws ``episodes_per_batch`` of them **with replacement** (seeded), collects on-policy rollouts,
+    and applies one ``reinforce_update`` (with an optional linear value baseline for variance
+    reduction). Deterministic given ``seed`` (policy init + rollout/sampling RNG derive from it).
+    The policy sees whatever states ``env`` yields — the caller standardizes via a wrapper env.
+    """
+    idxs = [int(i) for i in episode_indices]
+    if not idxs:
+        raise ValueError("train_reinforce needs at least one episode index")
+    if policy is None:
+        d = int(np.asarray(env.reset(idxs[0])).shape[0])
+        policy = LinearSoftmaxPolicy(d, env.n_actions, seed=seed)
+    baseline = LinearValueBaseline(policy.d) if use_baseline else None
+    rng = np.random.default_rng(seed)
+    history: list[UpdateStats] = []
+    for _ in range(iterations):
+        chosen = [idxs[i] for i in rng.integers(0, len(idxs), size=episodes_per_batch)]
+        trajectories = [rollout(env, policy, ci, rng=rng) for ci in chosen]
+        stats = reinforce_update(policy, trajectories, gamma=gamma, lr=lr, baseline=baseline)
+        history.append(stats)
+    return policy, history
+
+
+def train_bc(
+    env: BridgeMDP,
+    episode_indices: Sequence[int],
+    *,
+    epochs: int = 50,
+    lr: float = 0.5,
+    seed: int = 0,
+    prod_arm: str = "hybrid",
+    policy: LinearSoftmaxPolicy | None = None,
+) -> tuple[LinearSoftmaxPolicy, list[float]]:
+    """Behavior-cloning loop: fit the policy to the scripted A4/A5 expert over the train episodes.
+
+    Builds one deterministic expert demo per episode (``bridge_expert_rollout``: self-search, bridge
+    discovered entities, then STOP), then full-batch cross-entropy descent for ``epochs``.
+    Returns the per-epoch cross-entropy history (monotone non-increasing for a small ``lr``). A weak
+    teacher (the expert never varies the config), so this is a warm-start / sanity baseline.
+    """
+    idxs = [int(i) for i in episode_indices]
+    if not idxs:
+        raise ValueError("train_bc needs at least one episode index")
+    if policy is None:
+        d = int(np.asarray(env.reset(idxs[0])).shape[0])
+        policy = LinearSoftmaxPolicy(d, env.n_actions, seed=seed)
+    demos = [bridge_expert_rollout(env, ci, prod_arm=prod_arm) for ci in idxs]
+    history = behavior_clone(policy, demos, lr=lr, epochs=epochs)
+    return policy, history

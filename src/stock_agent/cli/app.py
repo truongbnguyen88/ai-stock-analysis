@@ -71,6 +71,9 @@ from stock_agent.rag.read_path import (
     build_named_system,
     build_retrieval_system,
 )
+from stock_agent.rag.rl.action import named_action_space
+from stock_agent.rag.rl.env import RagRetrievalEnv
+from stock_agent.rag.rl.train import TrainConfig, save_checkpoint, train_policy
 from stock_agent.rag.sparse_store import InMemoryBM25Store, build_sparse_store
 from stock_agent.rag.status import corpus_status
 from stock_agent.rag.vector_store import InMemoryVectorStore, build_vector_store
@@ -1810,3 +1813,110 @@ def rag_gated_eval(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report.to_json_dict(), indent=2), encoding="utf-8")
     typer.echo(f"\nWrote verdict to {out}")
+
+
+@rag_app.command("rl-train")
+def rag_rl_train(
+    queries: Annotated[
+        Path,
+        typer.Option("--queries", "-q", help="Train-fold benchmark JSON (list of MultiHopQuery)"),
+    ] = Path("configs/rag_eval_multistep_generated.train.json"),
+    algo: Annotated[
+        str, typer.Option("--algo", help="Learner: bc | reinforce | ppo (ppo needs the [rl] extra)")
+    ] = "reinforce",
+    action_space: Annotated[
+        str, typer.Option("--action-space", help="Action space preset: pruned (7) | full (16)")
+    ] = "pruned",
+    seed: Annotated[int, typer.Option("--seed", help="Master RNG seed (init + rollouts)")] = 0,
+    iterations: Annotated[
+        int, typer.Option("--iterations", help="REINFORCE/PPO iterations (bc uses its own epochs)")
+    ] = 200,
+    lr: Annotated[
+        float | None,
+        typer.Option("--lr", help="Learning rate override (defaults per algo: reinforce/bc/ppo)"),
+    ] = None,
+    gamma: Annotated[float, typer.Option("--gamma", help="Discount γ (1.0 = exact cover)")] = 1.0,
+    lambda_cost: Annotated[
+        float | None,
+        typer.Option("--lambda-cost", help="Cost weight λ_c (default settings.reward_lambda_cost)"),
+    ] = None,
+    test_frac: Annotated[
+        float,
+        typer.Option("--test-frac", help="If >0, group-split and train on the train side (safety)"),
+    ] = 0.0,
+    graph_universe: Annotated[
+        Path, typer.Option("--graph-universe", help="Graph universe file (in_graph_universe flag)")
+    ] = Path("configs/graph_universe.txt"),
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Checkpoint dir (default outputs/experiments/<run_id>)"),
+    ] = None,
+) -> None:
+    """Train a retrieval-RL policy on the group-split train fold and freeze it (A6.2f, local, $0).
+
+    Builds the deterministic retrieval MDP over the labeled episodes (real $0 retrieval — needs the
+    ingested corpus + A5 graph, like `rag policy-eval`), fits a feature standardizer, trains
+    `--algo`, and writes a self-describing `policy.json` (weights + STATE_FEATURE_NAMES order +
+    action-space name + standardizer + config + seed) the A6.2g eval / a deploy can reload. No LLM.
+    """
+    from datetime import UTC, datetime
+
+    settings = get_settings()
+    configure_logging(settings)
+    if algo not in ("bc", "reinforce", "ppo"):
+        typer.echo("--algo must be one of bc | reinforce | ppo.")
+        raise typer.Exit(code=1)
+    if action_space not in ("pruned", "full"):
+        typer.echo("--action-space must be 'pruned' or 'full'.")
+        raise typer.Exit(code=1)
+    if not queries.exists():
+        typer.echo(f"Benchmark not found: {queries} (generate via `rag gen-multistep`).")
+        raise typer.Exit(code=1)
+
+    labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    if test_frac > 0.0:  # optional internal group-split guard when given the FULL catalog
+        labeled, _ = split_multihop(labeled, test_frac=test_frac, seed=seed)
+    if not labeled:
+        typer.echo("No training episodes after loading/splitting.")
+        raise typer.Exit(code=1)
+
+    alias_map = load_alias_map()
+    universe = load_universe(graph_universe) if graph_universe.exists() else None
+    env = RagRetrievalEnv(
+        labeled,
+        settings=settings,
+        action_space=named_action_space(action_space),
+        alias_map=alias_map,
+        graph_universe=universe,
+        gamma=gamma,
+        lambda_cost=lambda_cost,
+    )
+
+    # Route a single --lr override to the algo-appropriate field (each optimizer has its own scale).
+    lr_field = {"reinforce": "lr", "bc": "bc_lr", "ppo": "ppo_lr"}[algo]
+    overrides: dict[str, float] = {lr_field: lr} if lr is not None else {}
+    config = TrainConfig(
+        algo=algo,
+        action_space=action_space,
+        seed=seed,
+        gamma=gamma,
+        lambda_cost=lambda_cost,
+        iterations=iterations,
+        queries_path=str(queries),
+        test_frac=test_frac,
+        **overrides,  # type: ignore[arg-type]
+    )
+    trained = train_policy(env, list(range(len(labeled))), config)
+
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{ts}_rl-{algo}-{action_space}-s{seed}"
+    checkpoint = (out_dir or Path("outputs/experiments") / run_id) / "policy.json"
+    save_checkpoint(trained, checkpoint)
+
+    final = trained.history[-1] if trained.history else float("nan")
+    typer.echo(
+        f"Trained {algo} ({action_space}, {trained.n_actions} actions) on "
+        f"{config.n_train} episodes × {iterations if algo != 'bc' else config.bc_epochs} "
+        f"{'epochs' if algo == 'bc' else 'iterations'}; "
+        f"final {trained.history_metric}={final:.4f}\nWrote checkpoint to {checkpoint}"
+    )

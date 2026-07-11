@@ -13,6 +13,7 @@ Modules (built slice-by-slice, default-OFF, CI torch-free):
 - ``policy``   (A6.2d) — numpy linear-softmax policy + value baseline.
 - ``reinforce``(A6.2d) — rollout collection + REINFORCE + behavior-cloning warm-start.
 - ``ppo``      (A6.2e) — torch MLP actor-critic (isolated ``[rl]`` extra; lazy import).
+- ``train``    (A6.2f) — standardizer + training driver + checkpoint freeze/load.
 """
 
 from __future__ import annotations

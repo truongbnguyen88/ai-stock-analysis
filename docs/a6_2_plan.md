@@ -315,7 +315,29 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   §19.11–§19.13 written (GAE, PPO clipped surrogate, REINFORCE-vs-PPO + isolation; Schulman 2016/2017
   refs; math-linter clean). ruff+mypy(338) clean; full torch-free suite green (exit 0); 9 PPO tests
   pass in isolation. Committed on `feat/adv-rag-a6.2-rl`.
-- [ ] A6.2f — train CLI + checkpointing
+- [x] **A6.2f — train CLI + checkpointing** ✅ (2026-07-11) — `rag/rl/train.py` +
+  `rag rl-train` CLI + `tests/unit/test_rl_train.py` (15 CI tests) + 1 torch-gated PPO round-trip
+  in `test_rl_ppo.py`. Shipped: `Standardizer` (z-score `(x−μ)/σ` with **constant-feature guard**
+  σ:=1 — never divides by ~0), `fit_state_standardizer` (seeded uniform-random rollouts over the
+  train fold sample the reachable state manifold, label-free), the **two placements** that keep the
+  policy scale-agnostic — `StandardizingEnv` (train-time, env-side: the states the policy *samples
+  on* == *recorded in the trajectory* == *the gradient recomputes on*, all standardized ⇒
+  gradient-consistent) and `StandardizedPolicy` (inference-time, policy-side: the loader applies the
+  frozen (μ,σ) before `act`, so a stored policy runs on the **raw** env / a real deploy). Training
+  loops `train_reinforce` / `train_bc` added to `reinforce.py` (numpy, symmetric with `train_ppo`);
+  `PPOPolicy` gained `hidden`/`layers` attrs + `state_arrays`/`load_arrays` (JSON weight I/O).
+  `train_policy` dispatches `{bc,reinforce,ppo}` (ppo lazy-imports torch ⇒ **train.py + the CLI stay
+  torch-free at import**, CI floor preserved — verified). Checkpoint (`policy.json`) freezes
+  `{algo, action_space name, n_discovered_slots, d, n_actions, STATE_FEATURE_NAMES, action_labels,
+  standardizer(μ,σ), seed, full config, history, weights}`; `load_checkpoint` enforces **drift
+  guards** (version + feature-name + action-label + n_actions + weight-shape mismatch → raise) since
+  a reorder silently remaps weights. Tests: standardizer + constant-feature guard, wrapper
+  pass-through, `StandardizedPolicy` ≡ raw-on-transformed, **REINFORCE learns the bridge** (greedy
+  hybrid@self→bridge, return>0.9), **BC clones the scripted expert** ([hybrid@self, hybrid@disc0,
+  STOP]), determinism, and the **load-bearing round-trip**: std-env+raw-policy ≡ raw-env+loaded
+  `StandardizedPolicy` (greedy actions + action_probs identical), from both an in-memory dict and a
+  written file; PPO round-trip torch-gated. ruff(`src tests`)+mypy(340) clean; 1133 torch-free pass
+  (+3 skip), 10 PPO tests pass in isolation. Concepts §19.14. Committed on `feat/adv-rag-a6.2-rl`.
 - [ ] A6.2g — held-out eval + verdict + docs
 
 ### Resume notes (for the next session)
@@ -354,13 +376,26 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   test file is collect-ignored unless `RUN_RL_TORCH_TESTS=1` (torch+lightgbm OpenMP clash). GAE
   bootstraps `V(s_T)=0` because every episode terminates. GRPO rung deferred (not needed — PPO
   converges). Concepts §19.11–§19.13 cover the math.
-- **Next = A6.2f** (`rag/rl/train.py` + `rag rl-train` CLI): training driver + checkpointing. Freeze
-  `{policy weights, STATE_FEATURE_NAMES order, action space name, standardizer (mean,std), config,
-  seed, algo}` → `outputs/experiments/<run_id>/policy.json`. The policy is **scale-agnostic** (no
-  internal standardizer — A6.2d note), so the frozen `(mean,std)` is applied by the *loader* before
-  `act`. Support `--algo {bc,reinforce,ppo}`, `--action-space {pruned,full}`, group-split train fold.
-  Mirror `backtesting/` experiment discipline. Then A6.2g held-out eval vs 4 baselines + sim-to-real
-  gap + verdict + the A-N docs closeout (mark A6.2 ✅ in TODO, notes §A6.2, validations entry).
+- **On A6.2f:** the standardizer is fit **once** from seeded uniform-random rollouts over the train
+  fold (`fit_state_standardizer`) — a broad, reproducible sample of the reachable manifold; constant
+  features get σ:=1 (center-only). The policy is scale-agnostic, so standardization is applied in
+  **two places** with the *same* frozen `(μ,σ)`: `StandardizingEnv` at train time (env-side — keeps
+  the sampled/recorded/gradient states identical) and `StandardizedPolicy` at inference (policy-side
+  — the loader transforms the raw state before `act`, so the checkpoint runs on the raw
+  `RagRetrievalEnv` and a real deploy with no wrapper). The round-trip test proves the two paths are
+  byte-equivalent. The checkpoint pins the **load-bearing orderings** (`STATE_FEATURE_NAMES`,
+  `action_labels`); `load_checkpoint` rejects any drift because a reorder silently remaps weights.
+  `train.py` + the CLI import torch **only** in the ppo branch (lazy) — CI floor stays torch-free.
+  The training loops live with their learner (`train_reinforce`/`train_bc` in `reinforce.py`,
+  `train_ppo` in `ppo.py`); `train.py` is the standardizer + dispatch + checkpoint layer.
+- **Next = A6.2g** (`rag/rl/rleval.py` + `rag rl-eval`): held-out group-split eval of the frozen
+  policy (`load_checkpoint` → `StandardizedPolicy` on the **raw** env) **vs 4 baselines** — best
+  fixed `FixedPolicy`, A6.1 LinUCB, the A4 ReAct loop, random-action — with mean return / coverage /
+  cost, train-vs-held-out gap, seed-averaged, reward-hacking sentinel, group-bootstrap CI (reuse
+  `bootstrap_delta_stats`). Then the **paid** sim-to-real gap run (~`$2–3`, single seed, ~12–24
+  HARD/MED held-out Q) as a measured number, the **verdict** → `validations_results.md`, and the A-N
+  closeout: mark **A6.2 ✅** in `ADVANCED_RAG_TODO.md §A6.2`, consolidated build journal →
+  `rag_implementation_notes.md §A6.2`, and any remaining concepts.
 - **Invariants to keep:** state stays label-free; group-wise `split_multihop` only; `TransitionCache`
   in the env (§3a) so PPO rollouts don't re-hit the corpus; CI torch-free (numpy REINFORCE is the
   floor; PPO in the `[rl]` extra, lazy import, day-1 segfault smoke test).
