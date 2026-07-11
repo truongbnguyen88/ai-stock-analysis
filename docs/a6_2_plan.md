@@ -293,7 +293,28 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   reduces cross-entropy** (monotone, greedy matches expert), linear baseline recovers a linear
   target, scripted expert emits `[hybrid@self, hybrid@disc0, STOP]` with coverage 1.0, `replay`
   reproduces + stops early on STOP. ruff+mypy clean, 11 pass. Committed on `feat/adv-rag-a6.2-rl`.
-- [ ] A6.2e — PPO (torch, `[rl]`)
+- [x] **A6.2e — PPO (torch, `[rl]` extra)** ✅ (2026-07-11) — `rag/rl/ppo.py` +
+  `tests/unit/test_rl_ppo.py` (9 tests, torch-gated). Shipped: `PPOPolicy` (shared-torso MLP
+  actor-critic; **same numpy inference surface as `LinearSoftmaxPolicy`** — `act`/`greedy_action`/
+  `action_probs`/`log_prob`/`value`, masked-softmax identical, seeded-deterministic, no internal
+  RNG), `compute_gae` (GAE(λ) backward recursion, terminal bootstrap 0), `collect_ppo_batch`
+  (records `V(s)` + `log π_old(a|s)` per step for GAE + the ratio), `clipped_surrogate`
+  (`min(ρÂ, clip(ρ,1−ε,1+ε)Â)`, unit-testable), `ppo_update` (K-epoch minibatch `−L^CLIP` + `c_v`·value
+  MSE − `c_e`·entropy; adv-normalized; NaN-safe masked entropy), `train_ppo` (collect→GAE→update loop,
+  one persistent Adam, deterministic). **torch isolation:** `[rl]` extra added to `pyproject.toml`;
+  **lazy `import torch`** inside `ppo.py` only (module import stays torch-free ⇒ CI gate torch-free);
+  `KMP_DUPLICATE_LIB_OK=TRUE` set before the first import; mypy override `disallow_subclassing_any`
+  extended to `rag.rl.ppo`. **Backend-agnostic seam:** added `RolloutPolicy` Protocol to
+  `reinforce.py` + widened `rollout`/`greedy_rollout` typing (both policies + the A6.2g harness reuse
+  the vetted rollout helpers). **conftest:** `test_rl_ppo.py` collect-ignored unless
+  `RUN_RL_TORCH_TESTS=1` (torch+lightgbm OpenMP clash — same guard as `test_sequence.py`). Tests:
+  four-quadrant clip goldens (1.2/0.5/−1.5/−0.8), GAE λ=0/λ=1 goldens, masking (0 on illegal + never
+  sampled), seeded determinism, backend-agnostic rollout reuse, **PPO converges on the shared 2-step
+  toy** (greedy A@0/B@1, mean_return=2.0 across seeds 0–3), **day-1 OpenMP segfault smoke test**
+  (subprocess co-imports torch+lightgbm with KMP set → exit 0, cannot crash the session). Concepts
+  §19.11–§19.13 written (GAE, PPO clipped surrogate, REINFORCE-vs-PPO + isolation; Schulman 2016/2017
+  refs; math-linter clean). ruff+mypy(338) clean; full torch-free suite green (exit 0); 9 PPO tests
+  pass in isolation. Committed on `feat/adv-rag-a6.2-rl`.
 - [ ] A6.2f — train CLI + checkpointing
 - [ ] A6.2g — held-out eval + verdict + docs
 
@@ -325,12 +346,21 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   share the *same* score-function update — BC just pins the "advantage" to +1 for the expert action.
   The scripted expert always targets `disc0` (the first currently-discovered entity), which is
   correct because each bridge consumes that entity and the discovered list re-points.
-- **Next = A6.2e** (`rag/rl/ppo.py`): torch MLP actor-critic, clipped surrogate `L^CLIP`, GAE(λ),
-  value head + entropy bonus; **lazy `import torch`** inside the module; add the `[rl]` extra to
-  `pyproject.toml`; `KMP_DUPLICATE_LIB_OK=TRUE`; **day-1 OpenMP segfault smoke test** (import torch +
-  lightgbm together). Same `act`/`action_probs` surface as the numpy policy so the A6.2g eval harness
-  is backend-agnostic. Tests run only when torch is present (CI stays torch-free; numpy REINFORCE is
-  the floor). Optional GRPO rung (group-relative advantage, no critic) for the tiny-data regime.
+- **On A6.2e:** PPO shipped (`rag/rl/ppo.py`). `PPOPolicy` reproduces `LinearSoftmaxPolicy`'s numpy
+  inference surface exactly (masked-softmax copied, not shared — self-contained to avoid destabilizing
+  A6.2d), so `reinforce.rollout`/`greedy_rollout` (now typed to the new `RolloutPolicy` Protocol) and
+  the A6.2g harness are backend-agnostic. torch is lazy-imported inside `ppo.py` (module import stays
+  torch-free ⇒ CI floor is numpy REINFORCE); `KMP_DUPLICATE_LIB_OK=TRUE` set before import; the PPO
+  test file is collect-ignored unless `RUN_RL_TORCH_TESTS=1` (torch+lightgbm OpenMP clash). GAE
+  bootstraps `V(s_T)=0` because every episode terminates. GRPO rung deferred (not needed — PPO
+  converges). Concepts §19.11–§19.13 cover the math.
+- **Next = A6.2f** (`rag/rl/train.py` + `rag rl-train` CLI): training driver + checkpointing. Freeze
+  `{policy weights, STATE_FEATURE_NAMES order, action space name, standardizer (mean,std), config,
+  seed, algo}` → `outputs/experiments/<run_id>/policy.json`. The policy is **scale-agnostic** (no
+  internal standardizer — A6.2d note), so the frozen `(mean,std)` is applied by the *loader* before
+  `act`. Support `--algo {bc,reinforce,ppo}`, `--action-space {pruned,full}`, group-split train fold.
+  Mirror `backtesting/` experiment discipline. Then A6.2g held-out eval vs 4 baselines + sim-to-real
+  gap + verdict + the A-N docs closeout (mark A6.2 ✅ in TODO, notes §A6.2, validations entry).
 - **Invariants to keep:** state stays label-free; group-wise `split_multihop` only; `TransitionCache`
   in the env (§3a) so PPO rollouts don't re-hit the corpus; CI torch-free (numpy REINFORCE is the
   floor; PPO in the `[rl]` extra, lazy import, day-1 segfault smoke test).

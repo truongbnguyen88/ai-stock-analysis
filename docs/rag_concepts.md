@@ -2428,9 +2428,101 @@ reward-hacking sentinel test).
 - **Determinism & the leakage line.** The env holds no RNG (only the policy samples, seeded), and the
   *state* is label-free — the gradient never sees gold aspects. Labels enter **only** through $\Phi$
   inside the reward, simulator-side. This is what lets the frozen policy deploy on unlabeled queries.
-- **Next (A6.2e/g).** PPO clipped surrogate $L^{\mathrm{CLIP}}$, GAE($\lambda$), and entropy
-  regularization extend this section; held-out eval vs baselines, the sim-to-real gap, and the verdict
-  close A6.2.
+- **Next (A6.2g).** §19.11–§19.13 add the actor-critic upgrade (PPO — critic, GAE, clipped surrogate,
+  entropy); the held-out eval vs baselines, the sim-to-real gap, and the verdict close A6.2.
+
+### 19.11 The critic and Generalized Advantage Estimation (GAE)
+
+REINFORCE's advantage $A_t = G_t - b(s_t)$ (§19.6) uses the full Monte-Carlo return $G_t$: unbiased but
+high variance. An **actor-critic** learns a value function $V(s) \approx \mathbb{E}[G_t \mid s_t = s]$
+(the "critic") and uses it both as the baseline and to **bootstrap**. The one-step temporal-difference
+residual measures how much better step $t$ turned out than the critic predicted:
+
+$$\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$$
+
+**GAE** (Schulman et al. 2016) is the exponentially-weighted sum of these residuals, computed by a
+backward recursion:
+
+$$\hat{A}_t = \sum_{l \ge 0} (\gamma \lambda)^l \delta_{t+l} = \delta_t + \gamma \lambda \hat{A}_{t+1}$$
+
+The knob $\lambda \in [0, 1]$ trades bias for variance. At $\lambda = 0$ it is the one-step TD advantage
+$\hat{A}_t = \delta_t$ (low variance, but biased by the critic's error); at $\lambda = 1$ it collapses to
+the Monte-Carlo advantage $\hat{A}_t = G_t - V(s_t)$ (unbiased, high variance). The target used to fit
+the critic is the **TD($\lambda$) return** $\hat{R}_t = \hat{A}_t + V(s_t)$. Every episode here
+**terminates** (STOP or the horizon $T$), so the bootstrap past the last step is $V(s_T) = 0$.
+`compute_gae` is exactly this recursion.
+
+**Worked micro (the exact test values).** Rewards $(r_0, r_1) = (1, 0)$, critic $V = (0.5, 0.2)$,
+$\gamma = 1$, terminal bootstrap $0$:
+
+- $\lambda = 1$: $\hat{A}_1 = \delta_1 = 0 + 0 - 0.2 = -0.2$; $\hat{A}_0 = \delta_0 + \hat{A}_1
+  = (1 + 0.2 - 0.5) + (-0.2) = 0.5$ — which equals $G_t - V(s_t)$ (reward-to-go $(1, 0)$ minus $V$). Value
+  targets $\hat{R}_t = \hat{A}_t + V_t = (1.0, 0.0)$. → `test_compute_gae_lambda_one_is_monte_carlo`.
+- $\lambda = 0$: $\hat{A}_t = \delta_t = (0.7, -0.2)$. → `test_compute_gae_lambda_zero_is_one_step_td`.
+
+### 19.12 The PPO clipped surrogate — trust-region-free sample reuse
+
+REINFORCE is strictly on-policy: each batch buys exactly one gradient step, after which the samples are
+stale (drawn from a policy that has moved). **PPO** (Schulman et al. 2017) reuses each batch for several
+epochs by optimizing a surrogate written in the **importance ratio**
+
+$$\rho_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\mathrm{old}}}(a_t \mid s_t)}$$
+
+where $\pi_{\theta_{\mathrm{old}}}$ is the policy that *collected* the batch (so $\rho_t = 1$ at the start
+of the first epoch, and drifts as $\theta$ moves). The bare surrogate $\rho_t \hat{A}_t$ is the
+off-policy-corrected policy-gradient objective, but maximizing it directly lets a handful of samples push
+$\rho_t$ arbitrarily far and wreck the policy. PPO **clips** the ratio and takes the pessimistic branch:
+
+$$L^{\mathrm{CLIP}}(\theta) = \mathbb{E}_t\left[ \min\left( \rho_t \hat{A}_t, \mathrm{clip}(\rho_t, 1-\epsilon, 1+\epsilon) \hat{A}_t \right) \right]$$
+
+The $\min$ makes the surrogate a **pessimistic lower bound** on $\rho_t \hat{A}_t$. Two cases:
+
+- $\hat{A}_t > 0$ (action better than average from $s_t$): the objective rises with $\rho_t$, but the clip
+  caps it at $\rho_t = 1+\epsilon$ — no further reward for pushing the probability up.
+- $\hat{A}_t < 0$ (worse than average): the objective rises as $\rho_t$ falls, capped at $\rho_t = 1-\epsilon$.
+
+Either way the gradient vanishes once $\rho_t$ leaves $[1-\epsilon, 1+\epsilon]$ in the improving
+direction, so several ascent epochs stay inside an implicit trust region with no KL penalty or
+second-order step.
+
+**Worked micro (four quadrants, the exact test values).** $\epsilon = 0.2$, band $[0.8, 1.2]$:
+
+| $\hat{A}$ | $\rho$ | $\rho\hat{A}$ | $\mathrm{clip}(\rho)\hat{A}$ | $\min$ | clipped? |
+|---|---|---|---|---|---|
+| $+1$ | $1.5$ | $1.5$ | $1.2$ | $1.2$ | yes (gain capped) |
+| $+1$ | $0.5$ | $0.5$ | $0.8$ | $0.5$ | no |
+| $-1$ | $1.5$ | $-1.5$ | $-1.2$ | $-1.5$ | no (penalty kept) |
+| $-1$ | $0.5$ | $-0.5$ | $-0.8$ | $-0.8$ | yes |
+
+→ `test_clipped_surrogate_four_quadrants`. The full minimized loss adds a value-regression term and an
+entropy bonus:
+
+$$L(\theta) = -L^{\mathrm{CLIP}}(\theta) + c_v \mathbb{E}_t\left[ (V_\theta(s_t) - \hat{R}_t)^2 \right] - c_e \mathbb{E}_t\left[ H[\pi_\theta(\cdot \mid s_t)] \right]$$
+
+with value target $\hat{R}_t = \hat{A}_t + V(s_t)$, coefficients $c_v$ (value) and $c_e$ (entropy), and
+$H$ the policy entropy (the bonus keeps exploration alive early). Advantages are batch-normalized before
+the update for a stable step size; masked (illegal) actions get a $-\infty$ logit, and `ppo_update`
+zeroes those log-probs *before* the entropy product so they contribute $0$, not $0 \cdot (-\infty) =$ NaN.
+
+### 19.13 REINFORCE vs PPO — what it buys, determinism, and torch isolation
+
+- **What PPO buys.** The critic + GAE cut variance below REINFORCE's Monte-Carlo advantage, and the
+  clipped surrogate reuses each on-policy batch for several epochs (REINFORCE discards it after one
+  step). On the 2-step toy both reach the optimum (return $2$); PPO's edge is meant to show on the
+  larger, noisier real benchmark. A rigorous *negative* (PPO $\approx$ the fixed A4 loop + router)
+  remains a pre-registered acceptable outcome.
+- **Backend-agnostic surface.** `PPOPolicy` exposes the *same* numpy `act` / `greedy_action` /
+  `action_probs` / `log_prob` as the A6.2d `LinearSoftmaxPolicy` — both satisfy the `RolloutPolicy`
+  structural type, so the rollout helpers and the A6.2g eval harness drive either backend unchanged.
+- **Determinism.** The env holds no RNG; the policy samples from a caller-supplied seeded `Generator`;
+  torch is seeded with `use_deterministic_algorithms(True)` on a single thread — reruns are bit-stable.
+- **torch isolation.** torch lives in the optional `[rl]` extra, lazy-imported inside `ppo.py` only, so
+  the CI gate stays torch-free (numpy REINFORCE is the floor). On macOS torch and lightgbm each ship
+  their own OpenMP runtime and abort if co-loaded; setting `KMP_DUPLICATE_LIB_OK=TRUE` before the first
+  `import torch` lets them coexist, verified by a subprocess smoke test.
+- **PPO-specific failure modes.** On ~149 episodes the critic can overfit (mitigated by a small shared
+  torso and the held-out gap check in A6.2g); too-small $\epsilon$ throttles learning while too-large
+  $\epsilon$ forfeits the trust region; $c_e$ trades exploration for policy sharpness.
 
 ---
 
@@ -2487,5 +2579,7 @@ reward-hacking sentinel test).
 - Pomerleau (1991), *Efficient Training of Artificial Neural Networks for Autonomous Navigation* /
   Ross, Gordon & Bagnell (2011), *A Reduction of Imitation Learning …* — **behavior cloning** and its
   distribution-shift caveat (§19.7).
-- Schulman et al. (2017), *Proximal Policy Optimization Algorithms* / Schulman et al. (2016),
-  *High-Dimensional Continuous Control Using GAE* — PPO clipped surrogate + GAE (A6.2e, forthcoming).
+- Schulman et al. (2017), *Proximal Policy Optimization Algorithms* — the clipped surrogate
+  $L^{\mathrm{CLIP}}$ of §19.12.
+- Schulman et al. (2016), *High-Dimensional Continuous Control Using Generalized Advantage Estimation* —
+  the GAE($\lambda$) advantage of §19.11.

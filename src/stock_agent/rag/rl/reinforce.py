@@ -58,6 +58,22 @@ class BridgeMDP(EpisodeMDP, Protocol):
     def action_space(self) -> Sequence[Action]: ...
 
 
+class RolloutPolicy(Protocol):
+    """The (numpy) inference surface the rollout helpers need — sample + greedy over legal actions.
+
+    The **backend-agnostic seam**: satisfied structurally by both the numpy ``LinearSoftmaxPolicy``
+    (A6.2d) and the torch ``PPOPolicy`` (A6.2e), so ``rollout``/``greedy_rollout`` (and the A6.2g
+    eval harness) evaluate either policy without knowing its backend. Deliberately excludes the
+    numpy-only training surface (``grad_log_prob``/``W``), which ``reinforce_update``/
+    ``behavior_clone`` still require of a concrete ``LinearSoftmaxPolicy``.
+    """
+
+    def act(
+        self, x: np.ndarray, *, rng: np.random.Generator, mask: np.ndarray | None = ...
+    ) -> tuple[int, float]: ...
+    def greedy_action(self, x: np.ndarray, *, mask: np.ndarray | None = ...) -> int: ...
+
+
 @dataclass(frozen=True)
 class Trajectory:
     """One rolled-out episode: the state at each decision, the action taken, reward, and legal mask.
@@ -99,7 +115,7 @@ def _build_trajectory(
 
 # ---- rollout collection -----------------------------------------------------------
 def rollout(
-    env: EpisodeMDP, policy: LinearSoftmaxPolicy, episode_idx: int, *, rng: np.random.Generator
+    env: EpisodeMDP, policy: RolloutPolicy, episode_idx: int, *, rng: np.random.Generator
 ) -> Trajectory:
     """Sample one on-policy episode: act by ``π`` under the env's legal mask until ``done``."""
     state = env.reset(episode_idx)
@@ -120,7 +136,7 @@ def rollout(
 
 
 def greedy_rollout(
-    env: EpisodeMDP, policy: LinearSoftmaxPolicy, episode_idx: int
+    env: EpisodeMDP, policy: RolloutPolicy, episode_idx: int
 ) -> Trajectory:
     """Deterministic (argmax) rollout — the policy evaluated without exploration noise."""
     state = env.reset(episode_idx)
