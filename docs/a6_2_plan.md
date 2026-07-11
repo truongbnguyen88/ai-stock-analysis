@@ -276,7 +276,23 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   [2,1,2,2,1,0,1]`), telescoping identity, cache hit/miss + memoize, reward-hacking sentinel (<0),
   slot masking, **env-level leakage guard** (state label-independent, reward not), lifecycle guards.
   ruff+mypy clean, 9 pass. Committed on `feat/adv-rag-a6.2-rl`.
-- [ ] A6.2d — REINFORCE (numpy) + BC
+- [x] **A6.2d — REINFORCE (numpy) + BC** ✅ (2026-07-10) — `rag/rl/{policy.py,reinforce.py}` +
+  `tests/unit/test_rl_policy.py` (11 tests). Shipped: `LinearSoftmaxPolicy` (augmented `W ∈
+  R^{K×(d+1)}` with bias folded in; masked softmax with `−inf` on illegal actions; closed-form
+  `grad_log_prob = outer(onehot(a) − π, x̃)`; `act`/`greedy_action`/`log_prob`/`action_probs`; holds
+  no RNG — `act` takes an explicit `Generator`), `LinearValueBaseline` (ridge least-squares state
+  baseline, bias unregularized), and the training ops: `rollout`/`greedy_rollout`/`replay`,
+  `discounted_returns_to_go` (reward-to-go), `reinforce_update` (MC policy gradient with optional
+  baseline — advantage uses the *pre-fit* baseline, refits *after* to keep the batch gradient
+  unbiased), `behavior_clone` (full-batch CE descent = log-likelihood ascent), and
+  `bridge_expert_rollout` (the A4 self-search + A5 entity-bridge heuristic scripted into the action
+  space: self → bridge `disc0` while legal → STOP). **CI floor — pure numpy, no torch.** Tests:
+  finite-diff grad check (masked + unmasked, masked rows = 0), masked-softmax correctness + sampling
+  never picks illegal, seeded init/rollout determinism, **REINFORCE converges** on a 2-step toy with
+  a step-dependent optimum (greedy → A@step0, B@step1; mean return > 1.5), reward-to-go golden, **BC
+  reduces cross-entropy** (monotone, greedy matches expert), linear baseline recovers a linear
+  target, scripted expert emits `[hybrid@self, hybrid@disc0, STOP]` with coverage 1.0, `replay`
+  reproduces + stops early on STOP. ruff+mypy clean, 11 pass. Committed on `feat/adv-rag-a6.2-rl`.
 - [ ] A6.2e — PPO (torch, `[rl]`)
 - [ ] A6.2f — train CLI + checkpointing
 - [ ] A6.2g — held-out eval + verdict + docs
@@ -300,12 +316,21 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   anti-loop key. `coverage`/`_dedup_union` are **lazy-imported** from `research/` (cycle guard, same
   as `rag.reward`). `gamma` defaults to 1.0 (exact terminal-coverage objective); training may set
   `<1` for credit front-loading. `StepInfo` is telemetry-only (never in the learner's math).
-- **Next = A6.2d** (`rag/rl/policy.py` + `reinforce.py`): numpy `LinearSoftmaxPolicy` (logits `Wx`,
-  softmax, `act`/`log_prob`/analytic `grad_log_prob`, **action masking** via `env.legal_mask()` →
-  `-inf` logit; optional linear value baseline) + `rollout`/`reinforce_update`/`behavior_clone`. BC
-  expert = the A4 loop replayed into the action space (self-search=`(prod-arm, self)`, bridge=`(arm,
-  disc_j)`, terminal `STOP`). Tests: finite-diff grad check, REINFORCE converges on a 2-arm/2-step
-  toy, BC reduces cross-entropy, seeded determinism, masking respected. **CI floor** (numpy, no torch).
+- **On A6.2d:** `policy.py` folds the per-action bias into the weight matrix (`x̃ = [s; 1]`), so
+  there is one parameter matrix `W` and `grad_log_prob` is a single `(K, d+1)` array — grad checks and
+  checkpoints stay simple. The policy is **scale-agnostic** (no internal standardizer) — feature
+  standardization is the trainer's job (frozen artifact in A6.2f). REINFORCE uses **reward-to-go**
+  `G_t` (lower variance than full return); the linear baseline is subtracted with its *pre-fit*
+  params, then refit on the batch (keeps the current step's gradient unbiased). BC and REINFORCE
+  share the *same* score-function update — BC just pins the "advantage" to +1 for the expert action.
+  The scripted expert always targets `disc0` (the first currently-discovered entity), which is
+  correct because each bridge consumes that entity and the discovered list re-points.
+- **Next = A6.2e** (`rag/rl/ppo.py`): torch MLP actor-critic, clipped surrogate `L^CLIP`, GAE(λ),
+  value head + entropy bonus; **lazy `import torch`** inside the module; add the `[rl]` extra to
+  `pyproject.toml`; `KMP_DUPLICATE_LIB_OK=TRUE`; **day-1 OpenMP segfault smoke test** (import torch +
+  lightgbm together). Same `act`/`action_probs` surface as the numpy policy so the A6.2g eval harness
+  is backend-agnostic. Tests run only when torch is present (CI stays torch-free; numpy REINFORCE is
+  the floor). Optional GRPO rung (group-relative advantage, no critic) for the tiny-data regime.
 - **Invariants to keep:** state stays label-free; group-wise `split_multihop` only; `TransitionCache`
   in the env (§3a) so PPO rollouts don't re-hit the corpus; CI torch-free (numpy REINFORCE is the
   floor; PPO in the `[rl]` extra, lazy import, day-1 segfault smoke test).
