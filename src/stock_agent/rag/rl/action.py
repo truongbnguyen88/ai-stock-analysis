@@ -171,6 +171,46 @@ def is_legal(action: Action, *, n_discovered: int) -> bool:
     return action.scope_slot is not None and action.scope_slot < n_discovered
 
 
+# Hop-1 query decomposition (A6.2 E2). A bridge question — "Among the competitors NVIDIA names in
+# its filings, which one discloses {topic}?" — asks TWO things at once, and searching its full text
+# answers the wrong one: the topic terms dominate the query, so the retriever returns the seed's
+# own {topic} paragraphs instead of the paragraph that NAMES the competitors. The naming chunk is
+# what hop 1 exists to find (it is the only source of the entities hop 2 can bridge to), so the
+# self-scoped query for a bridge question must ask for the RELATION, not the topic. Measured on the
+# 35 held-out HARD episodes: the full-question template found the naming chunk 48.6% of the time,
+# these focused queries find it 100%.
+#
+# Cues are matched against the question TEXT only (never generation metadata), so the deployed
+# policy builds the identical query on a real, unlabeled user question — the A6.2b invariant.
+_RELATION_FOCUS: tuple[tuple[str, str], ...] = (
+    ("competitor", "competitors competition compete"),
+    ("compete", "competitors competition compete"),
+    ("dependenc", "suppliers supply depend key dependencies"),
+    ("supplier", "suppliers supply depend key dependencies"),
+    ("vendor", "suppliers supply depend key dependencies"),
+    ("customer", "customers"),
+    ("partner", "partners collaborations"),
+)
+
+
+def self_scope_query(question: str) -> str:
+    """The hop-1 (self-scoped) query: the RELATION for a bridge question, else the question itself.
+
+    Gated on the production ``research.bridge.is_bridging`` so the simulator's notion of "this is a
+    bridge" cannot drift from the one A4/A5 actually deploy. A non-bridge (e.g. CTRL single-entity)
+    question is searched verbatim — unchanged behaviour, which is what the CTRL stratum regresses.
+    """
+    from stock_agent.research.bridge import is_bridging  # lazy: research imports rag (circular)
+
+    if not is_bridging(question):
+        return question
+    low = question.lower()
+    for cue, focus in _RELATION_FOCUS:
+        if cue in low:
+            return focus
+    return question  # a bridge cue with no known relation ⇒ fall back to the whole question
+
+
 def action_to_request(
     action: Action,
     question: str,
@@ -181,14 +221,17 @@ def action_to_request(
     """Expand an action to its templated ``RetrievalRequest``; ``None`` for STOP or a masked slot.
 
     Templates (deterministic, NO LLM, label-free — the frozen policy runs these verbatim at deploy):
-      - self-scope: ``query = question``, ``scope = self_ticker`` (``None`` ⇒ unscoped).
+      - self-scope: ``query = self_scope_query(question)`` (the relation for a bridge question — see
+        ``_RELATION_FOCUS``), ``scope = self_ticker`` (``None`` ⇒ unscoped).
       - discovered#j: ``query = "{name} {question}"``, ``scope = that entity's ticker``. If slot j
         is not (yet) populated (``j >= len(discovered)``) the action is illegal ⇒ ``None``.
     """
     if action.config is None:  # STOP (narrows action.config to str below for mypy)
         return None
     if action.scope_kind is ScopeKind.SELF:
-        return RetrievalRequest(arm=action.config, query=question, scope_ticker=self_ticker)
+        return RetrievalRequest(
+            arm=action.config, query=self_scope_query(question), scope_ticker=self_ticker
+        )
     slot = action.scope_slot
     if slot is None or slot >= len(discovered):
         return None  # masked: this discovered slot has no entity at the current state

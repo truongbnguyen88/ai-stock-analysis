@@ -6,7 +6,8 @@
         "name": "AMD's climate-related disclosure requirements disclosure",
         "spans": [
           "climate-related disclosure requirements"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -25,7 +26,8 @@
         "name": "AMD's conflict minerals regulations disclosure",
         "spans": [
           "conflict minerals regulations"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -44,7 +46,8 @@
         "name": "arista networks's AI regulatory requirements disclosure",
         "spans": [
           "AI regulatory requirements"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -63,7 +66,8 @@
         "name": "arista networks's Mexico tariffs disclosure",
         "spans": [
           "Mexico tariffs"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -82,7 +86,8 @@
         "name": "arista networks's US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -101,7 +106,8 @@
         "name": "arista networks's currency exchange rate fluctuations disclosure",
         "spans": [
           "currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -120,7 +126,8 @@
         "name": "asml holding's EU export controls disclosure",
         "spans": [
           "EU export controls"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -139,7 +146,8 @@
         "name": "asml holding's US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -158,7 +166,8 @@
         "name": "asml holding's customer capital expenditure cuts disclosure",
         "spans": [
           "customer capital expenditure cuts"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -177,7 +186,8 @@
         "name": "asml holding's customer capital expenditure reductions disclosure",
         "spans": [
           "customer capital expenditure reductions"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -196,7 +206,8 @@
         "name": "asml holding's customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -215,7 +226,8 @@
         "name": "asml holding's cybersecurity threats disclosure",
         "spans": [
           "cybersecurity threats"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -234,7 +246,8 @@
         "name": "asml holding's geopolitical tensions disclosure",
         "spans": [
           "geopolitical tensions"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -253,7 +266,8 @@
         "name": "asml holding's industry cycle risk disclosure",
         "spans": [
           "industry cycle risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -272,7 +286,8 @@
         "name": "asml holding's intellectual property rights risk disclosure",
         "spans": [
           "intellectual property rights risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -291,7 +306,8 @@
         "name": "asml holding's political risk disclosure",
         "spans": [
           "political risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -310,7 +326,8 @@
         "name": "asml holding's supplier strategy and performance risk disclosure",
         "spans": [
           "supplier strategy and performance risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -329,7 +346,8 @@
         "name": "asml holding's supply chain disruption disclosure",
         "spans": [
           "supply chain disruption"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -348,7 +366,8 @@
         "name": "asml holding's supply chain disruption risk disclosure",
         "spans": [
           "supply chain disruption risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -367,7 +386,8 @@
         "name": "Broadcom's privacy and data security laws disclosure",
         "spans": [
           "privacy and data security laws"
-        ]
+        ],
+        "ticker": "AVGO"
       }
     ],
     "max_steps": null,
@@ -386,7 +406,8 @@
         "name": "dell technologies's EU Artificial Intelligence Act disclosure",
         "spans": [
           "EU Artificial Intelligence Act"
-        ]
+        ],
+        "ticker": "DELL"
       }
     ],
     "max_steps": null,
@@ -405,7 +426,8 @@
         "name": "dell technologies's adverse global economic conditions disclosure",
         "spans": [
           "adverse global economic conditions"
-        ]
+        ],
+        "ticker": "DELL"
       }
     ],
     "max_steps": null,
@@ -424,7 +446,8 @@
         "name": "dell technologies's climate change laws and regulations disclosure",
         "spans": [
           "climate change laws and regulations"
-        ]
+        ],
+        "ticker": "DELL"
       }
     ],
     "max_steps": null,
@@ -443,7 +466,8 @@
         "name": "dell technologies's competitive pricing pressure disclosure",
         "spans": [
           "competitive pricing pressure"
-        ]
+        ],
+        "ticker": "DELL"
       }
     ],
     "max_steps": null,
@@ -462,7 +486,8 @@
         "name": "dell technologies's economic sanctions laws disclosure",
         "spans": [
           "economic sanctions laws"
-        ]
+        ],
+        "ticker": "DELL"
       }
     ],
     "max_steps": null,
@@ -481,7 +506,8 @@
         "name": "dell technologies's foreign currency exchange rate fluctuations disclosure",
         "spans": [
           "foreign currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "DELL"
       }
     ],
     "max_steps": null,
@@ -500,7 +526,8 @@
         "name": "dell technologies's single-source or limited-source suppliers disclosure",
         "spans": [
           "single-source or limited-source suppliers"
-        ]
+        ],
+        "ticker": "DELL"
       }
     ],
     "max_steps": null,
@@ -519,7 +546,8 @@
         "name": "kla corp's foreign currency exchange rate fluctuations disclosure",
         "spans": [
           "foreign currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "KLAC"
       }
     ],
     "max_steps": null,
@@ -538,7 +566,8 @@
         "name": "kla corp's supply chain disruption disclosure",
         "spans": [
           "supply chain disruption"
-        ]
+        ],
+        "ticker": "KLAC"
       }
     ],
     "max_steps": null,
@@ -557,7 +586,8 @@
         "name": "lam research's foreign currency exchange rate fluctuations disclosure",
         "spans": [
           "foreign currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "LRCX"
       }
     ],
     "max_steps": null,
@@ -576,7 +606,8 @@
         "name": "microchip technology's dependence on wafer foundries disclosure",
         "spans": [
           "dependence on wafer foundries"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -595,7 +626,8 @@
         "name": "microchip technology's foreign currency exchange rate fluctuations disclosure",
         "spans": [
           "foreign currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -614,7 +646,8 @@
         "name": "microchip technology's single or limited number of suppliers disclosure",
         "spans": [
           "single or limited number of suppliers"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -633,7 +666,8 @@
         "name": "marvell technology's goodwill impairment charges disclosure",
         "spans": [
           "goodwill impairment charges"
-        ]
+        ],
+        "ticker": "MRVL"
       }
     ],
     "max_steps": null,
@@ -652,7 +686,8 @@
         "name": "micron's foreign currency exchange rate risk disclosure",
         "spans": [
           "foreign currency exchange rate risk"
-        ]
+        ],
+        "ticker": "MU"
       }
     ],
     "max_steps": null,
@@ -671,7 +706,8 @@
         "name": "nxp semiconductors's Dutch foreign investment control regime disclosure",
         "spans": [
           "Dutch foreign investment control regime"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -690,7 +726,8 @@
         "name": "nxp semiconductors's environmental laws and regulations disclosure",
         "spans": [
           "environmental laws and regulations"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -709,7 +746,8 @@
         "name": "nxp semiconductors's intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -728,7 +766,8 @@
         "name": "stmicroelectronics's changes in global trade policies disclosure",
         "spans": [
           "changes in global trade policies"
-        ]
+        ],
+        "ticker": "STM"
       }
     ],
     "max_steps": null,
@@ -747,7 +786,8 @@
         "name": "stmicroelectronics's limited number of suppliers disclosure",
         "spans": [
           "limited number of suppliers"
-        ]
+        ],
+        "ticker": "STM"
       }
     ],
     "max_steps": null,
@@ -766,7 +806,8 @@
         "name": "stmicroelectronics's loss of key employees disclosure",
         "spans": [
           "loss of key employees"
-        ]
+        ],
+        "ticker": "STM"
       }
     ],
     "max_steps": null,
@@ -786,13 +827,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "ADI"
       },
       {
         "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -812,13 +855,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "ADI"
       },
       {
         "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -838,13 +883,15 @@
         "spans": [
           "Broadcom",
           "broadcom"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own privacy and data security laws disclosure",
         "spans": [
           "privacy and data security laws"
-        ]
+        ],
+        "ticker": "AVGO"
       }
     ],
     "max_steps": null,
@@ -864,13 +911,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -890,13 +939,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -916,13 +967,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own cybersecurity threats and privacy risks disclosure",
         "spans": [
           "cybersecurity threats and privacy risks"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -942,13 +995,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own high level of competition disclosure",
         "spans": [
           "high level of competition"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -968,13 +1023,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own product defects and errata disclosure",
         "spans": [
           "product defects and errata"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -994,13 +1051,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own wafer fabrication supply constraints disclosure",
         "spans": [
           "wafer fabrication supply constraints"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -1020,13 +1079,15 @@
         "spans": [
           "marvell technology",
           "marvell"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own goodwill impairment charges disclosure",
         "spans": [
           "goodwill impairment charges"
-        ]
+        ],
+        "ticker": "MRVL"
       }
     ],
     "max_steps": null,
@@ -1045,13 +1106,15 @@
         "name": "AMD names the competitor",
         "spans": [
           "nxp semiconductors"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own Dutch foreign investment control regime disclosure",
         "spans": [
           "Dutch foreign investment control regime"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -1070,13 +1133,15 @@
         "name": "AMD names the competitor",
         "spans": [
           "nxp semiconductors"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own environmental laws and regulations disclosure",
         "spans": [
           "environmental laws and regulations"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -1095,13 +1160,15 @@
         "name": "AMD names the competitor",
         "spans": [
           "nxp semiconductors"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -1121,13 +1188,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -1147,13 +1216,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -1173,13 +1244,15 @@
         "spans": [
           "Broadcom",
           "broadcom"
-        ]
+        ],
+        "ticker": "ANET"
       },
       {
         "name": "that dependency's own privacy and data security laws disclosure",
         "spans": [
           "privacy and data security laws"
-        ]
+        ],
+        "ticker": "AVGO"
       }
     ],
     "max_steps": null,
@@ -1199,13 +1272,15 @@
         "spans": [
           "Analog Devices Inc.",
           "analog devices"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own substantial existing indebtedness disclosure",
         "spans": [
           "substantial existing indebtedness"
-        ]
+        ],
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
@@ -1225,13 +1300,15 @@
         "spans": [
           "AMD",
           "advanced micro devices"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own climate-related disclosure requirements disclosure",
         "spans": [
           "climate-related disclosure requirements"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -1251,13 +1328,15 @@
         "spans": [
           "AMD",
           "advanced micro devices"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own conflict minerals regulations disclosure",
         "spans": [
           "conflict minerals regulations"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -1276,13 +1355,15 @@
         "name": "Broadcom names the competitor",
         "spans": [
           "microchip technology"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own dependence on wafer foundries disclosure",
         "spans": [
           "dependence on wafer foundries"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -1301,13 +1382,15 @@
         "name": "Broadcom names the competitor",
         "spans": [
           "microchip technology"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
         "spans": [
           "foreign currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -1326,13 +1409,15 @@
         "name": "Broadcom names the competitor",
         "spans": [
           "microchip technology"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own single or limited number of suppliers disclosure",
         "spans": [
           "single or limited number of suppliers"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -1352,13 +1437,15 @@
         "spans": [
           "marvell technology",
           "marvell"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own goodwill impairment charges disclosure",
         "spans": [
           "goodwill impairment charges"
-        ]
+        ],
+        "ticker": "MRVL"
       }
     ],
     "max_steps": null,
@@ -1378,13 +1465,15 @@
         "spans": [
           "Texas Instruments Inc.",
           "texas instruments"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own conflict minerals reporting requirements disclosure",
         "spans": [
           "conflict minerals reporting requirements"
-        ]
+        ],
+        "ticker": "TXN"
       }
     ],
     "max_steps": null,
@@ -1404,13 +1493,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -1430,13 +1521,15 @@
         "spans": [
           "AMD",
           "advanced micro devices"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that competitor's own conflict minerals regulations disclosure",
         "spans": [
           "conflict minerals regulations"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -1456,13 +1549,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own EU export controls disclosure",
         "spans": [
           "EU export controls"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1482,13 +1577,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own customer capital expenditure cuts disclosure",
         "spans": [
           "customer capital expenditure cuts"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1508,13 +1605,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own customer capital expenditure reductions disclosure",
         "spans": [
           "customer capital expenditure reductions"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1534,13 +1633,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own industry cycle risk disclosure",
         "spans": [
           "industry cycle risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1560,13 +1661,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own intellectual property rights risk disclosure",
         "spans": [
           "intellectual property rights risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1586,13 +1689,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own supplier strategy and performance risk disclosure",
         "spans": [
           "supplier strategy and performance risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1612,13 +1717,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own supply chain disruption risk disclosure",
         "spans": [
           "supply chain disruption risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1638,13 +1745,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -1664,13 +1773,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own cybersecurity threats and incidents disclosure",
         "spans": [
           "cybersecurity threats and incidents"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -1690,13 +1801,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own global minimum tax regime disclosure",
         "spans": [
           "global minimum tax regime"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -1716,13 +1829,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own global minimum tax regimes disclosure",
         "spans": [
           "global minimum tax regimes"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -1742,13 +1857,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own global regulatory environment disclosure",
         "spans": [
           "global regulatory environment"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -1768,13 +1885,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own intellectual property infringement claims disclosure",
         "spans": [
           "intellectual property infringement claims"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -1794,13 +1913,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own EU export controls disclosure",
         "spans": [
           "EU export controls"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1820,13 +1941,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1846,13 +1969,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own customer capital expenditure cuts disclosure",
         "spans": [
           "customer capital expenditure cuts"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1872,13 +1997,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own customer capital expenditure reductions disclosure",
         "spans": [
           "customer capital expenditure reductions"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1898,13 +2025,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1924,13 +2053,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own industry cycle risk disclosure",
         "spans": [
           "industry cycle risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1950,13 +2081,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own intellectual property rights risk disclosure",
         "spans": [
           "intellectual property rights risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -1976,13 +2109,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own supplier strategy and performance risk disclosure",
         "spans": [
           "supplier strategy and performance risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -2002,13 +2137,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own supply chain disruption risk disclosure",
         "spans": [
           "supply chain disruption risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -2028,13 +2165,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -2054,13 +2193,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -2080,13 +2221,15 @@
         "spans": [
           "AMD",
           "advanced micro devices"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own climate-related disclosure requirements disclosure",
         "spans": [
           "climate-related disclosure requirements"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -2106,13 +2249,15 @@
         "spans": [
           "AMD",
           "advanced micro devices"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own conflict minerals regulations disclosure",
         "spans": [
           "conflict minerals regulations"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -2132,13 +2277,15 @@
         "spans": [
           "Broadcom",
           "broadcom"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own privacy and data security laws disclosure",
         "spans": [
           "privacy and data security laws"
-        ]
+        ],
+        "ticker": "AVGO"
       }
     ],
     "max_steps": null,
@@ -2158,13 +2305,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2184,13 +2333,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own currency exchange rate risk disclosure",
         "spans": [
           "currency exchange rate risk"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2210,13 +2361,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own cybersecurity threats and privacy risks disclosure",
         "spans": [
           "cybersecurity threats and privacy risks"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2236,13 +2389,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own high level of competition disclosure",
         "spans": [
           "high level of competition"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2262,13 +2417,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own product defects and errata disclosure",
         "spans": [
           "product defects and errata"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2288,13 +2445,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own wafer fabrication supply constraints disclosure",
         "spans": [
           "wafer fabrication supply constraints"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2313,13 +2472,15 @@
         "name": "marvell technology names the competitor",
         "spans": [
           "microchip technology"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own dependence on wafer foundries disclosure",
         "spans": [
           "dependence on wafer foundries"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -2338,13 +2499,15 @@
         "name": "marvell technology names the competitor",
         "spans": [
           "microchip technology"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
         "spans": [
           "foreign currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -2363,13 +2526,15 @@
         "name": "marvell technology names the competitor",
         "spans": [
           "microchip technology"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own single or limited number of suppliers disclosure",
         "spans": [
           "single or limited number of suppliers"
-        ]
+        ],
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -2388,13 +2553,15 @@
         "name": "marvell technology names the competitor",
         "spans": [
           "nxp semiconductors"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own Dutch foreign investment control regime disclosure",
         "spans": [
           "Dutch foreign investment control regime"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -2413,13 +2580,15 @@
         "name": "marvell technology names the competitor",
         "spans": [
           "nxp semiconductors"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own environmental laws and regulations disclosure",
         "spans": [
           "environmental laws and regulations"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -2438,13 +2607,15 @@
         "name": "marvell technology names the competitor",
         "spans": [
           "nxp semiconductors"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "NXPI"
       }
     ],
     "max_steps": null,
@@ -2463,13 +2634,15 @@
         "name": "NVIDIA names the competitor",
         "spans": [
           "arista networks"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own AI regulatory requirements disclosure",
         "spans": [
           "AI regulatory requirements"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -2488,13 +2661,15 @@
         "name": "NVIDIA names the competitor",
         "spans": [
           "arista networks"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own Mexico tariffs disclosure",
         "spans": [
           "Mexico tariffs"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -2513,13 +2688,15 @@
         "name": "NVIDIA names the competitor",
         "spans": [
           "arista networks"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -2538,13 +2715,15 @@
         "name": "NVIDIA names the competitor",
         "spans": [
           "arista networks"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own currency exchange rate fluctuations disclosure",
         "spans": [
           "currency exchange rate fluctuations"
-        ]
+        ],
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -2564,13 +2743,15 @@
         "spans": [
           "Broadcom",
           "broadcom"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own privacy and data security laws disclosure",
         "spans": [
           "privacy and data security laws"
-        ]
+        ],
+        "ticker": "AVGO"
       }
     ],
     "max_steps": null,
@@ -2590,13 +2771,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2616,13 +2799,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own currency exchange rate risk disclosure",
         "spans": [
           "currency exchange rate risk"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2642,13 +2827,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2668,13 +2855,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own cybersecurity threats and privacy risks disclosure",
         "spans": [
           "cybersecurity threats and privacy risks"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2694,13 +2883,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own high level of competition disclosure",
         "spans": [
           "high level of competition"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2720,13 +2911,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own product defects and errata disclosure",
         "spans": [
           "product defects and errata"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2746,13 +2939,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that competitor's own wafer fabrication supply constraints disclosure",
         "spans": [
           "wafer fabrication supply constraints"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -2772,13 +2967,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -2798,13 +2995,15 @@
         "spans": [
           "Analog Devices Inc.",
           "analog devices"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that competitor's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
@@ -2824,13 +3023,15 @@
         "spans": [
           "Analog Devices Inc.",
           "analog devices"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that competitor's own substantial existing indebtedness disclosure",
         "spans": [
           "substantial existing indebtedness"
-        ]
+        ],
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
@@ -2849,13 +3050,15 @@
         "name": "nxp semiconductors names the competitor",
         "spans": [
           "stmicroelectronics"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that competitor's own changes in global trade policies disclosure",
         "spans": [
           "changes in global trade policies"
-        ]
+        ],
+        "ticker": "STM"
       }
     ],
     "max_steps": null,
@@ -2874,13 +3077,15 @@
         "name": "nxp semiconductors names the competitor",
         "spans": [
           "stmicroelectronics"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that competitor's own loss of key employees disclosure",
         "spans": [
           "loss of key employees"
-        ]
+        ],
+        "ticker": "STM"
       }
     ],
     "max_steps": null,
@@ -2900,13 +3105,15 @@
         "spans": [
           "Texas Instruments Inc.",
           "texas instruments"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that competitor's own conflict minerals reporting requirements disclosure",
         "spans": [
           "conflict minerals reporting requirements"
-        ]
+        ],
+        "ticker": "TXN"
       }
     ],
     "max_steps": null,
@@ -2926,13 +3133,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -2952,13 +3161,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "QCOM"
       },
       {
         "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -2978,13 +3189,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own currency exchange rate risk disclosure",
         "spans": [
           "currency exchange rate risk"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -3004,13 +3217,15 @@
         "spans": [
           "Texas Instruments Inc.",
           "texas instruments"
-        ]
+        ],
+        "ticker": "AMD"
       },
       {
         "name": "that competitor's own conflict minerals reporting requirements disclosure",
         "spans": [
           "conflict minerals reporting requirements"
-        ]
+        ],
+        "ticker": "TXN"
       }
     ],
     "max_steps": null,
@@ -3030,13 +3245,15 @@
         "spans": [
           "Analog Devices Inc.",
           "analog devices"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
@@ -3056,13 +3273,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -3082,13 +3301,15 @@
         "spans": [
           "AMD",
           "advanced micro devices"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that competitor's own climate-related disclosure requirements disclosure",
         "spans": [
           "climate-related disclosure requirements"
-        ]
+        ],
+        "ticker": "AMD"
       }
     ],
     "max_steps": null,
@@ -3108,13 +3329,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own US export controls disclosure",
         "spans": [
           "US export controls"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3134,13 +3357,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3160,13 +3385,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own cybersecurity threats disclosure",
         "spans": [
           "cybersecurity threats"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3186,13 +3413,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own geopolitical tensions disclosure",
         "spans": [
           "geopolitical tensions"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3212,13 +3441,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own political risk disclosure",
         "spans": [
           "political risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3238,13 +3469,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "INTC"
       },
       {
         "name": "that dependency's own supply chain disruption disclosure",
         "spans": [
           "supply chain disruption"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3264,13 +3497,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own goodwill impairment charges disclosure",
         "spans": [
           "goodwill impairment charges"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -3290,13 +3525,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own supply chain disruption disclosure",
         "spans": [
           "supply chain disruption"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -3316,13 +3553,15 @@
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own supply chain disruptions disclosure",
         "spans": [
           "supply chain disruptions"
-        ]
+        ],
+        "ticker": "AMAT"
       }
     ],
     "max_steps": null,
@@ -3342,13 +3581,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own cybersecurity threats disclosure",
         "spans": [
           "cybersecurity threats"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3368,13 +3609,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own geopolitical tensions disclosure",
         "spans": [
           "geopolitical tensions"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3394,13 +3637,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own political risk disclosure",
         "spans": [
           "political risk"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3420,13 +3665,15 @@
         "spans": [
           "asml holding",
           "asml"
-        ]
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own supply chain disruption disclosure",
         "spans": [
           "supply chain disruption"
-        ]
+        ],
+        "ticker": "ASML"
       }
     ],
     "max_steps": null,
@@ -3446,13 +3693,15 @@
         "spans": [
           "intel corp",
           "intel corporation"
-        ]
+        ],
+        "ticker": "MRVL"
       },
       {
         "name": "that competitor's own customer concentration disclosure",
         "spans": [
           "customer concentration"
-        ]
+        ],
+        "ticker": "INTC"
       }
     ],
     "max_steps": null,
@@ -3472,13 +3721,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "NVDA"
       },
       {
         "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -3497,13 +3748,15 @@
         "name": "nxp semiconductors names the competitor",
         "spans": [
           "stmicroelectronics"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that competitor's own limited number of suppliers disclosure",
         "spans": [
           "limited number of suppliers"
-        ]
+        ],
+        "ticker": "STM"
       }
     ],
     "max_steps": null,
@@ -3523,13 +3776,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "NXPI"
       },
       {
         "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
@@ -3549,13 +3804,15 @@
         "spans": [
           "taiwan semiconductor",
           "tsmc"
-        ]
+        ],
+        "ticker": "QCOM"
       },
       {
         "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
-        ]
+        ],
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,

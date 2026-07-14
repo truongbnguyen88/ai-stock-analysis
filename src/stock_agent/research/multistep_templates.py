@@ -61,15 +61,24 @@ class FilledQuestion:
 
 
 def fill_bridge(
-    *, seed_name: str, target_surfaces: list[str], topic: str, relation: str
+    *,
+    seed_name: str,
+    seed_ticker: str,
+    target_surfaces: list[str],
+    target_ticker: str,
+    topic: str,
+    relation: str,
 ) -> FilledQuestion:
     """Build a 2-aspect bridge question for ``(seed) -[relation]-> (target)`` about ``topic``.
 
     - **A1** ("seed names the target"): spans = the target's surface forms as the seed's filing
       writes them (e.g. ``["Taiwan Semiconductor", "TSMC"]``) — guaranteed present in the seed by
-      the bridge edge's A5.1 guard.
+      the bridge edge's A5.1 guard. Bound to ``seed_ticker``: the *seed's* filing must name it.
     - **A2** ("target's own disclosure"): span = the ``topic`` phrase (a risk/topic node name) —
-      guaranteed present in the target by the ``mentions_risk``/``exposed_to`` edge's guard.
+      guaranteed present in the target by the ``mentions_risk``/``exposed_to`` edge's guard. Bound
+      to ``target_ticker``: the aspect reads "*that* competitor's own disclosure", so the phrase
+      appearing in a *third* company's filing is not evidence for it. The binding is what stops a
+      broad-retrieval policy from being paid for the wrong company's boilerplate.
 
     Raises ``ValueError`` on an unsupported relation or empty ``target_surfaces`` (the A1 source).
     """
@@ -82,20 +91,34 @@ def fill_bridge(
     object_word = _RELATION_OBJECT_WORD[relation]
     question = _BRIDGE_FRAME[relation].format(seed=seed_name, topic=topic)
     aspects = [
-        Aspect(name=f"{seed_name} names the {object_word}", spans=list(target_surfaces)),
-        Aspect(name=f"that {object_word}'s own {topic} disclosure", spans=[topic]),
+        Aspect(
+            name=f"{seed_name} names the {object_word}",
+            spans=list(target_surfaces),
+            ticker=seed_ticker,
+        ),
+        Aspect(
+            name=f"that {object_word}'s own {topic} disclosure",
+            spans=[topic],
+            ticker=target_ticker,
+        ),
     ]
     return FilledQuestion(question=question, aspects=aspects, relation=relation, qtype="bridging")
 
 
-def fill_control(*, company_name: str, topic: str) -> FilledQuestion:
+def fill_control(*, company_name: str, company_ticker: str, topic: str) -> FilledQuestion:
     """Build a 1-aspect single-entity CONTROL question about ``company``'s own ``topic`` disclosure.
 
     Single-hop by construction (the answer lives in the company's own filing), so single-shot
     retrieval should already cover it — the regression guard that graph/agentic must not degrade.
+    The aspect is bound to ``company_ticker`` for the same reason as the bridge A2: only *this*
+    company's disclosure answers "does {company} disclose {topic}?".
     """
     question = _CONTROL_FRAME.format(company=company_name, topic=topic)
-    aspects = [Aspect(name=f"{company_name}'s {topic} disclosure", spans=[topic])]
+    aspects = [
+        Aspect(
+            name=f"{company_name}'s {topic} disclosure", spans=[topic], ticker=company_ticker
+        )
+    ]
     return FilledQuestion(
         question=question, aspects=aspects, relation="single-entity", qtype="risk"
     )

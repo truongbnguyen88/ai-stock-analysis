@@ -52,12 +52,26 @@ def _normalize(text: str) -> str:
 class Aspect(BaseModel):
     """One hop/entity the multi-hop answer must cover, identified by answer-bearing spans.
 
-    Covered iff some union chunk contains any span. Pick spans that are specific to THIS hop (e.g. a
-    company name + a topic phrase), so coverage means the right evidence was gathered.
+    Covered iff some union chunk **from ``ticker``** contains any span. Pick spans that are specific
+    to THIS hop (e.g. a company name + a topic phrase), so coverage means the right evidence was
+    gathered.
+
+    ``ticker`` binds the aspect to the company whose filings must supply the evidence, and it is a
+    **correctness requirement, not a refinement**. A bridge question's A2 aspect reads "*that
+    competitor's own* {topic} disclosure": the topic phrase turning up in some *unrelated* company's
+    10-K does not answer it. Without the binding, ``coverage`` credited any chunk containing the
+    span, so a policy that merely retrieved more broadly was paid for evidence that answers
+    nothing — measured: 8.6% of fan-out episodes scored covered with the target's filings never
+    retrieved, and 28.6% of episodes have some non-target company whose filings carry the topic
+    phrase too. Paying for breadth is exactly the reward-hacking surface an RL learner will find.
+
+    ``None`` (the default) restores the old any-chunk semantics, so the hand-written P-set / A4
+    examples — whose aspects carry no entity — validate and score unchanged.
     """
 
     name: str
     spans: list[str] = Field(min_length=1)
+    ticker: str | None = None  # evidence must come from THIS company's filings; None = any
 
 
 Stratum = Literal["HARD", "MED", "CTRL"]
@@ -127,9 +141,18 @@ def spans_present(texts: Sequence[str], spans: Sequence[str]) -> bool:
     return any(_normalize(span) in hay for span in spans for hay in haystacks)
 
 
-def _aspect_covered(chunks: Sequence[RetrievedChunk], spans: Sequence[str]) -> bool:
-    """True iff some chunk's text contains any of ``spans`` (case/whitespace-insensitive)."""
-    return spans_present([rc.chunk.text for rc in chunks], spans)
+def _scoped(chunks: Sequence[RetrievedChunk], ticker: str | None) -> list[str]:
+    """Texts of the chunks that can evidence an aspect bound to ``ticker`` (all of them if None)."""
+    return [rc.chunk.text for rc in chunks if ticker is None or rc.chunk.ticker == ticker]
+
+
+def _aspect_covered(chunks: Sequence[RetrievedChunk], aspect: Aspect) -> bool:
+    """True iff some chunk **from the aspect's company** contains any of its spans.
+
+    Case/whitespace-insensitive via the shared ``spans_present`` primitive. An unbound aspect
+    (``ticker is None``) accepts any chunk — the pre-A6.2 semantics.
+    """
+    return spans_present(_scoped(chunks, aspect.ticker), aspect.spans)
 
 
 def coverage(
@@ -137,13 +160,13 @@ def coverage(
 ) -> tuple[float, list[str], list[str]]:
     """Aspect coverage of ``chunks``: (fraction covered, covered names, missed names).
 
-    An aspect is covered iff some chunk contains any of its spans. Returns 0.0 for an empty aspect
-    list (degenerate / mislabeled query).
+    An aspect is covered iff some chunk **from its bound company** (``Aspect.ticker``) contains any
+    of its spans. Returns 0.0 for an empty aspect list (degenerate / mislabeled query).
     """
     covered: list[str] = []
     missed: list[str] = []
     for aspect in aspects:
-        (covered if _aspect_covered(chunks, aspect.spans) else missed).append(aspect.name)
+        (covered if _aspect_covered(chunks, aspect) else missed).append(aspect.name)
     frac = len(covered) / len(aspects) if aspects else 0.0
     return frac, covered, missed
 
@@ -153,17 +176,26 @@ def multihop_citation_accuracy(
 ) -> float | None:
     """Citation precision of the terminal answer: fraction pointing to a chunk with a relevant span.
 
-    Relevant = the cited chunk (resolved within the union) contains any aspect span. Returns None
-    when the answer makes no citations (an honest refusal / no claim), so the aggregate excludes it.
+    Relevant = the cited chunk (resolved within the union) satisfies some aspect — i.e. it carries
+    one of that aspect's spans **and** comes from the company the aspect is bound to. Citing a
+    *different* company's filing that happens to repeat the topic phrase is not evidence for "that
+    competitor's own disclosure", so it does not count (same entity binding as ``coverage``).
+    Returns None when the answer makes no citations (an honest refusal), so the aggregate excludes
+    it.
     """
     if not answer.citations:
         return None
-    all_spans = [span for aspect in aspects for span in aspect.spans]
     by_id = {rc.chunk.chunk_id: rc.chunk for rc in union}
     good = 0
     for cite in answer.citations:
         chunk = by_id.get(cite.chunk_id)
-        if chunk is not None and any(_normalize(s) in _normalize(chunk.text) for s in all_spans):
+        if chunk is None:
+            continue
+        if any(
+            (a.ticker is None or chunk.ticker == a.ticker)
+            and spans_present([chunk.text], a.spans)
+            for a in aspects
+        ):
             good += 1
     return good / len(answer.citations)
 

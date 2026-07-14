@@ -24,6 +24,7 @@ from stock_agent.rag.rl.action import (
     build_action_space,
     is_legal,
     named_action_space,
+    self_scope_query,
 )
 
 MU = DiscoveredEntity(ticker="MU", name="Micron")
@@ -117,16 +118,39 @@ def test_stop_expands_to_no_request() -> None:
     assert action_to_request(STOP, QUESTION, self_ticker="NVDA", discovered=[]) is None
 
 
-def test_self_scope_template_is_plain_question() -> None:
+def test_self_scope_query_asks_for_the_RELATION_on_a_bridge_question() -> None:
+    """E2: hop 1 of a bridge must find the chunk that NAMES the related companies.
+
+    Searching the whole question lets the topic terms ("Chinese cybersecurity restrictions")
+    dominate and returns the seed's own topic paragraphs — the naming chunk, which is the only
+    source of the entities hop 2 can bridge to, is never retrieved. 48.6% → 100% on held-out HARD.
+    """
     a = Action(config="hybrid", scope_kind=ScopeKind.SELF)
     req = action_to_request(a, QUESTION, self_ticker="NVDA", discovered=[])
     assert req is not None
     assert req.arm == "hybrid"
-    assert req.query == QUESTION  # plain question, no prefix
+    assert req.query == "suppliers supply depend key dependencies"  # the RELATION, not the topic
     assert req.scope_ticker == "NVDA"
     # no seed ticker ⇒ unscoped self search (degrades gracefully).
     req2 = action_to_request(a, QUESTION, self_ticker=None, discovered=[])
     assert req2 is not None and req2.scope_ticker is None
+
+
+def test_self_scope_query_leaves_a_non_bridge_question_verbatim() -> None:
+    """CTRL (single-entity) questions are unchanged — the regression the CTRL stratum guards."""
+    ctrl = "What does Micron disclose about DRAM pricing in its SEC filings?"
+    a = Action(config="hybrid", scope_kind=ScopeKind.SELF)
+    req = action_to_request(a, ctrl, self_ticker="MU", discovered=[])
+    assert req is not None and req.query == ctrl
+
+
+def test_self_scope_query_is_label_free() -> None:
+    """The decomposition reads the question TEXT only — never stratum/relation/target metadata."""
+    bridge_q = "Among the competitors NVIDIA names, which one discloses X in its own filings?"
+    assert self_scope_query(bridge_q) == "competitors competition compete"
+    # a bridge cue with no known relation word ⇒ fall back to the whole question (never a guess)
+    odd = "Which entity in its own filings discusses X?"
+    assert self_scope_query(odd) == odd
 
 
 def test_discovered_scope_template_prepends_name_and_scopes_by_ticker() -> None:

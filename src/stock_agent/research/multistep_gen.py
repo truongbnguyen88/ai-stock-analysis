@@ -260,7 +260,9 @@ def generate_multihop(
                     continue
                 fq = fill_bridge(
                     seed_name=seed_name,
+                    seed_ticker=seed_ticker,
                     target_surfaces=surfaces,
+                    target_ticker=target,
                     topic=topic,
                     relation=bridge.relation,
                 )
@@ -298,7 +300,7 @@ def generate_multihop(
             if not spans_present(seed_texts, [topic]):  # corpus may lag the graph → verify present
                 n_absent_target += 1
                 continue
-            fq = fill_control(company_name=seed_name, topic=topic)
+            fq = fill_control(company_name=seed_name, company_ticker=seed_ticker, topic=topic)
             candidates.append(
                 MultiHopQuery(
                     question=fq.question,
