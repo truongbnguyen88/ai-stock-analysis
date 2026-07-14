@@ -2571,7 +2571,246 @@ stale weights against a new state layout.
 
 ---
 
-## 20. References
+### 19.15 Held-out policy evaluation: the paired group bootstrap and the reward-hacking sentinel (A6.2g)
+
+Training told us the policy improves *on the fold it trained on*. §19.15 is the question that actually
+matters: **is the learned controller better than the hand-written ones on questions it has never
+seen** — and is the improvement real or an artifact of a lucky fold?
+
+**What is being estimated.** The value of a policy is its expected episode return
+
+$$V(\pi) = \mathbb{E}_{q \sim \mathcal{D}} \mathbb{E}_{\tau \sim \pi(\cdot \mid q)} \left[ R(\tau) \right], \qquad R(\tau) = \sum_{t=0}^{T-1} r_t .$$
+
+- $q$ — a question drawn from the held-out benchmark $\mathcal{D}$ (one question = one episode).
+- $\tau = (s_0, a_0, r_0, \dots)$ — the trajectory the policy produces on that question.
+- $R(\tau)$ — the undiscounted return of that trajectory ($\gamma = 1$ here).
+
+We report $V$ two ways, because they answer different questions:
+
+| row | policy used | what it means |
+|---|---|---|
+| `(greedy)` | $\pi_{\text{greedy}}(s) = \arg\max_a \pi(a \mid s)$ | **deploy semantics** — what a shipped checkpoint actually does. Deterministic, so it carries no seed noise. This is the row the verdict gates on. |
+| `(sampled)` | $a_t \sim \pi(\cdot \mid s_t)$ | the on-policy value $V(\pi)$ that the training objective (§19.2) literally maximizes. Averaged over seeds. |
+
+**The return identity (why one number carries both quality and cost).** With $\gamma = 1$ the
+potential-based shaping of §19.8 telescopes, so for *every* policy the episode return collapses to
+
+$$R(\tau) = \underbrace{\Phi(s_T)}_{\text{terminal aspect coverage}} - \lambda_c \sum_{t} \mathrm{cost}(a_t) .$$
+
+- $\Phi(s_T) \in [0, 1]$ — the fraction of the question's gold aspects covered by the final evidence
+  union (the quality half).
+- $\mathrm{cost}(a_t)$ — the static per-arm latency/compute proxy of §18.2 (`dense` 0.0 … `graph` 0.3).
+- $\lambda_c$ — the price of compute in coverage units (default 0.05).
+
+This identity is a free end-to-end audit of the whole stack, and the harness asserts it on every
+candidate. Worked example (the sentinel row from the real smoke run): coverage $0.875$, three
+`graph` searches $\Rightarrow$ cost $3 \times 0.3 = 0.9$, so
+$R = 0.875 - 0.05 \times 0.9 = 0.875 - 0.045 = 0.830$ — exactly what the report prints.
+
+**The four baselines are policies in the same MDP.** Each is a *script over the state* — it reads
+`step_idx` and the legal mask and returns an action index — so it flows through the same `env.step`,
+the same union dedup, the same coverage oracle, and the same cost accounting as the learned policy.
+Nothing but the decision rule differs, which is what makes the comparison a controlled experiment.
+The `react` baseline is asserted to emit the *same trajectory* as the A4/A5 controller
+(`bridge_expert_rollout`), so "the strong baseline" is production, not a model of production.
+
+**Why a *paired* delta.** Episodes differ enormously in difficulty (a CTRL single-hop is nearly free
+coverage; a HARD bridge is not). Comparing two policies by their mean returns throws that structure
+away. Instead compare them **on the same episode** and average the differences:
+
+$$\Delta_i = R_{\text{learned}}(q_i) - R_{\text{base}}(q_i), \qquad \bar{\Delta} = \frac{1}{N} \sum_{i=1}^{N} \Delta_i .$$
+
+The variance of an unpaired difference is $\mathrm{Var}(A) + \mathrm{Var}(B)$; the paired one is
+$\mathrm{Var}(A) + \mathrm{Var}(B) - 2 \mathrm{Cov}(A, B)$. Because both policies are hurt by the same
+hard questions, $\mathrm{Cov}(A,B)$ is large and positive, so pairing cancels most of the
+episode-difficulty variance and leaves the policy effect.
+
+**Why a *group* bootstrap.** The benchmark's questions come in **bridge pairs** — several phrasings
+of the same underlying two-hop fact share a `group_id`. Those rows are near-copies, so treating them
+as independent samples (a row bootstrap) would count the same evidence several times and produce a CI
+that is too narrow. The group bootstrap resamples the $G$ groups with replacement and recomputes
+$\bar{\Delta}$ over the union of the drawn groups' rows:
+
+$$\bar{\Delta}^{(b)} = \frac{1}{\lvert I_b \rvert} \sum_{i \in I_b} \Delta_i, \qquad b = 1 \dots B,$$
+
+where $I_b$ collects the row indices of the $G$ groups drawn on replicate $b$. The 95% CI is the
+$[2.5, 97.5]$ percentile interval of $\{\bar{\Delta}^{(b)}\}$, and
+$P(\Delta > 0) = \frac{1}{B} \sum_b \mathbb{1}[\bar{\Delta}^{(b)} > 0]$ is the one-sided bootstrap
+achieved significance (reported, not gated). This is the same estimator as §18.7 — reused verbatim.
+
+**The pre-registered promote rule** (written before the numbers, as in §18.9):
+
+$$\text{PROMOTE} \iff \bar{\Delta} > 0 \quad \text{and} \quad \mathrm{CI}_{\text{low}} > 0 \quad \text{and} \quad \bar{\Delta}_{\text{CTRL}} \ge 0 \quad \text{and} \quad V(\pi_{\text{spam}}) < V(\pi_{\text{greedy}}) .$$
+
+A positive point estimate is not enough (gate 2 demands the group bootstrap exclude zero); a gain
+bought by wrecking the control stratum is not a gain (gate 3); and gate 4 is new to the sequential
+setting:
+
+**The reward-hacking sentinel.** Reward hacking is scoring well on the *proxy* without doing the
+task. In a sequential retrieval MDP the obvious exploit is **budget-spamming**: never stop, retrieve
+with the highest-recall arm every step, and let coverage creep up. The sentinel is exactly that
+policy, $\pi_{\text{spam}}$: never STOP, always the costliest arm. Compare it against a policy that
+stops at step $t^{*}$:
+
+$$V(\pi_{\text{spam}}) - V(\pi_{\text{stop}}) = \underbrace{\left[ \Phi_{\text{spam}}(s_T) - \Phi_{\text{stop}}(s_{t^{*}}) \right]}_{\text{extra coverage bought}} - \lambda_c \underbrace{\left[ \mathrm{cost}_{\text{spam}} - \mathrm{cost}_{\text{stop}} \right]}_{\text{extra compute paid}} .$$
+
+The cost tax is doing its job **iff** this quantity is negative whenever the extra retrieval buys
+little coverage. So the sentinel is a *tripwire on the reward function itself*: if
+$V(\pi_{\text{spam}}) \ge V(\pi_{\text{greedy}})$, then either $\lambda_c$ is too small or the learned
+policy has itself converged to spamming — and in both cases the measured $\bar{\Delta}$ is not
+interpretable, so promotion is blocked regardless of how good it looks. Setting $\lambda_c = 0$ makes
+the tripwire fire by construction (a regression test does exactly this).
+
+**The overfit gap, and its control.** With ~149 train episodes, memorization is the primary risk, so
+the report shows
+
+$$\mathrm{gap}(\pi) = V_{\text{train}}(\pi) - V_{\text{test}}(\pi)$$
+
+for the learned policy **and** for the best baseline. The baseline never trained on anything, so its
+gap measures pure *fold difficulty*. A large learned gap next to a small baseline gap is
+memorization; a large gap on **both** just means the held-out fold is harder. Reporting only the
+learned gap would confound the two.
+
+**Assumptions and limits.** (i) The $\$0$ simulator uses **templated** queries, so `n_llm_calls` is 0
+for every candidate and the faithfulness floor never fires — the A4 loop's real edge (an LLM writing
+a better query each hop) is *invisible* here, which is precisely why the paid sim-to-real run exists.
+(ii) The coverage oracle $\Phi$ is span-matching, so it rewards retrieving the right *text*, not
+answering well. (iii) The group split is the only leakage barrier, and the harness re-verifies it on
+the loaded folds rather than trusting the filenames.
+
+---
+
+## 20. When the environment, not the learner, is the bug — reward misspecification and action-space reachability
+
+A6.2 trained a policy, evaluated it honestly against a strong baseline, and produced a clean
+negative. The negative was **not about RL**. Two properties of the *environment* made the experiment
+incapable of showing a win, and a third made its reward partly fictional. This section states the
+three ideas precisely, because they generalise far past this repo: any time you wrap a system in an
+MDP and optimise it, these are the first things to check.
+
+### 20.1 Reachability: an action space that cannot express the optimal action
+
+Let $\mathcal{A}(s)$ be the legal actions at state $s$, and let $a^{*}(s)$ be the action an oracle
+would take. Define the **reachability** of the action space on a distribution of episodes $\mathcal{D}$:
+
+$$\rho = \Pr_{s \sim \mathcal{D}}\left[a^{*}(s) \in \mathcal{A}(s)\right]$$
+
+In plain English: **the fraction of situations in which the right move is even on the menu.** If
+$\rho$ is small, then *every* policy over $\mathcal{A}$ — learned, scripted, or optimal — is bounded
+away from the oracle, and the gap between the best and worst policy shrinks toward zero. A learner
+cannot discover an action that does not exist.
+
+**What we measured.** A bridge question ("among the competitors NVIDIA names, which one discloses
+$X$?") requires re-scoping retrieval to the *right* competitor. The env exposed exactly two
+discovered-entity actions, `disc0` and `disc1`, bound to the **alphabetically first two** of the
+discovered candidates. On the held-out HARD episodes there were a mean of **9.7** candidates, and the
+correct target landed in an addressable slot only **4 of 13** times it was discovered at all:
+
+$$\rho \approx 0.114$$
+
+So the correct bridge was on the menu in about **11%** of episodes. The consequence is arithmetic, not
+statistical. Writing $\Phi$ for aspect coverage and taking the two aspects of a bridge question (A1 =
+the seed names the target; A2 = the target's own disclosure):
+
+$$\Phi_{\max} \approx \frac{\Pr[\text{A1 retrievable}] + \rho}{2} \approx \frac{0.405 + 0.114}{2} \approx 0.26$$
+
+and the scripted baseline `react(hybrid)` scored **0.271**. **The baseline was already at the ceiling
+of the action space.** Any RL result on this MDP was predetermined to be a null.
+
+> **The diagnostic to run before trusting any negative RL result:** compute $\rho$. If the oracle
+> action is unreachable, your "RL doesn't help" finding is a statement about your action space.
+
+### 20.2 When no ranking function can exist (an information argument, not a tuning failure)
+
+The obvious repair for §20.1 is "order the candidate slots by relevance instead of alphabetically."
+It does not work, and the reason is worth stating carefully because it is easy to mistake for a
+hyperparameter problem.
+
+Let $C$ be the discovered candidates and let $Y \in C$ be the correct one. A ranking function
+$r: C \to \mathbb{R}$ built from the hop-1 evidence $E_1$ can only beat chance if $Y$ is not
+conditionally independent of the features $r$ reads:
+
+$$I(Y ; E_1) > 0$$
+
+where $I$ is mutual information — informally, *how much the hop-1 evidence tells you about which
+candidate is the answer.* But hop-1 evidence is the seed's **competitor list**. Which of those
+competitors discloses topic $X$ is a fact about **their** filings, which hop-1 never read. So
+$I(Y; E_1) \approx 0$, and no ranking function — and no learned policy conditioning on the same
+state — can order the candidates better than chance.
+
+Measured, on held-out HARD (fraction of episodes placing the target in the top 2):
+
+| ordering | target in top-2 |
+|---|---|
+| alphabetical (what the env used) | 42.9% |
+| by mention count | 40.0% |
+| by retrieval score | 40.0% |
+| **random** | **40.0%** |
+
+Nothing beats random, exactly as the information argument predicts. **The correct response to
+"I can't rank these" is not a better ranker — it is an action that makes ranking unnecessary.** If
+the candidates cannot be ordered, they must be **swept**: a single *fan-out* action that scopes hop 2
+to all $|C|$ candidates at once. Empirically that lifts A2 coverage from 11.9% to **68.6%**, and it
+converts the policy's job from an impossible guess into a real, learnable cost/quality decision —
+breadth costs $|C| \times \text{cost(arm)}$ and is only worth paying on bridging questions.
+
+### 20.3 Reward misspecification: paying for evidence that answers nothing
+
+The A6 reward is terminal aspect coverage, $\Phi(s_T)$. The original definition was
+
+$$\Phi(s_T) = \frac{1}{|A|} \sum_{a \in A} \mathbb{1}\left[\exists c \in U : \text{span}(a) \subseteq \text{text}(c)\right]$$
+
+where $A$ is the aspect set, $U$ the retrieved union, and $\text{span}(a) \subseteq \text{text}(c)$
+means "some span of aspect $a$ occurs as a substring of chunk $c$". Read the indicator carefully: it
+quantifies over **all** chunks. It never asks **whose filing the chunk came from.**
+
+That is a bug, and specifically it is a bug of the shape RL is famous for finding. The A2 aspect of a
+bridge question means "*that competitor's own* disclosure of $X$". A chunk from an **unrelated**
+company that happens to repeat the phrase $X$ satisfies the indicator while answering nothing. The
+fix binds each aspect to the company whose filings must supply the evidence:
+
+$$\Phi(s_T) = \frac{1}{|A|} \sum_{a \in A} \mathbb{1}\left[\exists c \in U : \text{ticker}(c) = \text{ticker}(a) \ \wedge\  \text{span}(a) \subseteq \text{text}(c)\right]$$
+
+**Why this matters more than it looks.** The size of the exploit scales with *retrieval breadth*, so
+a narrow action space hides it and a wide one detonates it. Measured under a fan-out policy on
+held-out HARD:
+
+| quantity | value |
+|---|---|
+| A2 "covered" per the old reward | 77.1% |
+| A2 genuinely evidenced (span in a chunk **from the target**) | 68.6% |
+| **spurious credit** (reward paid, target's filings never retrieved) | **8.6%** |
+| episodes where some non-target company also carries the topic phrase | 28.6% |
+
+So the moment we gave the policy the action it needed (§20.2), the reward would have started paying
+it to retrieve *broadly* rather than *correctly* — the textbook reward-hacking dynamic, and one we
+would have mistaken for "RL finally beat the baseline."
+
+**The general lesson.** A reward built from a *matching* predicate (a span, a keyword, a regex, an
+LLM judge's yes/no) is only as good as the predicate's **quantifiers**. Ask of every reward: *what is
+this maximised by?* Here the honest answer was "retrieve everything," which is not the behaviour we
+wanted, and the only reason we never saw it is that the agent was too crippled to try.
+
+### 20.4 The checklist this generalises to
+
+Before believing any RL result — positive **or** negative:
+
+1. **Reachability** ($\rho$): is the oracle action in the action set? If not, the negative is about
+   the action space.
+2. **Informability**: does the state carry the information the optimal decision depends on? Compute
+   or bound $I(Y; \text{state})$. Ours was ~0 for the central decision, and the state had *no*
+   per-candidate features at all.
+3. **Reward quantifiers**: what literally maximises the reward? If the answer is "do more of X"
+   rather than "do the task", you have a hacking surface — and a stronger agent will find it.
+4. **Ceiling vs baseline**: compute the best achievable return under the action space and compare it
+   to the scripted baseline. If the baseline is *at* the ceiling, there is no headroom and your
+   experiment has no power, regardless of sample size.
+5. **Power in the right unit**: the bootstrap unit is the **group** (correlated episodes), not the
+   row. Ours: 9 groups, CI half-width ±0.077 — only an effect ≥ 0.08 was ever detectable.
+
+Items 1–4 are all $0 to check and each one, on its own, would have saved the A6.2 training run.
+
+## 21. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).

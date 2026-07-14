@@ -1041,7 +1041,33 @@ Ridge backend = hand-rolled numpy normal equations (no sklearn dep). (4) `λ_c`=
 
 ---
 
-### A6.2 — Full reinforcement learning for RAG (the agentic loop as an MDP)
+### A6.2 — Full reinforcement learning for RAG (the agentic loop as an MDP) ⚠️ **infra ✅ · verdict RETRACTED (invalid environment)** → A6.2-E
+
+> **STATUS 2026-07-13 — the A6.2 REJECT is WITHDRAWN. Do not cite it.**
+> The infra (A6.2a–g: state, action space, env, REINFORCE/BC, PPO, train CLI, eval harness,
+> sim-to-real) is built and green. The **verdict is invalid**: the environment could not express the
+> correct action on 89% of the episodes it graded, and its reward paid out for evidence that answers
+> nothing. `react(hybrid)` was already sitting on the action space's ceiling (~0.26 vs its 0.271), so
+> a null result was structural — not a fact about RL.
+> - Full diagnosis + numbers → `docs/validations_results.md` (2026-07-13)
+> - Theory (reachability ρ, the information argument, reward quantifiers) → `docs/rag_concepts.md` §20
+> - Build journal → `docs/rag_implementation_notes.md` §A6.2-E
+>
+> **Environment-fix track (A6.2-E):**
+> - [x] **E1 — entity-bound coverage.** `Aspect.ticker`; an aspect is covered only by a chunk from the
+>   company that must evidence it. Closes an 8.6% spurious-credit reward-hacking surface. Benchmark
+>   backfilled in place (424/424 bindings corpus-verified, folds preserved). ⚠️ **supersedes the
+>   published A4/A5/A6.1 coverage numbers** — they used the hackable metric.
+> - [x] **E2 — relation-targeted hop-1 query.** `self_scope_query()`; a bridge question's self-hop
+>   searches for the *relation*, not the topic. Naming-chunk retrieval 48.6% → **100%**.
+> - [ ] **E3 — fan-out action.** Candidates provably cannot be ranked (no label-free ordering beats
+>   random), so they must be swept. A2 coverage 11.9% → **68.6%**; cost = n_candidates × arm cost,
+>   which is what finally gives the policy a real decision.
+> - [ ] **E4 — candidate state features** so the policy can price the fan-out (the 18-dim state has no
+>   per-entity features: `disc0` vs `disc1` was uninformable).
+> - [ ] **E5 — retrain + re-evaluate** against the new ceiling (HARD ~0.26 → **~0.84**); re-run the
+>   pre-registered promote rule. Also re-baseline A4/A5/A6.1 under entity-bound coverage.
+
 
 > **Detailed execution plan (slice-by-slice, module/interface designs, TransitionCache, action-space
 > cardinality, tests):** [a6_2_plan.md](a6_2_plan.md). Design brief (MDP/state/action/reward, worked

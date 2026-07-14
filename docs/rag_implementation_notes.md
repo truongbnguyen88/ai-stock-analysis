@@ -1679,3 +1679,182 @@ contextual-bandit track is CLOSED.** The only remaining lever with upside is a *
 (stratified / propensity-blended μ) — cost tuning and policy class are both ruled out — which is the opening
 move of **A6.2 (Full RL for Retrieval)**: the agentic loop as an MDP (PPO), reusing this reward oracle +
 featurizer + group split + OPE harness verbatim. See `docs/ADVANCED_RAG_TODO.md` §A6.2.
+
+---
+
+## A6.2 — Full RL for retrieval (`rag/rl/*`, `rag rl-train` / `rag rl-eval`) ⚠️ **infra built; verdict RETRACTED — see A6.2-E**
+
+**Role.** Replace the **hand-written controllers** — the A4 ReAct loop's fixed LLM prompt
+(`research/agentic.py`) and the A5 entity-bridge heuristic (`research/bridge.py`) — with **one learned
+sequential policy** over a finite-horizon MDP. The corpus is fixed, so the only thing optimized is the
+*sequence of retrieval decisions*: **which** retriever, **where** to point it, **when** to stop. A6.1 was
+the one-shot sub-problem (REJECTed); A6.2 is the genuine sequential-RL phase. Theory (the *why/math*) →
+[rag_concepts.md §19](rag_concepts.md); the slice-by-slice execution plan → [a6_2_plan.md](a6_2_plan.md);
+this section is the *how/where*.
+
+**Dependency direction.** `rag/rl/*` → `rag/` (read path, reward, features, OPE) + `research/`
+(coverage oracle, union dedup, alias map) + `graph/`. Never inverted; the CLI stays a thin adapter.
+
+### The MDP, bound to code (`rag/rl/{state,action,env}.py`)
+
+| piece | file | what it is |
+|---|---|---|
+| **State** `s_t` (18-dim, **label-free**) | `state.py` | static query block (`policy_features.featurize`, 11-dim, reused from A6.1) ⊕ 7-dim dynamic evidence block: `step_idx`, `budget_remaining`, `n_chunks`, `n_tickers_covered`, `n_sections_covered`, **`n_discovered_unretrieved`**, `last_new_chunks`. The crux feature is `n_discovered_unretrieved` — "NVDA's filing named Micron, but I haven't pulled Micron's filing yet" — computed from `mentioned_tickers(union) − searched`, exactly the A5 bridge's own signal. `STATE_FEATURE_NAMES` is **append-only** (a trained policy's weights index into it). |
+| **Action** `a_t` | `action.py` | `STOP` ∪ `(config c, scope σ)`; `c ∈ {hybrid, graph}` (pruned, default) or all 5 arms (full); `σ ∈ {self-ticker, discovered#0, discovered#1}`. **Pinned config-major order**: index 0 = STOP, then per config `(self, disc#0, disc#1)` ⇒ pruned = **7** actions, full = **16**. `action_to_request` expands an action into a **templated** (no-LLM) `RetrievalRequest`: self → the plain question; discovered#j → `"{entity_name} {question}"` + `ChunkFilter(ticker=…)`. An unpopulated discovered slot is **illegal** (`is_legal`) → masked by the policy, no-op in the env. |
+| **Transition** | `env.py` | **Deterministic**: action → template → **real** `retrieve` against the **real** corpus → fold into the deduped union (the A4 loop's own `_dedup_union`, so the union is byte-identical to production) → recompute state. No RNG in the env — the *trainer* owns episode order and seeding. |
+| **Reward** | `env.py` | Potential-based shaping with `Φ(s) = coverage(union, aspects)`: search → `r_t = γ·Φ(s_{t+1}) − Φ(s_t) − λ_c·cost(arm)`; STOP → `0`, terminal. Telescopes (Ng–Harada) to `γ^T·Φ(s_T)`, i.e. the *densified* terminal coverage — same objective as a sparse terminal reward, credited the step it is earned. |
+
+**The leakage line (the single most important invariant).** `Φ` — the **only** place the gold aspects
+enter — lives **inside the simulator**. The *state* never sees a label, so a policy trained here runs
+unchanged on a real, unlabeled query. A structural test asserts `featurize_state` takes no aspect
+parameter, and an env-level test pins that two episodes with identical questions but *different gold
+aspects* produce **identical states** and **different rewards**.
+
+**`TransitionCache` (the tractability lynchpin, `env.py`).** A transition is a pure function of
+`(arm, scope_ticker, query)`, so the env memoizes it: first hit runs the real embedder + Chroma (+ graph
+BFS), every later rollout/epoch is a table lookup. That is what turns "`$0` but slow" into "`$0` and
+fast" — on-policy PPO does thousands of rollouts. The cache key **is** the A4 anti-loop key, so a
+repeated request is a cache hit that adds 0 new chunks (dedup handles the rest) — no separate `issued`
+set needed.
+
+### The learners (`policy.py`, `reinforce.py`, `ppo.py`)
+
+- **`LinearSoftmaxPolicy`** (numpy, the **CI floor**): logits `Wx̃` with the bias folded into the weight
+  matrix (`x̃ = [s; 1]`), masked softmax (`−inf` on illegal actions), closed-form
+  `grad_log_prob = outer(onehot(a) − π, x̃)`. Holds no RNG (`act` takes an explicit `Generator`) and no
+  standardizer (**scale-agnostic** — standardization is the trainer's job).
+- **`reinforce.py`**: `rollout` / `greedy_rollout` / `replay`, reward-to-go `discounted_returns_to_go`,
+  `reinforce_update` (MC policy gradient; the linear value baseline is subtracted with its *pre-fit*
+  params and refit *after*, keeping the batch gradient unbiased), `behavior_clone` (full-batch CE), and
+  **`bridge_expert_rollout`** — the A4+A5 controller scripted into the action space (self-search →
+  bridge `disc0` while legal → STOP). BC clones that expert; it is a warm start, not a strong teacher
+  (the expert never varies the config).
+- **`ppo.py`** (torch, isolated `[rl]` extra): shared-torso MLP actor-critic with the **same numpy
+  inference surface** as the linear policy, `compute_gae`, `clipped_surrogate`, `ppo_update`. **torch is
+  lazy-imported inside this module only**, so importing `rag.rl.*` (and the CLI) stays torch-free — the
+  CI floor is numpy REINFORCE, and the PPO tests are collect-ignored unless `RUN_RL_TORCH_TESTS=1` (the
+  torch+lightgbm OpenMP clash; a day-1 subprocess smoke test pins that co-import cannot crash a session).
+- The **`RolloutPolicy` Protocol** (`reinforce.py`) is the backend-agnostic seam: `act` + `greedy_action`.
+  Both learners, the loaded checkpoint, and every A6.2g baseline satisfy it, so one rollout helper and
+  one eval harness serve all of them.
+
+### Train + freeze (`train.py`, `rag rl-train`)
+
+`train_policy` fits the standardizer, dispatches `{bc, reinforce, ppo}`, and bundles the result.
+Standardization has **two placements of the same frozen `(μ, σ)`**, and the split is the one real
+subtlety: `StandardizingEnv` at **train** time (env-side — so the states the policy *samples on*, the
+states *recorded* in the trajectory, and the states the gradient *recomputes on* are all the same
+standardized vector) and `StandardizedPolicy` at **inference** (policy-side — the loader transforms the
+raw state before `act`, so a checkpoint runs on the **raw** env and a real deploy with no wrapper). The
+round-trip test proves the two paths are byte-equivalent.
+
+The checkpoint (`outputs/experiments/<run_id>/policy.json`) freezes the weights **plus the load-bearing
+orderings** (`STATE_FEATURE_NAMES`, `action_labels`), the standardizer, the seed, and the full config;
+`load_checkpoint` **refuses** any drift (version / feature names / action labels / action count / weight
+shape). A reorder would silently remap every weight — fail loud beats loading stale weights against a
+new layout.
+
+### Held-out eval + verdict (`rleval.py`, `rag rl-eval`)
+
+The frozen policy is replayed **greedily** (deploy semantics) on the group-wise held-out fold of the
+*same* MDP, against **four baselines expressed as policies in that same MDP** — each is a script over
+the raw state (`step_idx` + the legal mask), so all of them flow through the same `env.step`, the same
+union dedup, the same coverage oracle, and the same cost accounting:
+
+| baseline | class | script |
+|---|---|---|
+| best fixed pipeline (A5.3 production) | `OneShotArmPolicy` | `arm@self` → STOP (one per arm; their max is "best fixed") |
+| A6.1 LinUCB bandit (REJECTed — reference) | `BanditOneShotPolicy` | contextual `arm@self` → STOP. Scores the state's **static block** (byte-identical to the A6.1 context) under the bandit's own frozen `(μ,σ)`, and **argmaxes only over arms the MDP offers** — a common action menu is what makes the comparison apples-to-apples. Fitted by `policy_eval.fit_bandit_baseline` (the A6.1 training path verbatim, not a re-implementation). |
+| **A4 ReAct loop + A5 bridge** (the strong one) | `ReActBridgePolicy` | `arm@self` → `arm@disc0` while legal → STOP. A test pins it to the **same trajectory** as `bridge_expert_rollout`, so this baseline *is* the production controller, not a model of it. |
+| random | `RandomActionPolicy` | uniform over the legal actions (the only stochastic candidate ⇒ the one that needs seed-averaging) |
+
+plus a **reward-hacking sentinel** (`AlwaysSearchPolicy`): never STOP, always the costliest arm. It is
+not a baseline to beat — it is a **tripwire on the reward function**. If budget-spamming scores ≥ the
+learned policy, either `λ_c` is too small or the policy has learned to spam, and the delta is not
+interpretable → promotion is blocked regardless.
+
+**Metrics + statistics.** Per candidate: mean return, coverage `Φ(s_T)`, retrievals, arm cost, LLM calls
+(0 by construction in the `$0` sim), stop rate. With `γ=1` the shaping telescopes, so
+`return == coverage − λ_c·arm_cost` holds for **every** candidate — the harness asserts this identity,
+which is a free end-to-end audit of env + reward + accumulator. The headline is the **paired
+per-episode delta** learned − best baseline, with a **group bootstrap** CI (`bootstrap_delta_stats`,
+reused from A6.1 — resample bridge *pairs*, not rows, or near-copy variants inflate the sample). The
+**train-vs-held-out gap** is reported for the learned policy **and** for the best baseline: the baseline
+never trained, so its gap measures pure fold difficulty; a large gap on both is a hard fold, a large gap
+on the learned one alone is memorization.
+
+**Pre-registered promote rule** (`rleval.verdict`, written before the numbers):
+`PROMOTE iff Δ > 0 AND CI_low > 0 AND no CTRL regression AND the sentinel does not beat the policy.`
+
+---
+
+## A6.2-E — Fixing the environment (`research/multistep_eval.py`, `research/multistep_templates.py`, `rag/rl/action.py`) ⏳ E1+E2 done
+
+### Why this phase exists
+A6.2 produced a REJECT. Before writing it up, we asked the obvious question — *is the environment
+capable of showing a win at all?* — and it is not. Two independent defects made the A6.2 verdict
+meaningless; both are in the **simulator**, not the learner. (Diagnosis + numbers:
+`docs/validations_results.md`, 2026-07-13. Theory: `docs/rag_concepts.md` §20.)
+
+### The two defects
+1. **The action space cannot express the right action.** `disc0`/`disc1` are the *alphabetically
+   first two* of a mean 9.7 discovered candidates, so on held-out HARD the correct bridge target is
+   addressable in only **11.4%** of episodes. And no label-free ranking beats random — the signal
+   for *which* competitor discloses the topic does not exist at hop 1. Combined with a hop-1 template
+   that misses the naming chunk 63% of the time, the action space caps HARD coverage at **~0.26**;
+   the scripted `react(hybrid)` baseline already scores **0.271**. A null result was structural.
+2. **The reward was hackable.** `coverage()` credited an aspect if *any* retrieved chunk carried the
+   span — so a policy that retrieved more broadly was paid for a *different* company's boilerplate.
+
+### E1 — entity-bound coverage (the correctness fix)
+- **`Aspect.ticker: str | None`** (`research/multistep_eval.py`). An aspect is covered iff some chunk
+  **from that company** carries a span. `None` ⇒ the old any-chunk semantics, so the hand-written
+  12-Q P-set (no `seed`/`target`) validates and scores exactly as before — back-compat by default.
+- `_aspect_covered(chunks, aspect)` now scopes by ticker before calling the shared `spans_present`
+  primitive; `multihop_citation_accuracy` uses the **same** binding (a citation to the wrong
+  company's chunk is not evidence for "that competitor's own …").
+- **Generator emits the binding**: `fill_bridge(seed_ticker=…, target_ticker=…)` binds A1 → seed
+  ("the *seed's* filing names the target") and A2 → target ("*that* competitor's own disclosure");
+  `fill_control(company_ticker=…)` binds its sole aspect to the seed.
+- **Migration, not regeneration.** The three `configs/rag_eval_multistep_generated*.json` were
+  backfilled in place from each row's own `seed`/`target` — regenerating would reshuffle the RNG and
+  change the D2 group split, invalidating the trained policy's folds. Every one of the **424**
+  bindings was then **verified against the corpus** (the aspect's spans must actually occur in the
+  bound company's chunks): **0 failures**.
+- **Note — this changes what MED means.** MED was defined as "the topic is co-disclosed by the seed
+  too, so a single-shot may already cover A2" — i.e. the stratum was a *label for the bug*. With the
+  binding, A2 requires the target's chunk, so MED becomes a genuine bridge and its coverage will
+  (correctly) fall.
+
+### E2 — relation-targeted hop-1 query
+- **`self_scope_query(question)`** (`rag/rl/action.py`). A bridge question asks two things at once;
+  searching its full text lets the *topic* terms dominate, so hop 1 returns the seed's own topic
+  paragraphs and never the paragraph that **names** the related companies — which is the sole source
+  of the entities hop 2 can bridge to. The self-scoped hop now searches for the **relation**
+  (`"competitors competition compete"` / `"suppliers supply depend key dependencies"`).
+- **Label-free, and gated on production.** Cues are matched against the question **text** only (never
+  `stratum`/`relation`/`target` metadata), and the gate is the production
+  `research.bridge.is_bridging` — so the simulator's notion of "this is a bridge" cannot drift from
+  the one A4/A5 deploy. A non-bridge (CTRL) question is searched verbatim; a bridge cue with no known
+  relation word falls back to the whole question rather than guessing.
+- Measured on 35 held-out HARD: naming-chunk retrieval **48.6% → 100%**.
+
+### Tests
+`test_multistep_eval.py`: coverage **rejects** the span from the wrong company, credits it from the
+bound one, keeps any-chunk semantics for an unbound aspect, and citation accuracy uses the same
+binding. `test_multistep_templates.py`: the generator emits the bindings. `test_rl_action.py`: hop 1
+asks for the relation on a bridge, leaves a CTRL question verbatim, and is label-free.
+Gate: ruff + mypy (198 files) + full suite green.
+
+### What's next (E3–E5, open)
+- **E3 — the fan-out action.** Since candidates cannot be *ranked*, they must be *swept*: one action
+  scoping hop 2 to all discovered candidates lifts A2 from 11.9% → **68.6%** (entity-bound). Cost =
+  n_candidates × arm cost, which is what finally gives the policy a real decision to make (breadth is
+  expensive and only worth it on bridging questions). The `TransitionCache` already memoizes
+  `(arm, scope_ticker, query)`, so a fan-out is N cached lookups after warm-up.
+- **E4 — candidate state features** (count, etc.) so the policy can *price* the fan-out. The current
+  18-dim state has no per-entity features at all: choosing `disc0` vs `disc1` was uninformable.
+- **E5 — retrain + re-evaluate** against the new ceiling (**~0.84** on HARD, up from ~0.26) and re-run
+  the pre-registered promote rule.
+- **Also re-baseline A4/A5/A6.1** under entity-bound coverage — their published numbers used the
+  hackable metric.

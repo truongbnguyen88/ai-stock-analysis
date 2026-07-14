@@ -1001,3 +1001,68 @@ EMBEDDING_PROVIDER=voyage PYTHONPATH=src python -m stock_agent rag gated-eval \
   --easy-arm dense --gate-feature is_bridging --hard-fixed-arm graph \
   --test-frac 0.3 --seed 42 --out outputs/rag_eval/gated_eval_seed42.json
 ```
+
+---
+
+## 2026-07-13 — A6.2 (full RL): verdict **RETRACTED — the experiment was invalid**, and a reward bug found 🔴
+
+**Headline.** The A6.2 REJECT is **withdrawn**. It is not evidence about RL. Two defects in the
+*environment* meant the MDP could not express the correct action on 89% of the episodes it graded,
+and the coverage reward paid out for evidence that answers nothing. Every coverage number below is
+superseded pending a re-run on the fixed environment.
+
+### What was run (all on the held-out fold; the numbers themselves are reproducible)
+| run | result |
+|---|---|
+| `$0` sim eval, 63 episodes, 9 candidates | rl(reinforce) greedy **+0.3643** vs best baseline react(hybrid) **+0.3875** → Δ = **−0.023**, 95% group-CI [−0.108, +0.064], P(Δ>0)=0.26 → REJECT |
+| paid sim-to-real, 24 HARD/MED, 49 calls | LLM-written queries beat the template: coverage 0.208 → 0.292 (**+0.083**); action sequences 96% unchanged |
+| paid real-env head-to-head, 24 eps, 57 calls | with **both** policies on real queries: rl **+0.2765** vs react **+0.2590**, Δ = **+0.0175**, CI [−0.050, +0.133], P(Δ>0)=**0.55** — a coin flip |
+
+The head-to-head *flips the sign* of the `$0` verdict, so the templated simulator was penalizing the
+learned policy specifically (rl gains +0.083 from real query text; react gains **0.000**). But the
+delta never clears the pre-registered gate (CI_low > 0), and the whole comparison rests on **9 bridge
+groups** — the bootstrap unit — where the CI half-width is ±0.077. The experiment could only ever
+have detected an effect ≥ ~0.08. It is underpowered by construction.
+
+### 🔴 The two invalidating defects (diagnosed 2026-07-13, `$0`)
+
+**1. The MDP cannot express the right action.** On 35 held-out HARD episodes:
+- the target is never named in hop-1 evidence **62.9%** of the time — the env's hop-1 template
+  searches the *whole question*, whose topic terms dominate, so it retrieves the seed's topic
+  paragraphs instead of the paragraph that **names** the competitors;
+- when the target *is* discovered, `disc0`/`disc1` expose only the **alphabetically first two** of a
+  mean **9.7** candidates, so it is addressable **4/13** times.
+- **Net: the correct bridge target is reachable by *any* policy in only 11.4% of HARD episodes.**
+- And **no label-free ranking beats random** (alphabetical 42.9% top-2, mention-count 40%, chunk-score
+  40%, random 40%) — you cannot know *which* competitor discloses topic X without reading their
+  filings. The ranking signal does not exist at hop 1, so no policy and no heuristic can recover it.
+- Working the ceiling: A1 ~40% + A2 ~11% ⇒ the action space caps HARD coverage at **~0.26**. React
+  scored **0.271**. **The scripted baseline was already sitting on the ceiling of the MDP** — there
+  was no headroom for any learner, and a null result was guaranteed regardless of RL's merit.
+
+**2. `coverage()` was hackable — this invalidates numbers beyond A6.2.** The metric asked "does *any*
+retrieved chunk contain the span?", never "does a chunk **from the right company**". A bridge
+question's A2 aspect reads "*that competitor's own* {topic} disclosure", so the topic phrase turning
+up in an unrelated company's 10-K is not evidence for it. Measured under a fan-out retrieval:
+reward-scored coverage **77.1%** vs truly-evidenced **68.6%** → **8.6% spurious credit**, and **28.6%**
+of episodes have some non-target company whose filings also carry the topic phrase. Any policy
+rewarded for retrieving *broadly* was partly being paid for nothing. The narrow action space is the
+only reason this never showed up. **Affects the A4/A5 multistep-eval coverage figures and the A6.1 +
+A6.2 rewards.** Treat every published coverage number as an upper bound until re-run.
+
+### Also established ($0, held-out HARD)
+- **The corpus is not the bottleneck.** All 424 gold aspects are present in the ingested chunks of the
+  company the aspect is bound to — a perfect retriever scores **1.000** (react scores 0.271).
+- **The hop-1 miss is a query-formulation bug, not a retrieval bug.** Searching the seed's filings for
+  the *relation* (`"competitors competition compete"`) instead of the whole question finds the naming
+  chunk **100%** of the time (vs 48.6%).
+- **Reranking makes hop-1 dramatically worse** (8.6% vs 48.6% with the template): the cross-encoder
+  chases the topic and buries the competitor paragraph. Do **not** un-prune `hybrid+rerank` for the
+  self hop.
+- **Fan-out works**: scoping hop 2 to *all* discovered candidates lifts A2 from 11.9% → **68.6%** (true,
+  entity-bound). Ceiling on HARD rises **~0.26 → ~0.84**.
+
+### Status
+E1 (entity-bound coverage) and E2 (relation-targeted hop-1 query) are **landed and green**. E3
+(fan-out action) / E4 (candidate state features) / E5 (retrain + re-evaluate) are **open**. No RL
+verdict is supportable until the re-run on the fixed environment.
