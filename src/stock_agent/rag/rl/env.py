@@ -26,7 +26,7 @@ rollout/epoch is a table lookup. That is what turns "``$0`` but slow" into "``$0
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,6 +57,14 @@ _DEFAULT_GRAPH_UNIVERSE = Path("configs/graph_universe.txt")
 
 # A retriever factory maps a canonical arm name to a built RetrievalSystem (tests inject a fake).
 RetrieverFactory = Callable[[str], RetrievalSystem]
+
+# A query writer rewrites the *text* of a templated request — and nothing else. Default (``None``) =
+# use the template verbatim: deterministic, $0, no LLM (the training/eval contract). The A6.2g paid
+# sim-to-real run injects an **LLM** writer here, so the real path shares every other mechanism with
+# the simulator (union dedup, discovered set, coverage oracle, cost accounting) and differs in
+# exactly ONE variable — the query string. That is what makes the measured gap attributable.
+# NOTE: an LLM writer makes the env non-deterministic; never pass one during training.
+QueryWriter = Callable[[RetrievalRequest, "MultiHopQuery", Sequence[RetrievedChunk]], str]
 
 
 def default_retriever_factory(settings: Settings) -> RetrieverFactory:
@@ -149,6 +157,7 @@ class RagRetrievalEnv:
         max_steps: int | None = None,
         per_step_k: int | None = None,
         max_evidence: int | None = None,
+        query_writer: QueryWriter | None = None,
     ) -> None:
         if not episodes:
             raise ValueError("env needs at least one episode")
@@ -158,6 +167,7 @@ class RagRetrievalEnv:
         self.settings = settings
         self.action_space = list(action_space)
         self._factory = retriever_factory or default_retriever_factory(settings)
+        self._query_writer = query_writer  # None ⇒ templated queries (deterministic, $0)
         self._alias_map = alias_map
         self._graph_universe = graph_universe
         self._graph_universe_path = graph_universe_path
@@ -201,6 +211,14 @@ class RagRetrievalEnv:
     def cache(self) -> TransitionCache:
         """The transition cache (exposed for hit/miss assertions and per-run persistence)."""
         return self._cache
+
+    @property
+    def evidence(self) -> list[RetrievedChunk]:
+        """The current deduped evidence union — the terminal synthesis input in the A6.2g paid run.
+
+        A copy, so a caller cannot mutate the trajectory state the reward depends on.
+        """
+        return list(self._union)
 
     # ---- lazy source resolution (mirrors PolicyRetriever._sources) -----------------
     def _sources(self) -> tuple[Mapping[str, Sequence[str]], Collection[str]]:
@@ -269,6 +287,12 @@ class RagRetrievalEnv:
             action, self._episode.question, self_ticker=self._episode.seed,
             discovered=self._discovered,
         )
+        if req is not None and self._query_writer is not None:
+            # Rewrite ONLY the query text — arm and scope stay the policy's decision. An empty/blank
+            # rewrite falls back to the template (never issue a contentless query).
+            written = self._query_writer(req, self._episode, list(self._union)).strip()
+            if written:
+                req = replace(req, query=written)
         n_new, cost, masked = 0, 0.0, req is None
         if req is not None:
             chunks = self._retrieve(req)

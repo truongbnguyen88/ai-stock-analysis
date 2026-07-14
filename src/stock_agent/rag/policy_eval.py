@@ -321,6 +321,35 @@ def fit_learned_policies(
     }
 
 
+def fit_bandit_baseline(
+    train: Dataset,
+    *,
+    alpha: float = 1.0,
+    ridge_lambda: float = 1.0,
+    seed: int = 42,
+) -> tuple[LinUCB, np.ndarray, np.ndarray]:
+    """Fit the A6.1 LinUCB on a train fold and return it with its context standardizer (A6.2g).
+
+    Reproduces ``evaluate_offline``'s training path exactly — train-fit z-score, a uniform
+    ``mu``-log of the train fold (seed ``seed``), one batch ridge/UCB pass — so the RL eval's bandit
+    baseline is *the* A6.1 policy, not a re-implementation. Returns ``(linucb, mean, std)``; the
+    caller must standardize contexts with the same ``(mean, std)`` before scoring (the scale LinUCB
+    was fit on).
+
+    Typed to the concrete ``LinUCB`` (not ``Policy``) because the A6.2g baseline needs
+    ``ucb_scores`` to re-argmax over the MDP's restricted arm menu.
+    """
+    mean, std = _fit_standardizer(train.contexts)  # fit on TRAIN only (leakage-safe)
+    train_x = _standardize(train.contexts, mean, std)
+    actions, _, rewards = synthesize_log(
+        train_x, train.reward_matrix, UniformPolicy(train.n_arms, seed=seed)
+    )
+    linucb = LinUCB(train.d, train.n_arms, alpha=alpha, ridge_lambda=ridge_lambda).fit(
+        train_x, actions, rewards
+    )
+    return linucb, mean, std
+
+
 def _evaluate_policy(
     policy: Policy,
     test_x: np.ndarray,

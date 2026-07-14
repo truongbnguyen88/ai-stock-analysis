@@ -168,3 +168,63 @@ def build_react_user(
         lines.append(f"[{i}] {rc.citation_label()}: {snippet}")
     lines += ["", "Decide the next action (search or stop) as JSON."]
     return "\n".join(lines).rstrip()
+
+
+# ---- A6.2g: the query writer for the paid sim-to-real run ----------------------------------------
+# The learned RL policy owns *which* retriever, *where* to point it, and *when* to stop. The LLM is
+# left exactly one job: turn that decision into the search string a human analyst would type. That
+# is the single variable separating the $0 simulator (a template) from reality, so the prompt must
+# NOT be able to change the arm, the scope, or the stop decision — it only writes the query text.
+RL_QUERY_SYSTEM = """You write ONE search query over a company's SEC filings.
+
+A retrieval policy has already decided WHICH company's filings to search. Your only job is to \
+phrase the search query that will surface the passages still missing for the QUESTION.
+
+STRICT RULES:
+- Emit exactly ONE JSON object. NO prose, NO markdown, NO answer, NO citations, NO numbers of \
+your own, NO commentary.
+- The query is a natural-language search over filing text (risk factors, MD&A, business \
+sections). Use the vocabulary a filing would use, not the question's phrasing.
+- Target the GAP: write the query for what the EVIDENCE GATHERED still lacks. Do not restate a \
+query already issued.
+- Do not name a company other than the SCOPE company unless the question requires the link.
+
+OUTPUT: Return ONLY a single JSON object (no prose, no markdown):
+{
+  "query": "<the search query>"
+}"""
+
+
+def build_rl_query_user(
+    question: str,
+    *,
+    scope_ticker: str | None,
+    scope_name: str | None,
+    issued: Sequence[str],
+    evidence: Sequence[RetrievedChunk],
+) -> str:
+    """Render the query-writing message: question + the policy's chosen scope + what is missing.
+
+    Compact by design (a short snippet per chunk) — this call runs once per retrieval hop, so it is
+    the cost-sensitive one; the full chunk text only ever reaches the terminal synthesis call.
+    """
+    scope = scope_name or scope_ticker or "the company in the question"
+    lines = [
+        f"QUESTION: {question}",
+        "",
+        f"SCOPE (search THIS company's filings): {scope}"
+        + (f" [{scope_ticker}]" if scope_ticker else ""),
+        "",
+    ]
+    if issued:
+        lines.append("QUERIES ALREADY ISSUED (do not repeat):")
+        lines += [f"- {q!r}" for q in issued]
+        lines.append("")
+    lines.append(f"EVIDENCE GATHERED ({len(evidence)} chunks):")
+    if not evidence:
+        lines.append("(none yet — this is the first hop)")
+    for i, rc in enumerate(evidence, start=1):
+        snippet = " ".join(rc.chunk.text.split())[:_EVIDENCE_SNIPPET_CHARS]
+        lines.append(f"[{i}] {rc.citation_label()}: {snippet}")
+    lines += ["", "Write the search query as JSON."]
+    return "\n".join(lines).rstrip()
