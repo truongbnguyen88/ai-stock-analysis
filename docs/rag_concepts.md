@@ -2853,6 +2853,11 @@ The rank-1 chunk of *every* branch therefore carries the *same* score. Sorting b
 to the insertion order it was meant to fix. **Rank is the only meaningful cross-branch quantity** —
 which is exactly why the merge is round-robin over ranks.
 
+> ⚠️ **Read §20.7 before taking that last sentence as final.** It is true *of RRF*, not of scoring in
+> general. A **cross-encoder** produces a genuinely cross-branch-comparable score, and swapping it in
+> for the round-robin is worth more than everything else in §20.4 combined. The sentence above is the
+> correct conclusion from a premise (RRF) that we were free to change.
+
 ### 20.5 If the fix is scriptable, the baseline must get it too
 
 A trap that is easy to walk into once §20.1 is fixed, and more seductive than the original bug
@@ -2902,6 +2907,123 @@ Before believing any RL result — positive **or** negative:
    row. Ours: 9 groups, CI half-width ±0.077 — only an effect ≥ 0.08 was ever detectable.
 
 Items 1–4 are all $0 to check and each one, on its own, would have saved the A6.2 training run.
+
+### 20.7 Seating: retrieval is not the finish line, and *a posteriori* ranking is legal
+
+Fixing the sweep (§20.4) exposed the next stage. Retrieving a chunk and getting it **into the
+synthesis context** are different events, and the gap between them was costing more than everything
+§20.4 bought.
+
+**Setup and symbols.** A fan-out searches $N$ candidate companies, each branch returning $k$ chunks.
+Hop 1 has already gathered $e$ chunks. The union handed to synthesis is capped at $C$ chunks. Let
+$r^{\star}$ be the **rank of the target's span-bearing chunk inside its own branch** (0-indexed, so
+$r^{\star}=0$ means "top hit"); $r^{\star} = \infty$ if the branch never retrieved it at all.
+
+**The breadth-first rule is arithmetic, not a heuristic.** §20.4 concluded: round-robin by rank, and
+widen the cap to $C = e + N$ so every branch gets a seat. Substitute those two choices into each
+other. The round-robin emits *all* $N$ rank-0 chunks before *any* rank-1 chunk, and the cap admits
+exactly $C - e = N$ of them. Therefore
+
+$$\text{seated} \iff r^{\star} = 0$$
+
+The rule that was designed to guarantee *breadth* silently became **"be your branch's top hit, or you
+do not exist."** Nothing at rank 1 or deeper can ever seat, at any $N$. Measured over the 33 reachable
+held-out targets, the rank histogram is
+
+| $r^{\star}$ | 0 | 1 | 2 | 3 | 4 | not retrieved |
+|---|---|---|---|---|---|---|
+| count | 9 | 1 | 3 | 4 | 4 | 12 |
+
+so $P(r^{\star} = 0) = 9/33 \approx 0.273$: **12 of the 21 targets whose branch had already found the
+evidence were thrown away by the cap.** And of the $C = 25$ seated chunks, $18$ were rank-0 chunks
+from companies that are not the target — the budget was spent on noise.
+
+**The seemingly obvious fix, and why it is a trap.** Seat $m$ chunks per branch instead of 1. Then
+seated $\iff r^{\star} < m$, at a context cost of
+
+$$C_m = e + m N$$
+
+Read the histogram: $m=2$ buys **one** extra episode (9 → 10) and $m=5$ needs $C = 6 + 5 \cdot 19 =
+101$ chunks. That is the "coverage-vs-context Pareto choice" we believed we faced. **It was a false
+dilemma** — it takes the round-robin merge as *given* and asks only how much deeper to dig.
+
+**Why scores were rejected, and why that reasoning does not survive.** §20.4 ruled out sorting the
+pool by score because RRF's score is **rank-derived**,
+
+$$s_{\mathrm{RRF}}(d) = \sum_{L} \frac{1}{k_{\mathrm{RRF}} + \mathrm{rank}_L(d)}$$
+
+so every branch's rank-1 chunk carries an *identical* score and sorting degenerates to insertion
+order. That argument is sound — **about RRF**. It is not about scoring. A **cross-encoder** computes
+
+$$\sigma(q, d) \in \mathbb{R}$$
+
+jointly from the query and the chunk *text*, with no reference to the branch $d$ came from. Its scale
+is therefore shared across branches by construction, and it induces a genuine total order on the
+pooled $N k$ chunks. Seat the global top $C - e$ of that order and the target's chunk competes **on
+merit** instead of being locked out by "your branch already spent its one seat."
+
+**The information argument, stated precisely enough to see its limit.** §20.2 proved candidates
+cannot be ranked: hop-1 evidence $E_1$ carries essentially no signal about which candidate $Y$
+discloses the topic,
+
+$$I(Y; E_1) \approx 0$$
+
+which is *why* we must sweep. But that is a statement about $E_1$ — and it says **nothing** about the
+evidence the sweep itself produces. After each candidate's filings have actually been searched *for
+the topic*, the retrieved content $E_2$ is precisely the observation that discriminates: the target
+discloses the topic, most of the other $N-1$ do not. So
+
+$$I(Y; E_1) \approx 0 \quad\text{but}\quad I(Y; E_2) > 0$$
+
+**Ranking candidates *a priori* is impossible; ranking them *a posteriori* is not.** The
+impossibility result is about hop-1 and does not reach seating. This is the single conceptual move
+of §20.7, and it is worth stating as a rule: *an impossibility proof constrains the stage it was
+proved about — check its premises before letting it govern a later stage.*
+
+**Consequence — the Pareto choice evaporates.** Exploit $I(Y; E_2) > 0$ directly: rescore the pool,
+keep only the $b$ **best-scoring branches**, $m$ chunks each. Context is now $e + b m$, *independent
+of $N$*. Measured on the held-out fold ($b = m = 3$): it discards 16 of the 19 branches and still
+beats the production rule by **+0.083 coverage on a smaller context (13.5 vs 15.0 chunks)** — a
+strict Pareto improvement, where §20.4's framing had promised a trade.
+
+| seating rule | seated | coverage | context |
+|---|---|---|---|
+| breadth-first, $C = e+N$ (was production) | 21.4% | 0.500 | 15.0 |
+| pooled cross-encoder, top $C$ | **42.9%** | **0.607** | 21.7 |
+| top-$b$ branches, $m$ each ($b=m=3$) | 38.1% | 0.583 | **13.5** |
+
+Seating **efficiency** — the share of *retrieved* targets that reach synthesis — goes from
+$9/21 = 43\%$ to $18/21 = 86\%$ (and 96% with a stronger cross-encoder).
+
+**Worked micro-example (the exact numbers the regression test asserts).** $N = 5$ candidates, $k = 2$
+chunks each, hop 1 gives $e = 1$, cap $C = 4$. The target TSM's evidence sits at $r^{\star} = 1$; a
+decoy company repeats the same span verbatim.
+
+- **breadth-first** ($C' = \max(4, 1+5) = 6$): the union is hop 1 plus all five rank-0 chunks — every
+  branch is "seated", the E3 guarantee *holds*, and **A2 is still uncovered**, because TSM's evidence
+  is at rank 1. Coverage $0.5$.
+- **pooled cross-encoder** (flat $C = 4$): the two topical chunks outscore the eight fillers, so TSM's
+  rank-1 chunk seats. Coverage $1.0$ — on a **smaller** union (4 vs 6).
+- The **decoy also seats**: $\sigma(q, d)$ is entity-blind and cannot tell TSM's disclosure from the
+  copy. That is fine, and it is *load-bearing that it is fine* — **entity-bound coverage (§20.3) is
+  what refuses the decoy.** Seating and grounding are separate guarantees; do not ask one to do the
+  other's job.
+
+**Two coupled traps** (both are in the regression suite, and each fails independently):
+
+1. **A no-op reranker must fall back to breadth-first, not to the pooled order.** The pool is
+   branch-major, so seating it under a cap spends the whole budget on the alphabetically-first
+   candidates — §20.1's bias, rebuilt.
+2. **The ordering and the cap must agree on the same rule.** A reranked rule's flat cap is safe *only
+   because* the reranked order puts the best chunks first. Pair a breadth-first ordering with a flat
+   cap and candidates get dropped alphabetically again — the original bug, reassembled from two
+   individually reasonable halves. Resolve the effective rule **once**; feed it to both.
+
+**What this does not fix.** Seating is now ~96% efficient, so the binding constraint moves *back* to
+retrieval: for 12 of 33 reachable episodes the span is not in the target's top-6 at all, and fetching
+deeper barely helps ($k = 6 \to 12$ recovers 2). The residual loss is **query formulation**, not depth
+and no longer seating. Each fix reveals the next bottleneck — which is the point of measuring the
+funnel to the *last* stage the metric actually reads (§20.4).
 
 ## 21. References
 

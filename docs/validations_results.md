@@ -1095,9 +1095,16 @@ learned policy would have to win on.
 `len(union) + n_branches`; with 19 candidates that is already 25 chunks). But the target's
 span-bearing chunk is only the *top* hit in its branch 27.3% of the time — rank histogram over the
 33 reachable targets: `{rank0: 9, rank1: 1, rank2: 3, rank3: 4, rank4: 4}`. So **12 targets are
-retrieved but never seated.** Seating them needs `m ≥ 2` chunks per branch ⇒ cap = `e + m·N`, i.e.
-6 + 2×19 = **44 chunks** of synthesis context in the worst case. That is a real coverage-vs-context
-Pareto choice, not a free fix.
+retrieved but never seated.**
+
+~~Seating them needs `m ≥ 2` chunks per branch ⇒ cap = `e + m·N`, i.e. 6 + 2×19 = **44 chunks** of
+synthesis context in the worst case. That is a real coverage-vs-context Pareto choice, not a free
+fix.~~ ⚠️ **RETRACTED by E7 (below) — there was no Pareto choice.** This assumed the only way to seat
+a deeper chunk is to seat *more* chunks per branch, i.e. it took the round-robin merge as given. Pool
+the branches and rescore them with a **cross-encoder** instead and the target's chunk competes on
+merit: `top_branches` beats this rule by **+0.083 coverage on a SMALLER context (13.5 vs 15.0
+chunks)**. The depth-`m` ladder was the expensive way to buy what a posteriori branch selection gives
+free. **Do not restore the 44-chunk framing.**
 
 **Reranking the hop-2 branches — modest, not a silver bullet** (33 reachable targets, top_k=6):
 
@@ -1115,9 +1122,75 @@ so the arm that wins is hop-dependent. **That is itself an argument for a learne
 Even with perfect seating, the retrieval ceiling is 63.6% of reachable ⇒ ~50% of bridge episodes:
 the span simply is not in the target's top-6 for the topic query 36.4% of the time.
 
+### E7 — seating: the cap was throwing away evidence the sweep had already found
+
+**The rule was arithmetic, not a heuristic.** `breadth_first` merges branches round-robin by rank and
+caps at `len(union) + N`. With a hop-1 union of 6 and N=19 that cap is *exactly* 25, and the
+round-robin's first 19 entries are *exactly* the 19 rank-0 chunks. So the production seating rule
+was, literally, **"be your branch's rank-0 hit, or you do not exist."** The target's span-bearing
+chunk clears that bar only **27.3%** of the time — so **12 of the 21 episodes whose branch had
+already retrieved the span were evicted by the cap**, and **18 of the 25 seated chunks were rank-0
+noise from non-target companies**.
+
+**The fix.** Pool every branch's chunks and rescore them with a **cross-encoder**. Its scores are
+comparable *across* branches; RRF's are not (they are rank-derived, `1/(k+rank)`, so every branch's
+rank-1 chunk carries an identical score — which is precisely why `breadth_first` had to exist).
+Retrieval is held **byte-identical** in the table below; only the seating rule varies.
+
+| seating rule | reranker | A2 cov | all cov | ctx chunks |
+|---|---|---|---|---|
+| `breadth_first` (**production**) | — | 21.4% | 0.500 | 15.0 |
+| `pooled_rerank@20` | local MiniLM | 40.5% | 0.595 | 18.1 |
+| `pooled_rerank@25` | local MiniLM | 42.9% | 0.607 | 21.7 |
+| `pooled_rerank@25` | **Voyage rerank-2** | **47.6%** | 0.631 | 21.7 |
+| `pooled_rerank@25` (fetch k=12) | **Voyage rerank-2** | **52.4%** | **0.655** | 23.5 |
+| `top_branches` (b=3, m=3) | local MiniLM | 38.1% | 0.583 | **13.5** |
+| `top_branches` (b=3, m=3) | Voyage | 40.5% | 0.595 | **13.5** |
+
+**Coverage 0.500 → 0.607 (local) / 0.655 (Voyage) — roughly 7–10× the entire scripted sweep's
++0.016.** Seating *efficiency* (seated ÷ retrieved) goes **43% → 96%**.
+
+**`I(Y;E₂) > 0` — the E3 impossibility result does not reach seating.** E3 established `I(Y;E₁) ≈ 0`:
+hop-1 evidence carries no signal about *which* candidate discloses the topic, so candidates cannot be
+ranked **a priori** and must be swept. That is silent about `I(Y;E₂)`. Once each candidate's filings
+have actually been searched *for the topic*, the retrieved content is exactly the observation that
+discriminates — the target discloses the topic, most of the other N−1 do not. Ranking candidates
+**a posteriori** is legal, and it works: `top_branches` discards 16 of 19 branches and still beats
+production by **+0.083 coverage on a SMALLER context (13.5 vs 15.0 chunks)** — a strict Pareto
+improvement. **This kills the "seating them needs m≥2 ⇒ 44-chunk context" Pareto choice**: the
+depth-`m` ladder was the expensive way to buy what a posteriori selection gives away free.
+
+**The reranker's strength is load-bearing** (which is why the paid arm was run): Voyage beats local
+MiniLM by 5–7 points at every setting, and `top_branches` under MiniLM *degrades* when fed a deeper
+pool (k=12: 33.3% vs pooled's 45.2%) — a weak reranker picks the wrong branches. A local-only
+experiment would have reported 42.9% and understated the fix. **Default stays LOCAL anyway**: the env
+is the RL simulator (thousands of rollouts) and must remain `$0` and deterministic; Voyage is the
+sim-to-real **arbitrator**, exactly like the LLM `QueryWriter`.
+
+⚠️ **Upper bound, same caveat as E6:** the benchmark interpolates the gold A2 span verbatim as
+`{topic}`, so the pooled query the cross-encoder scores against literally contains the gold text. The
+*relative* ordering (pooled ≫ breadth-first) is robust — both rules see identical branches retrieved
+with an identical query — but the magnitudes need the paid LLM-query-writer run to arbitrate.
+
+### The funnel, after E7 (42 bridge episodes with an A2 target)
+
+| stage | pre-E3 | after E3 | after E3+E6 | **after E7** |
+|---|---|---|---|---|
+| 1. target IS a discovered candidate (reachability) | 11.4% | 78.6% | 78.6% | 78.6% |
+| 2. its branch **retrieved** the evidence | — | 33.3% | 50.0% | 50.0% (54.8% at k=12) ← **the wall** |
+| 3. that chunk **seated** in the capped union | — | 21.4% | 21.4% | **42.9% / 52.4%** |
+| 4. A2 scored covered | ~0% | 21.4% | 21.4% | **42.9% / 52.4%** |
+
+**Seating is no longer the constraint — stage 2 is, again.** For 12 of the 33 reachable episodes the
+span is simply not in the target's top-6 for the topic query, and **fetching deeper barely helps**
+(k=6 → k=12 recovers only 2 more: 50.0% → 54.8%, and the two it finds sit at ranks 6 and 7). So the
+residual loss is a **query-formulation** problem, not a depth problem and no longer a seating one.
+That is the next real lever, and it is exactly what the paid LLM query-writer speaks to.
+
 ### Status
 E1 (entity-bound coverage), E2 (relation-targeted hop-1 query), E3 (fan-out action + `sweep()`
-baseline) and E6 (topic-targeted hop-2 query) are **landed and green**. **E4 is closed as obsolete,
+baseline), E6 (topic-targeted hop-2 query) and **E7 (pooled-rerank seating)** are **landed and
+green**. **E4 is closed as obsolete,
 not built** — it existed so the policy could *rank* `disc0` vs `disc1`, and the information argument
 that motivated E3 (`I(Y; E₁) ≈ 0`) says per-candidate features are uninformative *by construction*;
 what the policy needs to *price* a sweep (`n_discovered_unretrieved`, `is_bridging`,

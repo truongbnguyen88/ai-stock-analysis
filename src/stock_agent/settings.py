@@ -210,6 +210,25 @@ class Settings(BaseSettings):
     agentic_max_steps: int = 3  # max decision iterations (+1 terminal synthesis ⇒ ≤4 LLM calls)
     agentic_per_step_k: int = 6  # chunks retrieved per search step (before the union dedup)
     agentic_max_evidence: int = 20  # cap on the deduped union handed to the terminal synthesis
+    # Fan-out SEATING (advanced-RAG A6.2-E7) — which of a sweep's N branches reach the synthesis
+    # union. "breadth_first" = the E3 rule (round-robin by rank, cap widened to seat every branch);
+    # with a hop-1 union of 6 and N=19 that cap is exactly 25, so it degenerates to "seat rank 0 or
+    # you do not exist" and discarded 12 of the 21 held-out episodes whose branch HAD retrieved the
+    # span. "pooled_rerank"/"top_branches" pool the branches and rescore them with a cross-encoder,
+    # whose scores (unlike RRF's rank-derived ones) are comparable ACROSS branches. See rag/rl/
+    # seating.py. Own provider knob on purpose: reranking helps hop-2 seating but is catastrophic on
+    # hop-1 retrieval, so it must not share the (default-OFF) rerank_provider switch.
+    # Default = pooled_rerank + LOCAL: the env is the RL simulator, and training does thousands of
+    # rollouts, so it must stay $0 and deterministic. Voyage seats better (52.4% vs 45.2% A2 on the
+    # held-out fold) but it is a paid, versioned network call — it is the sim-to-real ARBITRATOR
+    # (like the LLM QueryWriter), not the training default. top_branches gives a smaller context but
+    # degrades when the reranker is weak (minilm k=12: 33.3% vs pooled's 45.2%), so it is not the
+    # default it has to be robust to.
+    rl_seating_rule: Literal["breadth_first", "pooled_rerank", "top_branches"] = "pooled_rerank"
+    rl_seating_provider: Literal["none", "local", "voyage"] = "local"  # "none" ⇒ breadth_first
+    rl_seating_model: str = ""  # override the seating cross-encoder; "" = the provider default
+    rl_seating_top_branches: int = 3  # "top_branches": how many branches survive (b)
+    rl_seating_per_branch: int = 3  # "top_branches": chunks kept per surviving branch (m)
     # Deterministic entity-bridge (A4 bridging fix). After the loop, for a *bridging* question the
     # ReAct model reliably refuses to pivot its search to a discovered related entity (it stays on
     # the question's subject). This makes that pivot structurally: resolve company NAMES in the

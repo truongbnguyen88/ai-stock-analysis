@@ -1083,15 +1083,44 @@ Ridge backend = hand-rolled numpy normal equations (no sklearn dep). (4) `λ_c`=
 >   the *seed* around the 2 that matter. `discovered_scope_query()` strips the frame to the topic.
 >   Target's-branch retrieval **33.3% → 50.0%**. ⚠️ the benchmark interpolates the gold span verbatim
 >   as `{topic}`, so this lift is an **upper bound**; the paid LLM-query-writer run arbitrates.
-> - [ ] **E5 — retrain + re-evaluate**, now against **`sweep(hybrid)`** (not `react`). Also
->   re-baseline A4/A5/A6.1 under entity-bound coverage.
+> - [x] **E7 — pooled-rerank SEATING** (`rag/rl/seating.py`). E3's `breadth_first` rule (round-robin
+>   by rank, cap widened to `len(union) + N`) is *arithmetically* "seat rank-0 of every branch and
+>   nothing deeper": with a hop-1 union of 6 and N=19 the cap is exactly 25, and the round-robin's
+>   first 19 entries are the 19 rank-0 chunks. The target's chunk is its branch's rank-0 hit only
+>   **27.3%** of the time ⇒ **12 of the 21 episodes whose branch HAD retrieved the span were evicted
+>   by the cap**, and 18 of the 25 seated chunks were noise from non-target companies.
+>   **Fix:** pool every branch's chunks and rescore them with a **cross-encoder**, whose scores are
+>   comparable *across* branches (RRF's are not — they are rank-derived, so every branch's rank-1
+>   chunk ties, which is the whole reason `breadth_first` existed).
+>   **Seating 21.4% → 42.9% (local) / 52.4% (Voyage); coverage 0.500 → 0.607 / 0.655.** Seating
+>   *efficiency* (seated ÷ retrieved) goes **43% → 96%**: seating is no longer the bottleneck.
+>   - **The E3 impossibility result does not reach seating.** `I(Y;E₁) ≈ 0` says hop-1 evidence
+>     cannot rank candidates *a priori* — hence the sweep. It says nothing about `I(Y;E₂)`: once each
+>     candidate's filings have actually been searched for the topic, the retrieved content is exactly
+>     the observation that discriminates. Ranking candidates **a posteriori** is legal, and works.
+>   - **`top_branches` is a strict Pareto win, killing the "44-chunk Pareto choice"**: it discards 16
+>     of 19 branches and still beats production by **+0.083 coverage on a SMALLER context** (13.5 vs
+>     15.0 chunks). The depth-`m` ladder was the expensive way to buy what a posteriori selection
+>     gives free.
+>   - **Two coupled traps** (each independently load-bearing, both mutation-tested): a no-op reranker
+>     must fall back to `breadth_first` and **not** to the raw pooled order (which is branch-major ⇒
+>     alphabetical starvation, the E3 bug rebuilt); and the **ordering and the cap must agree on the
+>     same effective rule** — a reranked rule's flat cap is safe only *because* the reranked order
+>     puts the best chunks first. Hence `effective_rule()` is resolved once and fed to both.
+>   - **Default = `pooled_rerank` + LOCAL cross-encoder**: the env is the RL simulator (thousands of
+>     rollouts) and must stay `$0` + deterministic. **Voyage seats better (52.4% vs 45.2%)** and is
+>     the sim-to-real **arbitrator**, like the LLM `QueryWriter` — not the training default.
+> - [ ] **E5 — retrain + re-evaluate**, now against **`sweep(hybrid)`** (not `react`), **in the
+>   E7-seated env**. Also re-baseline A4/A5/A6.1 under entity-bound coverage.
 >   **Measured reality check (see validations_results.md):** E3 fixed *reachability* (11.4% →
->   **78.6%**) but the scripted `sweep(hybrid)` gains only **+0.016 coverage** and **−0.015 return**
->   — it does not pay for its 3.7× arm cost. The bottleneck moved to **evidence seating** (21.4%: the
->   sweep seats ~1 chunk/branch, but the target's chunk is rank-0 only 27.3% of the time). So the
->   learnable margin is now explicitly the **cost** side (when *not* to sweep) plus **per-hop arm
->   choice** (rerank helps hop 2 +6pts, is catastrophic on hop 1). The old "ceiling ~0.84" was
->   **wrong** — it never checked whether retrieved chunks survived the union cap.
+>   **78.6%**), E7 fixed *seating* (21.4% → 42.9%), and the bottleneck has moved **back to stage 2**:
+>   the span is simply not in the target's top-6 for **12 of 33** reachable episodes, and fetching
+>   deeper barely helps (k=12 buys only +2). That is a **query-formulation** problem, not a depth or
+>   seating one — the next real lever, and the one the paid LLM query-writer speaks to.
+>   The learnable margin for RL stays the **cost** side (when *not* to sweep) plus **per-hop arm
+>   choice** (rerank helps hop 2, is catastrophic on hop 1). ⚠️ **Still power-limited: 18 test groups
+>   ⇒ ±0.077 CI vs a ~0.02–0.05 effect** — run E5 descriptively; *promote* is blocked on benchmark
+>   size, not on RL. The old "ceiling ~0.84" was **wrong** — it never checked the union cap.
 
 
 > **Detailed execution plan (slice-by-slice, module/interface designs, TransitionCache, action-space

@@ -1932,3 +1932,90 @@ argument for a learned per-hop policy, and a knob E5 should give it.
 `sweep(hybrid)`. The learnable margin is now explicit and narrow: the **cost** side (when *not* to
 sweep) and **per-hop arm choice**. If nothing beats the scripted sweeper there, RL genuinely adds
 nothing to this problem — a legitimate finding.
+
+---
+
+## A6.2-E7 — pooled-rerank seating (`rag/rl/seating.py`)
+
+**Role.** E3 gave the policy an action that can *reach* the target (fan-out), E6 made the target's
+branch *retrieve* the span. E7 fixes the stage after both: getting that chunk **into the capped union
+the synthesis actually reads**. A retrieval that never reaches the synthesis context did not happen.
+
+**The bug, and why nobody saw it.** E3's seating rule was: merge branches round-robin by rank, widen
+the cap to `len(union) + n_branches`. Each half is individually sound. Compose them and substitute
+the real numbers — hop-1 union `e=6`, `N=19` candidates ⇒ cap `= 25`, and the round-robin emits all
+19 rank-0 chunks before any rank-1 chunk — and the rule collapses into **"seat rank-0 of every
+branch and nothing deeper."** The target's chunk is its branch's rank-0 hit only **27.3%** of the
+time, so **12 of the 21 episodes whose branch had already found the span were evicted by the cap**,
+and 18 of the 25 seated chunks were noise from non-target companies. The defect is arithmetic, not a
+tuning miss — it is invisible unless you write the two design choices down together.
+
+**Key files.**
+- `rag/rl/seating.py` (new) — `SeatingRule`, `merge_breadth_first` (the E3 rule, preserved),
+  `seat_branches`, `fanout_cap`, `effective_rule`, `build_seating_reranker`.
+- `rag/rl/env.py` — `_seat()` / `_evidence_cap()` now delegate; `_merge_branches` moved out.
+  Reranker is built **lazily** (a fan-out that needs one), never at construction — otherwise every
+  unit test would download a cross-encoder.
+- `settings.py` — `rl_seating_rule` / `rl_seating_provider` / `rl_seating_model` /
+  `rl_seating_top_branches` / `rl_seating_per_branch`.
+
+**How it works.** On a fan-out (and *only* a fan-out — single-branch steps are untouched and every
+pre-E7 number stays byte-identical), pool all `N × k` retrieved chunks and rescore them with a
+**cross-encoder** against the *topic* query (`discovered_scope_query(question, "")`, no candidate-name
+prefix — a name would tilt the scorer toward one branch and destroy the very cross-branch
+comparability the rule depends on). Then either take the global top-`C` (`pooled_rerank`) or keep the
+`b` best-scoring **branches** at `m` chunks each (`top_branches`).
+
+**Why a cross-encoder and not the retrieval score.** E3 correctly rejected score-sorting: RRF scores
+are rank-derived (`1/(k+rank)`), so every branch's rank-1 chunk *ties*, and sorting degenerates to
+insertion order. That argument is about **RRF**, not about scoring. A cross-encoder scores
+`(query, text)` jointly with no reference to the source branch, so its scale is shared across branches
+by construction. **The premise was changeable; we just hadn't changed it.**
+
+**The conceptual unlock.** E3 rests on `I(Y; E₁) ≈ 0` — hop-1 evidence cannot rank candidates, hence
+the sweep. That says nothing about `I(Y; E₂)`: once each candidate's filings have been searched *for
+the topic*, the retrieved content is exactly what discriminates. **A priori ranking is impossible; a
+posteriori ranking is not.** `top_branches` proves it — it throws away 16 of 19 branches and *gains*
+coverage. This also **kills the "44-chunk Pareto choice"** the E3 notes recorded: that framing assumed
+the only way to seat a deeper chunk is to seat more chunks *per branch*.
+
+**Results (held-out fold, 42 bridge episodes; retrieval held byte-identical, only seating varies).**
+
+| rule | reranker | A2 seated | coverage | ctx |
+|---|---|---|---|---|
+| `breadth_first` (production) | — | 21.4% | 0.500 | 15.0 |
+| `pooled_rerank` | local MiniLM | 42.9% | 0.607 | 21.7 |
+| `pooled_rerank` | Voyage rerank-2 | **52.4%** | **0.655** | 23.5 |
+| `top_branches` (b=3,m=3) | local MiniLM | 38.1% | 0.583 | **13.5** |
+
+Coverage **+0.107 (local) / +0.155 (Voyage)** — roughly 7–10× the scripted sweep's entire +0.016.
+Seating efficiency (seated ÷ retrieved) **43% → 96%**.
+
+**Traps fixed while building it** (mutation-tested — each fails independently if reverted):
+1. A **no-op** reranker must fall back to `breadth_first`, *not* to the raw pooled order (which is
+   branch-major ⇒ alphabetical starvation — the E3 bug, rebuilt).
+2. The **ordering and the cap must agree on one effective rule**. A reranked rule's flat cap is safe
+   only *because* the reranked order puts the best chunks first; pairing it with the breadth-first
+   fallback order drops candidates alphabetically. `effective_rule()` is resolved once, fed to both.
+
+**Default = `pooled_rerank` + LOCAL, deliberately.** The env is the RL *simulator*: training does
+thousands of rollouts and must stay `$0` and deterministic. Voyage seats better and is the
+sim-to-real **arbitrator** (same seam as the LLM `QueryWriter`), not the training default.
+`top_branches` is not the default despite its smaller context because it *degrades* under a weak
+reranker (MiniLM at k=12: 33.3% vs pooled's 45.2%) — a default has to be robust.
+
+**Seating has its own provider knob** (`rl_seating_provider`), separate from `rerank_provider`,
+because reranking has **opposite signs** at the two hops: catastrophic on hop-1 retrieval (it buries
+the paragraph that *names* the competitors, 8.6% vs 48.6%) and decisive for hop-2 seating. One switch
+cannot answer both questions.
+
+**How the next phase uses it.** E5 (retrain + re-evaluate vs `sweep(hybrid)`) now runs in an
+environment that is valid at all three stages. ⚠️ Seating is no longer the bottleneck — **stage 2 is,
+again**: for 12 of 33 reachable episodes the span is not in the target's top-6, and deeper fetch
+barely helps (k=12 → +2). That residual is **query formulation**, which is what the paid LLM
+query-writer speaks to.
+
+⚠️ **Upper bound (same caveat as E6):** the benchmark interpolates the gold A2 span verbatim as
+`{topic}`, so the pooled query the cross-encoder scores against contains the gold text. The *relative*
+ordering (pooled ≫ breadth-first) is robust — both rules see identical branches — but the magnitudes
+need the paid query-writer run to arbitrate.

@@ -34,6 +34,7 @@ import numpy as np
 
 from stock_agent.rag.policy_features import ContextVector, featurize
 from stock_agent.rag.read_path import build_graph_system, build_named_system
+from stock_agent.rag.rerank import Reranker
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.rag.reward import DEFAULT_ARM_COSTS
 from stock_agent.rag.rl.action import (
@@ -44,7 +45,16 @@ from stock_agent.rag.rl.action import (
     ScopeKind,
     action_label,
     action_to_requests,
+    discovered_scope_query,
     is_legal,
+)
+from stock_agent.rag.rl.seating import (
+    SeatingRule,
+    build_seating_reranker,
+    effective_rule,
+    fanout_cap,
+    merge_breadth_first,
+    seat_branches,
 )
 from stock_agent.rag.rl.state import discovered_unretrieved_entities, featurize_state
 from stock_agent.schemas.retrieval import ChunkFilter, RetrievedChunk
@@ -65,28 +75,6 @@ RetrieverFactory = Callable[[str], RetrievalSystem]
 # exactly ONE variable — the query string. That is what makes the measured gap attributable.
 # NOTE: an LLM writer makes the env non-deterministic; never pass one during training.
 QueryWriter = Callable[[RetrievalRequest, "MultiHopQuery", Sequence[RetrievedChunk]], str]
-
-
-def _merge_branches(branches: Sequence[Sequence[RetrievedChunk]]) -> list[RetrievedChunk]:
-    """Merge per-branch results **breadth-first**: every branch's rank-1 chunk, then every rank-2, …
-
-    Single branch ⇒ its own order, unchanged. For a fanout sweep the interleave is load-bearing:
-    ``_dedup_union`` preserves insertion order and the union is capped, so *concatenating* the
-    branches would fill the union with the alphabetically-first candidates' chunks and starve the
-    rest. Round-robin spends the evidence budget on breadth before depth, which is what a sweep
-    means — combined with ``_evidence_cap`` it guarantees every candidate is represented.
-
-    Cross-branch scores are NOT comparable, so sorting by score would not help: each branch is a
-    *scoped* retrieval, and RRF scores are rank-derived (1/(k+rank)), so a branch's rank-1 chunk
-    carries the same score in every branch. Score-sorting would degenerate to the insertion order it
-    was meant to fix. Rank is the only meaningful cross-branch quantity — hence round-robin.
-    """
-    if len(branches) == 1:
-        return list(branches[0])
-    out: list[RetrievedChunk] = []
-    for rank in range(max((len(b) for b in branches), default=0)):
-        out.extend(b[rank] for b in branches if rank < len(b))
-    return out
 
 
 def default_retriever_factory(settings: Settings) -> RetrieverFactory:
@@ -181,6 +169,8 @@ class RagRetrievalEnv:
         per_step_k: int | None = None,
         max_evidence: int | None = None,
         query_writer: QueryWriter | None = None,
+        seating_rule: SeatingRule | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         if not episodes:
             raise ValueError("env needs at least one episode")
@@ -202,6 +192,12 @@ class RagRetrievalEnv:
         self.max_evidence = (
             max_evidence if max_evidence is not None else settings.agentic_max_evidence
         )
+        # E7 seating: how a fan-out's branches become the capped union (see rag/rl/seating.py).
+        # The reranker is built LAZILY, on the first fan-out that needs one — constructing it here
+        # would download a cross-encoder in CI, where every env is built with fake retrievers.
+        self.seating_rule: SeatingRule = seating_rule or settings.rl_seating_rule
+        self._reranker = reranker
+        self._reranker_built = reranker is not None
         # Discovered slots the action space actually addresses (single source of truth = the space).
         slots = [
             a.scope_slot
@@ -316,11 +312,13 @@ class RagRetrievalEnv:
             reqs = [self._rewrite(r) for r in reqs]
         n_new, cost, masked = 0, 0.0, not reqs
         if reqs:
-            # One retrieval per branch (1 for self/disc, N for a fanout sweep), then merged
-            # breadth-first — see _merge_branches for why the ORDER here is load-bearing.
+            # One retrieval per branch (1 for self/disc, N for a fanout sweep), then SEATED into the
+            # capped union — see rag/rl/seating.py for why the rule is load-bearing (the E3 rule
+            # silently discarded every target chunk that was not its branch's rank-0 hit).
             branches = [self._retrieve(r) for r in reqs]
             before = len(self._union)
-            self._union = self._dedup_union(self._union, _merge_branches(branches))[
+            seated = self._seat(branches, reqs)
+            self._union = self._dedup_union(self._union, seated)[
                 : self._evidence_cap(n_branches=len(branches))
             ]
             n_new = len(self._union) - before
@@ -349,24 +347,69 @@ class RagRetrievalEnv:
         written = self._query_writer(req, self._episode, list(self._union)).strip()
         return replace(req, query=written) if written else req
 
-    def _evidence_cap(self, *, n_branches: int) -> int:
-        """The union cap for this step: ``max_evidence``, widened so a sweep can seat every branch.
+    def _seat(
+        self, branches: Sequence[Sequence[RetrievedChunk]], reqs: Sequence[RetrievalRequest]
+    ) -> list[RetrievedChunk]:
+        """Order the step's retrieved chunks for the union (E7). Single-branch steps are untouched.
 
-        A fanout is only a *sweep* if every candidate it searched actually reaches the union. It
-        would not: ``_dedup_union`` appends in insertion order, so with the flat cap a 19-candidate
-        sweep on a HARD episode (6 hop-1 chunks ⇒ 14 slots left) would seat the first 14 candidates
-        **alphabetically** and silently drop 5 — a smaller copy of the very slot bias E3 exists to
-        remove. Measured: only 69% of held-out HARD episodes could seat all their candidates under
-        the flat cap.
-
-        So the cap widens to ``len(union) + n_branches`` when a sweep needs it — one guaranteed seat
-        per branch, on top of the evidence already gathered (which ``_dedup_union`` never evicts).
-        Worst case on the benchmark: 6 + 19 = 25 chunks. Single-branch actions are unaffected, so
-        the A4/A5 baselines and every pre-E3 number keep the flat ``max_evidence`` they were
-        measured under. Breadth costs context — that price is real, and the per-branch arm cost
-        prices it.
+        A self/discovered action retrieves ONE branch, and its order is the retriever's own ranking
+        —
+        there is nothing to seat, so it bypasses the seating rule entirely and every A4/A5 baseline
+        and pre-E7 single-branch number stays byte-identical. Only a fan-out has the cross-branch
+        problem the seating rule exists to solve.
         """
-        return max(self.max_evidence, len(self._union) + n_branches)
+        if len(branches) <= 1:
+            return merge_breadth_first(branches)
+        return seat_branches(
+            branches,
+            rule=self._effective_rule(),
+            # The pooled query is the TOPIC, with no candidate-name prefix: a name-prefixed query
+            # would tilt the cross-encoder toward one branch and destroy exactly the cross-branch
+            # comparability that makes pooled seating work. Every branch's request carries the same
+            # topic clause (E6), so any of them supplies it.
+            query=discovered_scope_query(self._episode.question, "") if self._episode else "",
+            reranker=self._seating_reranker(),
+            top_branches=self.settings.rl_seating_top_branches,
+            per_branch=self.settings.rl_seating_per_branch,
+        )
+
+    def _seating_reranker(self) -> Reranker | None:
+        """The seating cross-encoder, built on first use (never at construction — see __init__)."""
+        if not self._reranker_built:
+            self._reranker_built = True
+            if self.seating_rule != "breadth_first":
+                self._reranker = build_seating_reranker(self.settings)
+        return self._reranker
+
+    def _effective_rule(self) -> SeatingRule:
+        """The seating rule that will actually run — the SINGLE source of truth for order AND cap.
+
+        Both ``_seat`` and ``_evidence_cap`` read this. They must never disagree: a reranked rule's
+        flat cap is safe only because the reranked order puts the best chunks first, so pairing it
+        with the breadth-first fallback order would drop candidates alphabetically (see
+        ``seating.effective_rule``).
+        """
+        return effective_rule(self.seating_rule, self._seating_reranker())
+
+    def _evidence_cap(self, *, n_branches: int) -> int:
+        """The union cap for this step — delegated to the seating rule, which defines the guarantee.
+
+        Each rule earns a different budget: ``breadth_first`` must widen to ``len(union) +
+        n_branches`` (its guarantee is *one seat per branch*, and a flat cap would seat the first 14
+        candidates **alphabetically** and drop the rest — the very slot bias E3 removes), while the
+        reranked rules guarantee *the best chunks seat, wherever they came from* and so need no
+        per-branch allowance. See ``seating.fanout_cap``.
+        """
+        if n_branches <= 1:  # unchanged from pre-E7 (byte-identical single-branch behaviour)
+            return max(self.max_evidence, len(self._union) + n_branches)
+        return fanout_cap(
+            rule=self._effective_rule(),
+            n_union=len(self._union),
+            n_branches=n_branches,
+            max_evidence=self.max_evidence,
+            top_branches=self.settings.rl_seating_top_branches,
+            per_branch=self.settings.rl_seating_per_branch,
+        )
 
     def legal_mask(self) -> np.ndarray:
         """Boolean mask (len == ``n_actions``): which actions are executable at the current state.

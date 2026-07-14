@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from stock_agent.rag.policy_features import N_FEATURES
+from stock_agent.rag.rerank import NoOpReranker
 from stock_agent.rag.rl.action import STOP, Action, ScopeKind, named_action_space
 from stock_agent.rag.rl.env import RagRetrievalEnv, RetrieverFactory, TransitionCache
 from stock_agent.research.multistep_eval import Aspect, MultiHopQuery
@@ -250,6 +251,9 @@ def _fanout_env(**overrides: object) -> RagRetrievalEnv:
         gamma=1.0,
         lambda_cost=0.05,
         max_evidence=4,  # deliberately SMALLER than the 5 candidates: forces the budget question
+        # E3 is the breadth-first rule, so its tests pin it. Left to the default ("top_branches")
+        # these would build the real cross-encoder — CI must never download a model.
+        seating_rule="breadth_first",
     )
     kwargs.update(overrides)
     return RagRetrievalEnv([FAN_EP], **kwargs)  # type: ignore[arg-type]
@@ -384,3 +388,133 @@ def test_env_guards() -> None:
     env.step(STOP_A)  # terminates the episode
     with pytest.raises(RuntimeError, match="reset"):
         env.step(HY_SELF)  # stepping a done env must fail loudly
+
+
+# ---- E7: seating — which retrieved chunks actually REACH the synthesis union
+# ----------------------
+# Same 5-candidate bridge as E3, with ONE change: the target's span-bearing chunk is its branch's
+# rank-1 hit, not its rank-0. That is the modal real case — over the 33 reachable held-out targets
+# the rank histogram is {rank0: 9, rank1: 1, rank2: 3, rank3: 4, rank4: 4}, i.e. only 27.3% are
+# rank-0 — and it is INVISIBLE to the E3 rule: breadth-first + the widened cap seats exactly every
+# branch's rank-0 chunk and nothing deeper, so the evidence is retrieved and then thrown away by the
+# cap. 12 of the 21 held-out episodes whose branch HAD the span died precisely here.
+SEAT_BY_TICKER: dict[str | None, list[RetrievedChunk]] = {"NVDA": [FAN_SEED]}
+for _t in CANDIDATES:
+    _h = CAC if _t in ("TSM", "AMD") else "no such disclosure"  # TSM = target, AMD = decoy
+    SEAT_BY_TICKER[_t] = [
+        _rc(f"{_t}:0", f"{_t} filler paragraph.", ticker=_t),  # rank 0 — NOT the evidence
+        _rc(f"{_t}:1", f"{_t} discloses {_h}.", ticker=_t),  # rank 1 — the evidence
+    ]
+
+
+class FakeReranker:
+    """A cross-encoder's *behaviour* without the model: score by topical match, offline, seeded.
+
+    Entity-BLIND on purpose — it cannot tell TSM's real disclosure from AMD's decoy copy of the same
+    span, exactly like the real cross-encoder, which sees only (query, text). So seating must work
+    WITHOUT the reranker knowing which company is the target: it seats both, and entity-bound
+    coverage (E1) is what refuses the decoy. A reranker that could identify the target would make
+    these tests pass for a reason the production system does not have.
+    """
+
+    name = "fake-rerank"
+
+    def rerank(self, query: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        # Stable: topical chunks first, ties broken by chunk_id (never by branch order).
+        return sorted(chunks, key=lambda rc: (CAC not in rc.chunk.text, rc.chunk.chunk_id))
+
+
+def _seat_env(**overrides: object) -> RagRetrievalEnv:
+    kwargs: dict[str, object] = dict(
+        settings=S,
+        action_space=named_action_space("pruned"),
+        retriever_factory=_factory({"hybrid": FakeSystem("hybrid", SEAT_BY_TICKER)}),
+        alias_map=FAN_ALIAS,
+        graph_universe=FAN_UNIVERSE,
+        gamma=1.0,
+        lambda_cost=0.05,
+        max_evidence=4,
+        reranker=FakeReranker(),
+    )
+    kwargs.update(overrides)
+    return RagRetrievalEnv([FAN_EP], **kwargs)  # type: ignore[arg-type]
+
+
+def test_breadth_first_seating_discards_a_target_that_is_not_its_branchs_top_hit() -> None:
+    """The E7 defect, pinned: the sweep RETRIEVES the target's evidence and the cap throws it away.
+
+    Every candidate is searched and every branch is represented — E3's guarantee holds — yet A2 is
+    uncovered, because the union is exactly the five rank-0 chunks and TSM's evidence is at rank 1.
+    'The sweep reached the target' and 'the target's evidence reached synthesis' are DIFFERENT
+    claims; conflating them is what produced the retracted "ceiling ~0.84".
+    """
+    env = _seat_env(seating_rule="breadth_first")
+    env.reset(0)
+    env.step(HY_SELF)
+    _, _, _, info = env.step(HY_FANOUT)
+
+    assert info.scope_tickers == CANDIDATES  # the sweep DID reach every candidate, target included
+    assert {rc.chunk.ticker for rc in env.evidence} == {"NVDA", *CANDIDATES}  # all branches seated
+    assert all(rc.chunk.chunk_id.endswith(":0") for rc in env.evidence if rc.chunk.ticker != "NVDA")
+    assert info.coverage == 0.5, "TSM:1 was retrieved, then evicted by the cap — A2 stays uncovered"
+
+
+def test_pooled_rerank_seating_seats_the_target_and_shrinks_the_context() -> None:
+    """E7: rescoring the pooled branches recovers the evidence AND hands synthesis FEWER chunks.
+
+    The cross-encoder's scores are comparable across branches (RRF's rank-derived ones are not), so
+    the target's rank-1 chunk competes on merit instead of being locked out by "your branch already
+    spent its one seat". This is a strict Pareto improvement over breadth-first — higher coverage,
+    smaller context — which is why seating is a fixed mechanism and not a policy action: a dominated
+    action does not belong in the action space.
+    """
+    env = _seat_env(seating_rule="pooled_rerank")
+    env.reset(0)
+    env.step(HY_SELF)
+    _, _, _, info = env.step(HY_FANOUT)
+
+    assert info.coverage == 1.0  # TSM:1 seated ⇒ A2 covered
+    assert any(rc.chunk.chunk_id == "TSM:1" for rc in env.evidence)
+    # Fewer chunks than breadth-first's 6 (1 + 5 branches): the flat cap needs no per-branch seat.
+    assert len(env.evidence) == 4
+    # The DECOY also seats (the reranker is entity-blind) — entity-bound coverage is what refuses
+    # it.
+    assert any(rc.chunk.chunk_id == "AMD:1" for rc in env.evidence)
+
+
+def test_top_branches_seating_drops_whole_branches_yet_still_covers() -> None:
+    """E7: candidates cannot be ranked a priori (I(Y;E₁)≈0 — that is why E3 sweeps), but they rank
+    fine A POSTERIORI, once each one's filings have actually been searched for the topic.
+
+    The impossibility result E3 rests on is about hop-1 evidence and does not reach seating. Here 3
+    of 5 branches are discarded after the sweep and A2 is still covered — on the real fold this rule
+    beats the production seating by +0.083 coverage while handing synthesis a *smaller* context.
+    """
+    env = _seat_env(seating_rule="top_branches")
+    env.reset(0)
+    env.step(HY_SELF)
+    _, _, _, info = env.step(HY_FANOUT)
+
+    assert info.coverage == 1.0
+    seated = {rc.chunk.ticker for rc in env.evidence if rc.chunk.ticker != "NVDA"}
+    assert seated < set(CANDIDATES), "top_branches must DISCARD branches, not seat them all"
+    assert "TSM" in seated
+
+
+def test_a_noop_seating_reranker_falls_back_to_breadth_first_not_to_branch_order() -> None:
+    """The trap: 'no reranker' must degrade to E3's rule, never to the raw pooled order.
+
+    The pool is branch-major, so seating it under a reranked rule's flat cap would spend the whole
+    budget on the alphabetically-first candidates and never reach TSM — rebuilding the exact slot
+    bias E3 exists to remove, out of two individually reasonable halves (a rule that says 'pool' and
+    a cap that says 'flat'). The ordering and the cap must agree on the EFFECTIVE rule.
+    """
+    env = _seat_env(seating_rule="pooled_rerank", reranker=NoOpReranker())
+    env.reset(0)
+    env.step(HY_SELF)
+    _, _, _, info = env.step(HY_FANOUT)
+
+    # Falls back to breadth-first: every branch seated (the E3 guarantee), cap widened to 1 + 5.
+    assert {rc.chunk.ticker for rc in env.evidence} == {"NVDA", *CANDIDATES}
+    assert len(env.evidence) == 6
+    assert info.coverage == 0.5  # the E3 outcome — NOT a silent alphabetical truncation
