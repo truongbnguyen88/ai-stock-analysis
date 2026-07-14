@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 
 from stock_agent.rag.policy_features import N_FEATURES
-from stock_agent.rag.rl.action import Action, ScopeKind, named_action_space
+from stock_agent.rag.rl.action import STOP, Action, ScopeKind, named_action_space
 from stock_agent.rag.rl.env import RagRetrievalEnv, RetrieverFactory, TransitionCache
 from stock_agent.research.multistep_eval import Aspect, MultiHopQuery
 from stock_agent.schemas.documents import DocumentChunk
@@ -25,9 +25,16 @@ S = Settings(_env_file=None)
 ALIAS = {"NVDA": ["NVIDIA"], "MU": ["Micron"], "TSM": ["Taiwan Semiconductor", "TSMC"]}
 UNIVERSE = {"NVDA", "MU", "TSM"}
 
-# pruned action-space indices (pinned in A6.2b): 0 STOP, 1 hybrid@self, 2 hybrid@disc0,
-# 3 hybrid@disc1, 4 graph@self, 5 graph@disc0, 6 graph@disc1.
-STOP_A, HY_SELF, HY_DISC0, GR_SELF = 0, 1, 2, 4
+# Action indices are DERIVED from the space, never hardcoded: the layout is versioned (E3 inserted
+# `@fanout` per config), and a literal index silently retargets a different action when it shifts —
+# exactly the remapping hazard test_rl_action's pinned-layout test guards. Resolve by identity.
+_SPACE = named_action_space("pruned")
+_idx = _SPACE.index
+STOP_A = _idx(STOP)
+HY_SELF = _idx(Action(config="hybrid", scope_kind=ScopeKind.SELF))
+HY_DISC0 = _idx(Action(config="hybrid", scope_kind=ScopeKind.DISCOVERED, scope_slot=0))
+HY_FANOUT = _idx(Action(config="hybrid", scope_kind=ScopeKind.FANOUT))
+GR_SELF = _idx(Action(config="graph", scope_kind=ScopeKind.SELF))
 
 
 def _rc(
@@ -187,6 +194,140 @@ def test_reward_hacking_sentinel_scores_negative() -> None:
     _, r, _, info = env.step(GR_SELF)  # graph@self: dumps 3 chunks, none covering an aspect
     assert info.n_new_chunks == 3 and info.coverage == 0.0
     assert r < 0 and r == pytest.approx(0.0 - 0.05 * 0.3)  # only the graph cost (0.3) shows up
+
+
+# ---- E3: the fanout sweep ------------------------------------------------------------------------
+# A 5-candidate bridge built to reproduce the A6.2 failure exactly. NVDA's hop-1 chunk names five
+# companies; sorted lexicographically the TARGET (TSM) lands LAST, so the disc0/disc1 slots — the
+# alphabetically-first two — cannot reach it. AMD is a DECOY: its chunk repeats the A2 span verbatim
+# but is filed under AMD, so entity-bound coverage (E1) must refuse it. Together these pin the two
+# defects that invalidated the verdict, and their fix.
+FAN_ALIAS = {
+    "NVDA": ["NVIDIA"],
+    "AMD": ["Advanced Micro Devices"],
+    "AVGO": ["Broadcom"],
+    "INTC": ["Intel"],
+    "MU": ["Micron"],
+    "TSM": ["Taiwan Semiconductor"],
+}
+FAN_UNIVERSE = set(FAN_ALIAS)
+CANDIDATES = ("AMD", "AVGO", "INTC", "MU", "TSM")  # == sorted(FAN_ALIAS - {"NVDA"})
+CAC = "critical information infrastructure"
+FAN_SEED = _rc(
+    "NVDA:0",
+    "NVIDIA relies on Advanced Micro Devices, Broadcom, Intel, Micron and Taiwan Semiconductor.",
+    ticker="NVDA",
+)
+# Two chunks per candidate, so a naive "concatenate the branches" merge spends the union budget on
+# DEPTH into the alphabetically-first candidate instead of BREADTH across all five.
+FAN_BY_TICKER: dict[str | None, list[RetrievedChunk]] = {"NVDA": [FAN_SEED]}
+for _t in CANDIDATES:
+    _hit = CAC if _t in ("TSM", "AMD") else "no such disclosure"  # TSM = target, AMD = decoy
+    FAN_BY_TICKER[_t] = [
+        _rc(f"{_t}:0", f"{_t} discloses {_hit}.", ticker=_t),
+        _rc(f"{_t}:1", f"{_t} filler paragraph.", ticker=_t),
+    ]
+FAN_EP = MultiHopQuery(
+    question="Which supplier NVIDIA depends on discloses Chinese cybersecurity rules?",
+    aspects=[
+        Aspect(name="A1 seed names suppliers", spans=["relies on"], ticker="NVDA"),
+        Aspect(name="A2 target CAC", spans=[CAC], ticker="TSM"),  # ONLY a TSM chunk may cover this
+    ],
+    seed="NVDA",
+    stratum="HARD",
+    relation="depends_on",
+    group_id="NVDA:TSM",
+)
+
+
+def _fanout_env(**overrides: object) -> RagRetrievalEnv:
+    kwargs: dict[str, object] = dict(
+        settings=S,
+        action_space=named_action_space("pruned"),
+        retriever_factory=_factory({"hybrid": FakeSystem("hybrid", FAN_BY_TICKER)}),
+        alias_map=FAN_ALIAS,
+        graph_universe=FAN_UNIVERSE,
+        gamma=1.0,
+        lambda_cost=0.05,
+        max_evidence=4,  # deliberately SMALLER than the 5 candidates: forces the budget question
+    )
+    kwargs.update(overrides)
+    return RagRetrievalEnv([FAN_EP], **kwargs)  # type: ignore[arg-type]
+
+
+def test_discovered_slots_cannot_reach_an_alphabetically_late_target() -> None:
+    """The A6.2 defect, pinned: with 5 candidates the slots address only AMD and AVGO.
+
+    This is reachability ρ = 0 for this state — the oracle action (search TSM) is not on the menu,
+    so NO policy over this action space can cover A2. The retracted verdict measured exactly this.
+    """
+    env = _fanout_env()
+    env.reset(0)
+    _, _, _, i1 = env.step(HY_SELF)
+    assert i1.coverage == 0.5 and i1.n_discovered == 5  # A1 covered; all 5 candidates named
+
+    _, _, _, i2 = env.step(HY_DISC0)  # slot 0 = AMD — the DECOY, whose chunk repeats the A2 span
+    assert i2.scope_ticker == "AMD"
+    assert i2.coverage == 0.5, "entity-bound coverage (E1) must refuse AMD's copy of the A2 span"
+
+
+def test_fanout_sweeps_every_candidate_and_seats_each_one_in_the_union() -> None:
+    """E3: one action reaches all 5 candidates — including the alphabetically-last target.
+
+    The union cap (4) is smaller than the candidate count (5), so this ALSO pins the evidence-budget
+    fix: a concatenating merge under a flat cap would fill the union with AMD's two chunks and never
+    seat TSM, quietly recreating the alphabetical bias E3 exists to remove. Breadth-first merge +
+    the widened cap guarantee every branch gets a seat.
+    """
+    env = _fanout_env()
+    env.reset(0)
+    env.step(HY_SELF)  # union = [NVDA:0]; coverage 0.5
+    _, r, _, info = env.step(HY_FANOUT)
+
+    assert info.scope_tickers == CANDIDATES  # every candidate searched, in label-free sort order
+    assert info.coverage == 1.0  # TSM's chunk reached the union ⇒ A2 covered
+    # every candidate seated, though 1 + 5×2 = 11 chunks were retrieved into a cap of 4.
+    seated = {rc.chunk.ticker for rc in env.evidence}
+    assert seated == {"NVDA", *CANDIDATES}
+    assert len(env.evidence) == 6  # cap widened to len(union) + n_branches = 1 + 5
+    assert info.n_new_chunks == 5  # exactly one chunk per branch (breadth before depth)
+    # a sweep pays the arm cost ONCE PER BRANCH — the price the policy must learn to weigh.
+    assert info.cost == pytest.approx(5 * 0.1)
+    assert r == pytest.approx((1.0 - 0.5) - 0.05 * 5 * 0.1)
+    assert info.n_discovered == 0  # every candidate is now searched ⇒ the bridge signal drains
+
+
+def test_fanout_reuses_the_discovered_slot_cache() -> None:
+    """A fanout branch is the same (arm, scope, query) a disc-slot action builds ⇒ cache HIT.
+
+    This is what makes a sweep affordable inside a PPO loop: after the first rollout, a fanout over
+    N candidates costs N dict lookups, not N retrievals.
+    """
+    env = _fanout_env()
+    env.reset(0)
+    env.step(HY_SELF)
+    env.step(HY_DISC0)  # retrieves AMD — a cache MISS
+    misses_before = env.cache.misses
+
+    env.reset(0)
+    env.step(HY_SELF)  # cache HIT (same request)
+    env.step(HY_FANOUT)  # 5 branches: AMD already cached ⇒ only the other 4 miss
+    assert env.cache.misses == misses_before + 4
+
+
+def test_fanout_is_illegal_with_nothing_discovered() -> None:
+    """A CTRL question never names another company, so fanout is masked there — the regression guard
+    for the 19/21 held-out CTRL episodes that discover zero candidates."""
+    env = _fanout_env()
+    env.reset(0)
+    assert not env.legal_mask()[HY_FANOUT]  # nothing discovered yet
+    _, r, _, info = env.step(HY_FANOUT)
+    assert info.masked and info.n_new_chunks == 0 and info.cost == 0.0
+    assert r == pytest.approx(0.0) and info.scope_tickers == ()
+
+    env.reset(0)
+    env.step(HY_SELF)
+    assert env.legal_mask()[HY_FANOUT]  # candidates named ⇒ the sweep unlocks
 
 
 # ---- discovered-slot masking (legal_mask ↔ no-op step) -------------------------------------------

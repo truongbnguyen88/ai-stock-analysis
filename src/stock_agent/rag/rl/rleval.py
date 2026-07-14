@@ -1,7 +1,7 @@
-"""Held-out eval of a frozen RL policy vs 4 baselines (adv-RAG A6.2g) — the `rag rl-eval` engine.
+"""Held-out eval of a frozen RL policy vs the baseline suite (adv-RAG A6.2g) — `rag rl-eval`.
 
 The verdict harness. A checkpointed policy (A6.2f) is replayed **greedily** (deploy semantics) on
-the group-wise held-out fold of the *same* deterministic ``$0`` MDP it trained in, against four
+the group-wise held-out fold of the *same* deterministic ``$0`` MDP it trained in, against
 reference controllers expressed as policies over that same MDP — so every candidate sees the same
 action menu, horizon, and reward, and the only thing that differs is the decision rule:
 
@@ -9,8 +9,14 @@ action menu, horizon, and reward, and the only thing that differs is the decisio
 |---|---|---|
 | ``fixed(arm)`` | the A5.3 production pipeline (one-shot) | ``arm@self`` → STOP |
 | ``bandit(linucb)`` | the A6.1 one-shot router (REJECTed) | contextual ``arm@self`` → STOP |
-| ``react(arm)`` | the **strong** one: A4 loop + A5 bridge | ``arm@self`` → ``arm@disc0`` → STOP |
+| ``react(arm)`` | A4 loop + A5 bridge (pre-E3 strong one) | ``arm@self`` → ``arm@disc0`` → STOP |
+| ``sweep(arm)`` | **the E3 strong one** — scripted fanout | ``arm@self`` → ``arm@fanout`` → STOP |
 | ``random`` | the do-nothing-smart floor | uniform over the legal actions |
+
+``sweep`` exists because E3's fanout action is *trivially scriptable*: once "sweep every candidate"
+is expressible, a two-line script plays it, with no learning. Giving the learner fanout while the
+baseline stays on ``disc0`` would manufacture a win out of an action-space asymmetry — the same
+class of error that invalidated the original A6.2 verdict. RL must beat ``sweep``, not ``react``.
 
 plus a **reward-hacking sentinel** (``sentinel(always-search)``): never STOP, spend the whole budget
 on the costliest arm. It is not a baseline to beat — it is a *tripwire*. If mindless budget-spamming
@@ -204,6 +210,45 @@ class ReActBridgePolicy(ScriptedPolicy):
         if self.disc0_idx is not None and (mask is None or bool(mask[self.disc0_idx])):
             return self.disc0_idx  # A5 bridge: pivot to a discovered entity's own filings
         return STOP_INDEX  # nothing left to bridge ⇒ reflective stop
+
+
+class SweepBridgePolicy(ScriptedPolicy):
+    """Baseline (v, the E3 strong one) — self-scoped search, ONE fanout sweep, STOP.
+
+    **This, not ``react(arm)``, is what a learned policy must beat to justify RL after E3.** Fanout
+    makes the correct hop-2 move *expressible*; it also makes it **trivially scriptable** — "search
+    the seed, then sweep every candidate it named" requires no learning at all. Handing the learner
+    a fanout action while leaving the baseline stuck on ``disc0`` would manufacture a win out of an
+    action-space asymmetry, which is the same class of error that invalidated the A6.2 verdict in
+    the first place. So the baseline gets the sweep too.
+
+    What that leaves for a learner to actually win on is the *cost* side: knowing **when not to
+    sweep** — a CTRL question with nothing to bridge to, an episode already covered by hop 1, or a
+    candidate set so large the sweep's N × arm-cost outweighs the coverage it can buy. If no such
+    policy exists, RL genuinely has nothing to add here, and that is a real finding.
+
+    The sweep is self-terminating: it marks every candidate searched, so the discovered set drains
+    and the fanout action is masked illegal on the next step ⇒ STOP.
+    """
+
+    def __init__(
+        self, arm: str, *, action_space: Sequence[Action], name: str | None = None
+    ) -> None:
+        labels = _labels(action_space)
+        for needed in (f"{arm}@self", f"{arm}@fanout"):
+            if needed not in labels:
+                raise ValueError(f"arm {arm!r} has no {needed!r} action in this action space")
+        self.arm = arm
+        self.self_idx = labels.index(f"{arm}@self")
+        self.fanout_idx = labels.index(f"{arm}@fanout")
+        self.name = name or f"sweep({arm})"
+
+    def greedy_action(self, x: np.ndarray, *, mask: np.ndarray | None = None) -> int:
+        if _step_idx(x) == 0:
+            return self.self_idx  # step 1: the A4 self-scoped search (E2 relation query)
+        if mask is None or bool(mask[self.fanout_idx]):
+            return self.fanout_idx  # step 2: sweep EVERY candidate the seed named
+        return STOP_INDEX  # nothing discovered (CTRL), or the sweep already drained it
 
 
 class RandomActionPolicy:
@@ -725,19 +770,27 @@ def build_baselines(
     context_mean: np.ndarray | None = None,
     context_std: np.ndarray | None = None,
 ) -> list[RolloutPolicy]:
-    """The 4-baseline suite over ``env``'s action space (the CLI's default candidate set).
+    """The baseline suite over ``env``'s action space (the CLI's default candidate set).
 
     One ``fixed(arm)`` per arm the space offers (their max is "the best fixed pipeline"), one
-    ``react(arm)`` per production arm in ``react_arms`` the space offers, the A6.1 bandit when a
-    fitted scorer is supplied, and ``random``. The sentinel is built separately (it is not a
-    baseline to beat — see ``AlwaysSearchPolicy``).
+    ``react(arm)`` per production arm in ``react_arms`` the space offers, one ``sweep(arm)`` per
+    production arm **when the space has a fanout action** (E3 — the strong baseline a learner must
+    beat; see ``SweepBridgePolicy``), the A6.1 bandit when a fitted scorer is supplied, and
+    ``random``. The sentinel is built separately (it is not a baseline to beat — see
+    ``AlwaysSearchPolicy``).
     """
     arms = sorted({a.config for a in env.action_space if a.config is not None})
+    labels = _labels(env.action_space)
     policies: list[RolloutPolicy] = [
         OneShotArmPolicy(arm, action_space=env.action_space) for arm in arms
     ]
     policies += [
         ReActBridgePolicy(arm, action_space=env.action_space) for arm in react_arms if arm in arms
+    ]
+    policies += [
+        SweepBridgePolicy(arm, action_space=env.action_space)
+        for arm in react_arms
+        if arm in arms and f"{arm}@fanout" in labels
     ]
     if bandit is not None:
         policies.append(

@@ -17,7 +17,7 @@ import pytest
 from stock_agent.rag.policy import ARMS
 from stock_agent.rag.policy_eval import Dataset, fit_bandit_baseline
 from stock_agent.rag.policy_features import N_FEATURES
-from stock_agent.rag.rl.action import named_action_space
+from stock_agent.rag.rl.action import STOP, Action, ScopeKind, named_action_space
 from stock_agent.rag.rl.env import RagRetrievalEnv, RetrieverFactory
 from stock_agent.rag.rl.reinforce import bridge_expert_rollout
 from stock_agent.rag.rl.rleval import (
@@ -28,6 +28,7 @@ from stock_agent.rag.rl.rleval import (
     RandomActionPolicy,
     ReActBridgePolicy,
     ScriptedPolicy,
+    SweepBridgePolicy,
     _step_idx,
     assert_group_disjoint,
     build_baselines,
@@ -52,9 +53,13 @@ ALIAS = {
 }
 UNIVERSE = {"NVDA", "MU", "TSM", "ASML"}
 
-# pruned action-space indices (pinned in A6.2b): 0 STOP, 1 hybrid@self, 2 hybrid@disc0,
-# 3 hybrid@disc1, 4 graph@self, 5 graph@disc0, 6 graph@disc1.
-STOP_A, HY_SELF, HY_DISC0, GR_SELF = 0, 1, 2, 4
+# Action indices are DERIVED, never hardcoded: the layout is versioned (E3 inserted `@fanout`
+# per config) and a literal index silently retargets a different action when it shifts.
+_SPACE = named_action_space("pruned")
+STOP_A = _SPACE.index(STOP)
+HY_SELF = _SPACE.index(Action(config="hybrid", scope_kind=ScopeKind.SELF))
+HY_DISC0 = _SPACE.index(Action(config="hybrid", scope_kind=ScopeKind.DISCOVERED, scope_slot=0))
+GR_SELF = _SPACE.index(Action(config="graph", scope_kind=ScopeKind.SELF))
 
 
 def _rc(cid: str, text: str, *, ticker: str) -> RetrievedChunk:
@@ -345,7 +350,7 @@ def test_greedy_wrapper_matches_the_underlying_argmax() -> None:
     assert a.actions == b.actions and a.total_return == pytest.approx(b.total_return)
 
 
-def test_build_baselines_covers_the_four_reference_controllers() -> None:
+def test_build_baselines_covers_the_reference_controllers() -> None:
     env = _env()
     baselines = build_baselines(
         env, bandit=FakeScorer([1, 1, 1, 1, 1]), bandit_arm_names=ARMS
@@ -356,9 +361,47 @@ def test_build_baselines_covers_the_four_reference_controllers() -> None:
         "fixed(hybrid)",
         "react(hybrid)",
         "react(graph)",
+        "sweep(hybrid)",  # E3: the scripted fanout — the baseline RL actually has to beat
+        "sweep(graph)",
         "bandit(linucb(alpha=1))",
         "random",
     ]
+
+
+def test_build_baselines_omits_sweep_when_the_space_has_no_fanout() -> None:
+    """Pre-E3 action spaces have no fanout action, so the sweep baseline must not be invented."""
+    env = _env(action_space=named_action_space("pruned", fanout=False))
+    names = [policy_name(p) for p in build_baselines(env)]
+    assert not any(n.startswith("sweep(") for n in names)
+    assert "react(hybrid)" in names
+
+
+def test_sweep_baseline_searches_self_then_sweeps_every_candidate_then_stops() -> None:
+    """The E3 strong baseline: one self search, ONE sweep, STOP — self-terminating, no learning.
+
+    The sweep marks every candidate searched, so the discovered set drains and fanout is masked
+    illegal on the next step ⇒ the policy stops on its own rather than burning the horizon.
+    """
+    env = _env()
+    out = run_episode(env, SweepBridgePolicy("hybrid", action_space=env.action_space), 0, rng=RNG)
+    assert out.actions == ("hybrid@self", "hybrid@fanout", "STOP")
+    assert out.stopped and out.coverage == pytest.approx(1.0)
+
+
+def test_sweep_baseline_stops_immediately_when_nothing_is_discovered() -> None:
+    """A CTRL question names no other company ⇒ nothing to sweep ⇒ STOP, paying no sweep cost."""
+    env = _env()
+    sweep = SweepBridgePolicy("hybrid", action_space=env.action_space)
+    ctrl = next(i for i, e in enumerate(env.episodes) if e.group_id == "CTRL:MU")
+    out = run_episode(env, sweep, ctrl, rng=RNG)
+    assert out.actions == ("hybrid@self", "STOP")
+    assert out.stopped and out.arm_cost == pytest.approx(0.1)  # one search, no sweep
+
+
+def test_sweep_baseline_requires_a_fanout_action() -> None:
+    space = named_action_space("pruned", fanout=False)
+    with pytest.raises(ValueError, match="hybrid@fanout"):
+        SweepBridgePolicy("hybrid", action_space=space)
 
 
 # ---- folds + leakage -----------------------------------------------------------------------------

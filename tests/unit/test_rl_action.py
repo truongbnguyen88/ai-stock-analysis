@@ -21,6 +21,7 @@ from stock_agent.rag.rl.action import (
     ScopeKind,
     action_label,
     action_to_request,
+    action_to_requests,
     build_action_space,
     is_legal,
     named_action_space,
@@ -41,7 +42,43 @@ def test_known_arms_are_lattice_plus_graph() -> None:
 
 # ---- pinned action-space ordering (reordering silently remaps trained weights) ------------------
 def test_pruned_action_space_layout() -> None:
-    space = named_action_space("pruned")  # 2 arms × (self + 2 disc) + STOP = 7
+    space = named_action_space("pruned")  # 2 arms × (self + 2 disc + fanout) + STOP = 9
+    assert [action_label(a) for a in space] == [
+        "STOP",
+        "hybrid@self",
+        "hybrid@disc0",
+        "hybrid@disc1",
+        "hybrid@fanout",
+        "graph@self",
+        "graph@disc0",
+        "graph@disc1",
+        "graph@fanout",
+    ]
+    assert space[0] is STOP and space[0].is_stop
+
+
+def test_full_action_space_layout() -> None:
+    space = named_action_space("full")  # 5 arms × (self + 2 disc + fanout) + STOP = 21
+    assert len(space) == 21
+    assert space[0].is_stop
+    # config-major order: the whole hybrid block precedes the graph block, etc.
+    assert action_label(space[1]) == "dense@self"
+    assert action_label(space[-1]) == "graph@fanout"
+    # exactly one STOP; all non-STOP actions distinct.
+    assert sum(a.is_stop for a in space) == 1
+    assert len(set(space)) == len(space)
+
+
+def test_named_action_space_dispatch_and_unknown() -> None:
+    assert len(named_action_space("pruned")) == 9
+    assert len(named_action_space("full")) == 21
+    with pytest.raises(ValueError, match="unknown action space"):
+        named_action_space("enormous")
+
+
+def test_fanout_can_be_disabled_reproducing_the_pre_E3_space() -> None:
+    """The A6.2c-f layout, for the E3 ablation and for loading pre-E3 checkpoints."""
+    space = named_action_space("pruned", fanout=False)
     assert [action_label(a) for a in space] == [
         "STOP",
         "hybrid@self",
@@ -51,35 +88,16 @@ def test_pruned_action_space_layout() -> None:
         "graph@disc0",
         "graph@disc1",
     ]
-    assert space[0] is STOP and space[0].is_stop
-
-
-def test_full_action_space_layout() -> None:
-    space = named_action_space("full")  # 5 arms × 3 scopes + STOP = 16
-    assert len(space) == 16
-    assert space[0].is_stop
-    # config-major order: the whole hybrid block precedes the graph block, etc.
-    assert action_label(space[1]) == "dense@self"
-    assert action_label(space[-1]) == "graph@disc1"
-    # exactly one STOP; all non-STOP actions distinct.
-    assert sum(a.is_stop for a in space) == 1
-    assert len(set(space)) == len(space)
-
-
-def test_named_action_space_dispatch_and_unknown() -> None:
-    assert len(named_action_space("pruned")) == 7
-    assert len(named_action_space("full")) == 16
-    with pytest.raises(ValueError, match="unknown action space"):
-        named_action_space("enormous")
 
 
 def test_slot_count_scales_space() -> None:
-    # J=0 -> only self scopes; J=3 -> self + 3 disc per config.
-    assert [action_label(a) for a in build_action_space(("hybrid",), n_discovered_slots=0)] == [
-        "STOP",
-        "hybrid@self",
-    ]
-    assert len(build_action_space(("hybrid",), n_discovered_slots=3)) == 1 + 1 + 3
+    # J=0 -> self + fanout only (fanout does not index slots, so it survives J=0).
+    assert [
+        action_label(a)
+        for a in build_action_space(("hybrid",), n_discovered_slots=0)
+    ] == ["STOP", "hybrid@self", "hybrid@fanout"]
+    # J=3 -> self + 3 disc + fanout per config.
+    assert len(build_action_space(("hybrid",), n_discovered_slots=3)) == 1 + 1 + 3 + 1
 
 
 def test_build_action_space_rejects_bad_input() -> None:
@@ -165,6 +183,48 @@ def test_discovered_scope_template_prepends_name_and_scopes_by_ticker() -> None:
     req1 = action_to_request(a1, QUESTION, self_ticker="NVDA", discovered=[MU, TSM])
     assert req1 is not None and req1.scope_ticker == "TSM"
     assert req1.query == f"Taiwan Semiconductor {QUESTION}"
+
+
+# ---- E3: fanout sweeps EVERY candidate ----------------------------------------------------------
+def test_fanout_expands_to_one_request_per_candidate() -> None:
+    """The whole point of E3: hop 2 reaches every candidate, not the alphabetically-first J."""
+    a = Action(config="hybrid", scope_kind=ScopeKind.FANOUT)
+    reqs = action_to_requests(a, QUESTION, self_ticker="NVDA", discovered=[MU, TSM])
+    assert [r.scope_ticker for r in reqs] == ["MU", "TSM"]  # caller's order, preserved
+    assert all(r.arm == "hybrid" for r in reqs)
+
+
+def test_fanout_branch_matches_the_discovered_slot_template_so_the_cache_is_shared() -> None:
+    """A fanout branch must build the SAME (arm, scope, query) triple a disc-slot action would.
+
+    That identity is what lets the env's TransitionCache serve a sweep as N lookups — the property
+    that keeps fanout affordable inside a PPO training loop.
+    """
+    fan = Action(config="hybrid", scope_kind=ScopeKind.FANOUT)
+    disc0 = Action(config="hybrid", scope_kind=ScopeKind.DISCOVERED, scope_slot=0)
+    disc1 = Action(config="hybrid", scope_kind=ScopeKind.DISCOVERED, scope_slot=1)
+    kw = {"self_ticker": "NVDA", "discovered": [MU, TSM]}
+    swept = action_to_requests(fan, QUESTION, **kw)  # type: ignore[arg-type]
+    assert swept[0] == action_to_request(disc0, QUESTION, **kw)  # type: ignore[arg-type]
+    assert swept[1] == action_to_request(disc1, QUESTION, **kw)  # type: ignore[arg-type]
+
+
+def test_fanout_with_nothing_discovered_is_masked() -> None:
+    # No candidates ⇒ no requests (a CTRL question never discovers one, so fanout is a no-op there).
+    a = Action(config="hybrid", scope_kind=ScopeKind.FANOUT)
+    assert action_to_requests(a, QUESTION, self_ticker="NVDA", discovered=[]) == []
+    assert not is_legal(a, n_discovered=0)
+    assert is_legal(a, n_discovered=1)  # one candidate is enough to sweep
+    assert is_legal(a, n_discovered=19)  # ... and the sweep is NOT capped at the J slots
+
+
+def test_fanout_rejects_a_slot_and_action_to_request_refuses_to_collapse_it() -> None:
+    with pytest.raises(ValueError, match="fanout action must not carry a discovered slot"):
+        Action(config="hybrid", scope_kind=ScopeKind.FANOUT, scope_slot=0)
+    # Silently returning only the first branch would be exactly the bug E3 removes ⇒ fail loudly.
+    a = Action(config="hybrid", scope_kind=ScopeKind.FANOUT)
+    with pytest.raises(ValueError, match="expands to N requests"):
+        action_to_request(a, QUESTION, self_ticker="NVDA", discovered=[MU, TSM])
 
 
 def test_discovered_slot_out_of_range_is_masked() -> None:

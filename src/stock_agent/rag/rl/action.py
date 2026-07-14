@@ -2,11 +2,18 @@
 
 The MDP action ``a_t`` jointly answers **which retriever / where to point it / whether to stop**:
 
-    a_t ∈ {STOP} ∪ {(config c, scope σ)}      c ∈ arms,  σ ∈ {self-ticker, discovered-entity_j}
+    a_t ∈ {STOP} ∪ {(config c, scope σ)}   c ∈ arms,  σ ∈ {self, discovered_j, **fanout**}
 
 This strictly contains A6.1 (config-only bandit) and A4/A5 (scope + stop). The space is a **fixed
 ordered list** (STOP at index 0) — a trained policy's action logits index into it, so the order is
 load-bearing and frozen in checkpoints (a test pins it).
+
+**``fanout`` (A6.2 E3) is the action the retracted A6.2 verdict was missing.** The pre-E3 space
+could only point hop 2 at discovered slot 0 or 1 — the alphabetically-first two of ~9.3 candidates
+on a held-out HARD episode (max 19) — so the oracle action was on the menu for only ρ ≈ 11.4% of
+states. That capped *any* policy at ≈0.26 coverage while the scripted A4/A5 baseline already scored
+0.271: the null result was an artifact of the action space, not evidence about RL. ``fanout``
+sweeps every candidate in one action, lifting the hop-2 ceiling to ≈0.84.
 
 **Deterministic, LLM-free transition (Q3 template B).** An action expands to a ``RetrievalRequest``
 via a pure template — no decision-call LLM — which is what makes ``$0`` reproducible rollouts (and
@@ -52,10 +59,11 @@ DEFAULT_DISCOVERED_SLOTS = 2
 
 
 class ScopeKind(StrEnum):
-    """Where a search points: the episode's own subject ticker, or a discovered-entity slot."""
+    """Where a search points: the episode's own ticker, one discovered slot, or *all* candidates."""
 
     SELF = "self"
     DISCOVERED = "discovered"
+    FANOUT = "fanout"  # sweep EVERY discovered candidate in one action (A6.2 E3)
 
 
 @dataclass(frozen=True)
@@ -64,7 +72,8 @@ class Action:
 
     STOP   — ``config is None`` and no scope (the learned reflective stop).
     SEARCH — ``config`` is an arm in ``KNOWN_ARMS``; ``scope_kind`` is ``SELF`` (``scope_slot``
-    None) or ``DISCOVERED`` (``scope_slot`` = the discovered-list index targeted, 0..J-1).
+    None), ``DISCOVERED`` (``scope_slot`` = the discovered-list index targeted, 0..J-1), or
+    ``FANOUT`` (no slot — sweeps *every* discovered candidate; expands to N requests).
 
     Frozen ⇒ hashable, so actions are usable as cache / anti-loop keys downstream. ``__post_init__``
     rejects malformed combinations at construction (STOP-with-scope, discovered-without-slot, …).
@@ -87,8 +96,11 @@ class Action:
         elif self.scope_kind is ScopeKind.DISCOVERED:
             if self.scope_slot is None or self.scope_slot < 0:
                 raise ValueError("discovered-scope action needs a non-negative slot")
+        elif self.scope_kind is ScopeKind.FANOUT:
+            if self.scope_slot is not None:
+                raise ValueError("fanout action must not carry a discovered slot")
         else:
-            raise ValueError("search action needs a scope_kind (SELF or DISCOVERED)")
+            raise ValueError("search action needs a scope_kind (SELF, DISCOVERED or FANOUT)")
 
     @property
     def is_stop(self) -> bool:
@@ -128,14 +140,20 @@ class RetrievalRequest:
 
 
 def build_action_space(
-    configs: Sequence[str], *, n_discovered_slots: int = DEFAULT_DISCOVERED_SLOTS
+    configs: Sequence[str],
+    *,
+    n_discovered_slots: int = DEFAULT_DISCOVERED_SLOTS,
+    fanout: bool = True,
 ) -> list[Action]:
-    """STOP + ``configs`` × (self-ticker + J discovered slots), in a pinned **config-major** order.
+    """STOP + ``configs`` × (self + J discovered slots + fanout), in a pinned config-major order.
 
     Order (load-bearing — a policy's action logits index into it): index 0 = STOP, then for each
-    config in ``configs`` order: (config, self), (config, disc#0), …, (config, disc#J-1).
-    Reordering silently remaps every trained weight, so this order is asserted in tests and frozen
-    in checkpoints. Raises on an unknown arm or a negative slot count.
+    config in ``configs`` order: (config, self), (config, disc#0), …, (config, disc#J-1),
+    (config, fanout). Reordering silently remaps every trained weight, so this order is asserted in
+    tests and frozen in checkpoints. Raises on an unknown arm or a negative slot count.
+
+    ``fanout=False`` reproduces the pre-E3 space exactly (the A6.2c-f layout), which is what the
+    E3 ablation and the retracted-verdict checkpoints need.
     """
     if n_discovered_slots < 0:
         raise ValueError("n_discovered_slots must be >= 0")
@@ -147,27 +165,37 @@ def build_action_space(
         space.append(Action(config=config, scope_kind=ScopeKind.SELF))
         for slot in range(n_discovered_slots):
             space.append(Action(config=config, scope_kind=ScopeKind.DISCOVERED, scope_slot=slot))
+        if fanout:
+            space.append(Action(config=config, scope_kind=ScopeKind.FANOUT))
     return space
 
 
 def named_action_space(
-    name: str = "pruned", *, n_discovered_slots: int = DEFAULT_DISCOVERED_SLOTS
+    name: str = "pruned",
+    *,
+    n_discovered_slots: int = DEFAULT_DISCOVERED_SLOTS,
+    fanout: bool = True,
 ) -> list[Action]:
-    """Build a preset space: ``"pruned"`` (2 arms, 7 actions) or ``"full"`` (5 arms, 16 actions)."""
+    """Build a preset space: ``"pruned"`` (2 arms, 9 actions) or ``"full"`` (5 arms, 21 actions)."""
     if name not in _NAMED_CONFIGS:
         raise ValueError(f"unknown action space '{name}'; choose from {sorted(_NAMED_CONFIGS)}")
-    return build_action_space(_NAMED_CONFIGS[name], n_discovered_slots=n_discovered_slots)
+    return build_action_space(
+        _NAMED_CONFIGS[name], n_discovered_slots=n_discovered_slots, fanout=fanout
+    )
 
 
 def is_legal(action: Action, *, n_discovered: int) -> bool:
     """Whether ``action`` is executable at the current state.
 
     STOP and self-scope are always legal; a discovered slot is legal only when it indexes an
-    actually-discovered entity (``scope_slot < n_discovered``). The policy masks illegal actions
-    (``-inf`` logit) and the env treats a masked pick as a no-op — see ``action_to_request``.
+    actually-discovered entity (``scope_slot < n_discovered``); fanout needs **at least one**
+    candidate to sweep. The policy masks illegal actions (``-inf`` logit) and the env treats a
+    masked pick as a no-op — see ``action_to_requests``.
     """
     if action.is_stop or action.scope_kind is ScopeKind.SELF:
         return True
+    if action.scope_kind is ScopeKind.FANOUT:
+        return n_discovered >= 1
     return action.scope_slot is not None and action.scope_slot < n_discovered
 
 
@@ -211,6 +239,60 @@ def self_scope_query(question: str) -> str:
     return question  # a bridge cue with no known relation ⇒ fall back to the whole question
 
 
+def _discovered_request(arm: str, question: str, entity: DiscoveredEntity) -> RetrievalRequest:
+    """The per-candidate hop-2 request. Shared by DISCOVERED and FANOUT — deliberately identical.
+
+    Because a fanout branch builds the *same* ``(arm, scope_ticker, query)`` triple a discovered
+    slot action would, the two share entries in the env's ``TransitionCache``: a fanout over N
+    candidates is N cache lookups once those retrievals have been seen, which is what keeps a
+    sweep affordable inside a PPO training loop.
+    """
+    return RetrievalRequest(
+        arm=arm, query=f"{entity.name} {question}", scope_ticker=entity.ticker
+    )
+
+
+def action_to_requests(
+    action: Action,
+    question: str,
+    *,
+    self_ticker: str | None,
+    discovered: Sequence[DiscoveredEntity],
+) -> list[RetrievalRequest]:
+    """Expand an action to the retrievals it runs. Empty list ⇒ STOP, or a masked (illegal) action.
+
+    Templates (deterministic, NO LLM, label-free — the frozen policy runs these verbatim at deploy):
+      - self-scope: ``query = self_scope_query(question)`` (the relation for a bridge question —
+        see ``_RELATION_FOCUS``), ``scope = self_ticker`` (``None`` ⇒ unscoped). One request.
+      - discovered#j: ``query = "{name} {question}"``, ``scope = that entity's ticker``. One
+        request, or none if slot j is unpopulated (``j >= len(discovered)``).
+      - fanout: one such request **per discovered candidate**, in the caller's (lexicographic,
+        label-free) order. None if nothing has been discovered yet.
+
+    **Why fanout exists (A6.2 E3).** Hop-1 evidence says *which* companies the seed relates to, but
+    carries essentially no signal about *which of them* discloses the topic — measured on held-out
+    HARD, no label-free ordering beat chance at putting the target in the top 2 (alphabetical 42.9%,
+    mention-count 40%, chunk-score 40%, **random 40%**). A ranking-shaped action ("probe candidate
+    #j") therefore cannot be chosen well by *any* policy; the only reliable move is to **sweep**
+    every candidate. Fanout makes that move expressible in a single action — and its cost, N × the
+    arm's cost, is what the policy has to learn to price.
+    """
+    if action.config is None:  # STOP (narrows action.config to str below for mypy)
+        return []
+    if action.scope_kind is ScopeKind.SELF:
+        return [
+            RetrievalRequest(
+                arm=action.config, query=self_scope_query(question), scope_ticker=self_ticker
+            )
+        ]
+    if action.scope_kind is ScopeKind.FANOUT:
+        return [_discovered_request(action.config, question, e) for e in discovered]
+    slot = action.scope_slot
+    if slot is None or slot >= len(discovered):
+        return []  # masked: this discovered slot has no entity at the current state
+    return [_discovered_request(action.config, question, discovered[slot])]
+
+
 def action_to_request(
     action: Action,
     question: str,
@@ -218,33 +300,25 @@ def action_to_request(
     self_ticker: str | None,
     discovered: Sequence[DiscoveredEntity],
 ) -> RetrievalRequest | None:
-    """Expand an action to its templated ``RetrievalRequest``; ``None`` for STOP or a masked slot.
+    """Single-request convenience over ``action_to_requests``; ``None`` for STOP or a masked slot.
 
-    Templates (deterministic, NO LLM, label-free — the frozen policy runs these verbatim at deploy):
-      - self-scope: ``query = self_scope_query(question)`` (the relation for a bridge question — see
-        ``_RELATION_FOCUS``), ``scope = self_ticker`` (``None`` ⇒ unscoped).
-      - discovered#j: ``query = "{name} {question}"``, ``scope = that entity's ticker``. If slot j
-        is not (yet) populated (``j >= len(discovered)``) the action is illegal ⇒ ``None``.
+    Raises on a FANOUT action rather than silently returning only its first branch — a sweep that
+    quietly collapses to one candidate is precisely the bug E3 removes, so it must fail loudly.
     """
-    if action.config is None:  # STOP (narrows action.config to str below for mypy)
-        return None
-    if action.scope_kind is ScopeKind.SELF:
-        return RetrievalRequest(
-            arm=action.config, query=self_scope_query(question), scope_ticker=self_ticker
-        )
-    slot = action.scope_slot
-    if slot is None or slot >= len(discovered):
-        return None  # masked: this discovered slot has no entity at the current state
-    entity = discovered[slot]
-    return RetrievalRequest(
-        arm=action.config, query=f"{entity.name} {question}", scope_ticker=entity.ticker
+    if action.scope_kind is ScopeKind.FANOUT:
+        raise ValueError("fanout expands to N requests; call action_to_requests()")
+    reqs = action_to_requests(
+        action, question, self_ticker=self_ticker, discovered=discovered
     )
+    return reqs[0] if reqs else None
 
 
 def action_label(action: Action) -> str:
-    """Short stable label for logs / test pinning: ``STOP``, ``hybrid@self``, ``graph@disc1``, …."""
+    """Short stable label for logs / tests: ``STOP``, ``hybrid@self``, ``graph@fanout``, …."""
     if action.is_stop:
         return "STOP"
     if action.scope_kind is ScopeKind.SELF:
         return f"{action.config}@self"
+    if action.scope_kind is ScopeKind.FANOUT:
+        return f"{action.config}@fanout"
     return f"{action.config}@disc{action.scope_slot}"

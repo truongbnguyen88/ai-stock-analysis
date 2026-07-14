@@ -43,7 +43,7 @@ from stock_agent.rag.rl.action import (
     RetrievalRequest,
     ScopeKind,
     action_label,
-    action_to_request,
+    action_to_requests,
     is_legal,
 )
 from stock_agent.rag.rl.state import discovered_unretrieved_entities, featurize_state
@@ -65,6 +65,28 @@ RetrieverFactory = Callable[[str], RetrievalSystem]
 # exactly ONE variable — the query string. That is what makes the measured gap attributable.
 # NOTE: an LLM writer makes the env non-deterministic; never pass one during training.
 QueryWriter = Callable[[RetrievalRequest, "MultiHopQuery", Sequence[RetrievedChunk]], str]
+
+
+def _merge_branches(branches: Sequence[Sequence[RetrievedChunk]]) -> list[RetrievedChunk]:
+    """Merge per-branch results **breadth-first**: every branch's rank-1 chunk, then every rank-2, …
+
+    Single branch ⇒ its own order, unchanged. For a fanout sweep the interleave is load-bearing:
+    ``_dedup_union`` preserves insertion order and the union is capped, so *concatenating* the
+    branches would fill the union with the alphabetically-first candidates' chunks and starve the
+    rest. Round-robin spends the evidence budget on breadth before depth, which is what a sweep
+    means — combined with ``_evidence_cap`` it guarantees every candidate is represented.
+
+    Cross-branch scores are NOT comparable, so sorting by score would not help: each branch is a
+    *scoped* retrieval, and RRF scores are rank-derived (1/(k+rank)), so a branch's rank-1 chunk
+    carries the same score in every branch. Score-sorting would degenerate to the insertion order it
+    was meant to fix. Rank is the only meaningful cross-branch quantity — hence round-robin.
+    """
+    if len(branches) == 1:
+        return list(branches[0])
+    out: list[RetrievedChunk] = []
+    for rank in range(max((len(b) for b in branches), default=0)):
+        out.extend(b[rank] for b in branches if rank < len(b))
+    return out
 
 
 def default_retriever_factory(settings: Settings) -> RetrieverFactory:
@@ -121,14 +143,15 @@ class StepInfo:
 
     action_label: str
     arm: str | None  # None for STOP or a masked no-op
-    scope_ticker: str | None
+    scope_ticker: str | None  # the single scope; None for STOP/masked and for a multi-branch fanout
     n_new_chunks: int  # chunks this step added to the deduped union
     coverage: float  # Φ(s_{t+1}) = aspect coverage of the union after the step
     n_discovered: int  # raw count of named-but-unretrieved entities (state feature, uncapped)
     step_idx: int
-    cost: float  # arm cost proxy charged this step (0 for STOP / masked)
+    cost: float  # arm cost proxy charged this step; a fanout pays it once PER BRANCH
     masked: bool  # True iff a non-STOP action expanded to no request (illegal discovered slot)
     stopped: bool  # True iff this was the STOP action
+    scope_tickers: tuple[str, ...] = ()  # every scope this step searched (len > 1 ⇒ fanout sweep)
 
 
 class RagRetrievalEnv:
@@ -283,39 +306,67 @@ class RagRetrievalEnv:
             return self._state(last_new_chunks=0), 0.0, True, info
 
         self._step_idx += 1  # every non-STOP action consumes budget (guarantees termination)
-        req = action_to_request(
+        reqs = action_to_requests(
             action, self._episode.question, self_ticker=self._episode.seed,
             discovered=self._discovered,
         )
-        if req is not None and self._query_writer is not None:
+        if self._query_writer is not None:
             # Rewrite ONLY the query text — arm and scope stay the policy's decision. An empty/blank
             # rewrite falls back to the template (never issue a contentless query).
-            written = self._query_writer(req, self._episode, list(self._union)).strip()
-            if written:
-                req = replace(req, query=written)
-        n_new, cost, masked = 0, 0.0, req is None
-        if req is not None:
-            chunks = self._retrieve(req)
+            reqs = [self._rewrite(r) for r in reqs]
+        n_new, cost, masked = 0, 0.0, not reqs
+        if reqs:
+            # One retrieval per branch (1 for self/disc, N for a fanout sweep), then merged
+            # breadth-first — see _merge_branches for why the ORDER here is load-bearing.
+            branches = [self._retrieve(r) for r in reqs]
             before = len(self._union)
-            self._union = self._dedup_union(self._union, chunks)[: self.max_evidence]
+            self._union = self._dedup_union(self._union, _merge_branches(branches))[
+                : self._evidence_cap(n_branches=len(branches))
+            ]
             n_new = len(self._union) - before
-            if req.scope_ticker:
-                self._scoped.add(req.scope_ticker)
-            cost = self.arm_costs.get(req.arm, 0.0)
+            self._scoped.update(r.scope_ticker for r in reqs if r.scope_ticker)
+            cost = sum(self.arm_costs.get(r.arm, 0.0) for r in reqs)  # a sweep pays PER branch
 
         self._recompute_discovered()
         phi_after = self._phi = self._coverage()
         # Potential-based shaping (Ng–Harada); cost charged separately. STOP handled above with r=0.
         reward = (self.gamma * phi_after - phi_before) - self.lambda_cost * cost
         self._done = self._step_idx >= self.max_steps
+        scopes = tuple(r.scope_ticker for r in reqs if r.scope_ticker)
         info = StepInfo(
             action_label=action_label(action),
-            arm=(req.arm if req is not None else None),
-            scope_ticker=(req.scope_ticker if req is not None else None),
+            arm=(reqs[0].arm if reqs else None),
+            scope_ticker=(scopes[0] if len(scopes) == 1 else None),
             n_new_chunks=n_new, coverage=phi_after, n_discovered=self._n_discovered_raw,
             step_idx=self._step_idx, cost=cost, masked=masked, stopped=False,
+            scope_tickers=scopes,
         )
         return self._state(last_new_chunks=n_new), reward, self._done, info
+
+    def _rewrite(self, req: RetrievalRequest) -> RetrievalRequest:
+        """Apply the injected ``QueryWriter`` to one request's query text (arm/scope untouched)."""
+        assert self._query_writer is not None and self._episode is not None
+        written = self._query_writer(req, self._episode, list(self._union)).strip()
+        return replace(req, query=written) if written else req
+
+    def _evidence_cap(self, *, n_branches: int) -> int:
+        """The union cap for this step: ``max_evidence``, widened so a sweep can seat every branch.
+
+        A fanout is only a *sweep* if every candidate it searched actually reaches the union. It
+        would not: ``_dedup_union`` appends in insertion order, so with the flat cap a 19-candidate
+        sweep on a HARD episode (6 hop-1 chunks ⇒ 14 slots left) would seat the first 14 candidates
+        **alphabetically** and silently drop 5 — a smaller copy of the very slot bias E3 exists to
+        remove. Measured: only 69% of held-out HARD episodes could seat all their candidates under
+        the flat cap.
+
+        So the cap widens to ``len(union) + n_branches`` when a sweep needs it — one guaranteed seat
+        per branch, on top of the evidence already gathered (which ``_dedup_union`` never evicts).
+        Worst case on the benchmark: 6 + 19 = 25 chunks. Single-branch actions are unaffected, so
+        the A4/A5 baselines and every pre-E3 number keep the flat ``max_evidence`` they were
+        measured under. Breadth costs context — that price is real, and the per-branch arm cost
+        prices it.
+        """
+        return max(self.max_evidence, len(self._union) + n_branches)
 
     def legal_mask(self) -> np.ndarray:
         """Boolean mask (len == ``n_actions``): which actions are executable at the current state.
@@ -348,8 +399,12 @@ class RagRetrievalEnv:
 
         ``searched`` = tickers already scoped by a retrieval ∪ tickers already present in the union
         (matches the A4 bridge's own definition), so an entity leaves the discovered set once its
-        filings are gathered. The raw count feeds the state feature; the first J (lexicographic by
-        ticker — deterministic, label-free) become the addressable action slots.
+        filings are gathered — including every branch a fanout swept.
+
+        The list is **complete** (not truncated to the J action slots) and lexicographic by ticker:
+        deterministic and label-free. Slot actions still address ``[0..J-1]``, i.e. exactly the
+        entities they addressed pre-E3, so their behaviour is unchanged; fanout needs the whole
+        list, and truncating it here is what made the oracle action unreachable in the first place.
         """
         alias_map, _ = self._sources()
         searched = self._scoped | {rc.chunk.ticker for rc in self._union if rc.chunk.ticker}
@@ -358,8 +413,7 @@ class RagRetrievalEnv:
         )
         self._n_discovered_raw = len(tickers)
         self._discovered = [
-            DiscoveredEntity(ticker=t, name=self._display_name(t, alias_map))
-            for t in tickers[: self.n_discovered_slots]
+            DiscoveredEntity(ticker=t, name=self._display_name(t, alias_map)) for t in tickers
         ]
 
     @staticmethod
