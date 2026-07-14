@@ -23,6 +23,7 @@ from stock_agent.rag.rl.action import (
     action_to_request,
     action_to_requests,
     build_action_space,
+    discovered_scope_query,
     is_legal,
     named_action_space,
     self_scope_query,
@@ -31,6 +32,11 @@ from stock_agent.rag.rl.action import (
 MU = DiscoveredEntity(ticker="MU", name="Micron")
 TSM = DiscoveredEntity(ticker="TSM", name="Taiwan Semiconductor")
 QUESTION = "Which memory supplier NVIDIA depends on discloses Chinese cybersecurity restrictions?"
+# The generator's real bridge frame — both hops are asserted against THIS, not a paraphrase.
+BRIDGE_Q = (
+    "Among the companies NVIDIA names as key dependencies in its SEC filings, "
+    "which one warns about export license requirements in its own filings?"
+)
 
 
 # ---- known arms = LATTICE_SYSTEMS ∪ {graph} (single source of truth is read_path) --------------
@@ -173,16 +179,56 @@ def test_self_scope_query_is_label_free() -> None:
 
 def test_discovered_scope_template_prepends_name_and_scopes_by_ticker() -> None:
     a = Action(config="graph", scope_kind=ScopeKind.DISCOVERED, scope_slot=0)
-    req = action_to_request(a, QUESTION, self_ticker="NVDA", discovered=[MU, TSM])
+    req = action_to_request(a, BRIDGE_Q, self_ticker="NVDA", discovered=[MU, TSM])
     assert req is not None
     assert req.arm == "graph"
-    assert req.query == f"Micron {QUESTION}"  # {name} {question}: label-free (name, not a span)
+    assert req.query == "Micron export license requirements"  # {name} {TOPIC} — E6
     assert req.scope_ticker == "MU"
     # slot 1 targets the second discovered entity.
     a1 = Action(config="graph", scope_kind=ScopeKind.DISCOVERED, scope_slot=1)
-    req1 = action_to_request(a1, QUESTION, self_ticker="NVDA", discovered=[MU, TSM])
+    req1 = action_to_request(a1, BRIDGE_Q, self_ticker="NVDA", discovered=[MU, TSM])
     assert req1 is not None and req1.scope_ticker == "TSM"
-    assert req1.query == f"Taiwan Semiconductor {QUESTION}"
+    assert req1.query == "Taiwan Semiconductor export license requirements"
+
+
+# ---- E6: hop 2 searches the TOPIC, not the relation (the mirror of E2) ---------------------------
+def test_discovered_scope_query_strips_the_bridge_frame_to_the_topic() -> None:
+    """Sent whole, the question drowns the target's filing in scaffolding about the SEED.
+
+    "Analog Devices Among the competitors AMD names in its SEC filings, which one discloses customer
+    concentration in its own filings?" is ~20 tokens of "competitors / AMD / which one / SEC
+    filings" around the 2 that matter. Measured on the held-out fold, retrieval inside the RIGHT
+    company found the evidence only 33.3% of the time. Hop 2 must search the topic.
+    """
+    competes = (
+        "Among the competitors AMD names in its SEC filings, "
+        "which one discloses customer concentration in its own filings?"
+    )
+    got = discovered_scope_query(competes, "Analog Devices")
+    assert got == "Analog Devices customer concentration"
+    depends = (
+        "Among the companies NVIDIA names as key dependencies in its SEC filings, "
+        "which one warns about export license requirements in its own filings?"
+    )
+    assert discovered_scope_query(depends, "Micron") == "Micron export license requirements"
+
+
+def test_discovered_scope_query_leaves_a_non_bridge_question_verbatim() -> None:
+    """CTRL (single-entity) questions keep the old template — the CTRL stratum guards this."""
+    ctrl = "What does Micron disclose about DRAM pricing in its SEC filings?"
+    assert discovered_scope_query(ctrl, "Micron") == f"Micron {ctrl}"
+
+
+def test_discovered_scope_query_falls_back_on_an_unrecognized_bridge_frame() -> None:
+    """A bridge cue with no topic cue ⇒ send the whole question. Never guess at a topic."""
+    odd = "Which entity in its own filings is the relevant competitor here?"
+    assert discovered_scope_query(odd, "Micron") == f"Micron {odd}"
+
+
+def test_hop1_and_hop2_split_the_bridge_question_between_them() -> None:
+    """The two halves of a bridge question, each going to the hop that wants it (E2 + E6)."""
+    assert self_scope_query(BRIDGE_Q) == "suppliers supply depend key dependencies"  # the RELATION
+    assert discovered_scope_query(BRIDGE_Q, "Micron") == "Micron export license requirements"
 
 
 # ---- E3: fanout sweeps EVERY candidate ----------------------------------------------------------
@@ -237,12 +283,14 @@ def test_discovered_slot_out_of_range_is_masked() -> None:
 
 
 def test_query_template_is_label_free() -> None:
-    # The discovered-scope query must contain ONLY the entity name + verbatim question — never a
-    # gold aspect span. Guards the leakage line: frozen policy builds this on an unlabeled query.
+    # The discovered-scope query is built from the entity's alias + text lifted out of the
+    # QUESTION — never from the gold aspects. Guards the leakage line: the frozen policy builds
+    # the identical query on a real, unlabeled question, where no spans exist to read.
     a = Action(config="graph", scope_kind=ScopeKind.DISCOVERED, scope_slot=0)
-    req = action_to_request(a, QUESTION, self_ticker="NVDA", discovered=[MU])
+    req = action_to_request(a, BRIDGE_Q, self_ticker="NVDA", discovered=[MU])
     assert req is not None
-    assert req.query == f"{MU.name} {QUESTION}"
+    assert req.query == f"{MU.name} export license requirements"
+    assert req.query == discovered_scope_query(BRIDGE_Q, MU.name)  # one template, one source
 
 
 # ---- legality mask (matches action_to_request's None <-> masked contract) ------------------------

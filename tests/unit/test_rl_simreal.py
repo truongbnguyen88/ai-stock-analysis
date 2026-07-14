@@ -143,10 +143,11 @@ def test_query_writer_replaces_only_the_query_text() -> None:
     # the policy's decisions are untouched: same arms, same scopes, same stop
     assert out.actions == ("hybrid@self", "hybrid@disc0", "STOP")
     assert [(arm, scope) for arm, scope, _ in seen] == [("hybrid", "NVDA"), ("hybrid", "MU")]
-    # …and the templates it was handed are the current ones (which it then rewrote): hop 1 asks
-    # for the RELATION (E2), hop 2 prepends the bridged entity's name to the question.
+    # …and the templates it was handed are the current ones (which it then rewrote). A bridge
+    # question asks two things and each hop takes the half it needs: hop 1 the RELATION (E2),
+    # hop 2 the entity's name + the TOPIC (E6) — never the whole question.
     assert seen[0][2] == "suppliers supply depend key dependencies"
-    assert seen[1][2] == f"Micron {EP.question}"
+    assert seen[1][2] == "Micron Chinese export rules"
 
 
 def test_blank_rewrite_falls_back_to_the_template() -> None:

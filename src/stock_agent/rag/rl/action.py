@@ -12,15 +12,30 @@ load-bearing and frozen in checkpoints (a test pins it).
 could only point hop 2 at discovered slot 0 or 1 — the alphabetically-first two of ~9.3 candidates
 on a held-out HARD episode (max 19) — so the oracle action was on the menu for only ρ ≈ 11.4% of
 states. That capped *any* policy at ≈0.26 coverage while the scripted A4/A5 baseline already scored
-0.271: the null result was an artifact of the action space, not evidence about RL. ``fanout``
-sweeps every candidate in one action, lifting the hop-2 ceiling to ≈0.84.
+0.271: the null result was an artifact of the action space, not evidence about RL.
+
+``fanout`` sweeps every candidate in one action and **fixes reachability** (the target is now a
+discovered candidate on 78.6% of held-out bridge episodes, up from 11.4%). It does **not**, on its
+own, deliver a large coverage win — measured, `sweep(hybrid)` scores 0.500 HARD coverage vs
+`react(hybrid)`'s 0.486, and loses on *return* once its N × arm cost is charged. The bottleneck
+simply moved downstream, to hop-2 retrieval and the evidence budget:
+
+    reachable (target discovered)        78.6%
+    → its branch RETRIEVED the evidence  50.0%   (E6 raised this from 33.3%)
+    → that chunk SEATED in the union     21.4%   ← the sweep seats ~1 chunk per branch
+
+An earlier estimate of "A2 → 68.6%, ceiling ≈0.84" was **wrong**: it measured retrieval into the
+branch and never asked whether the chunk survived the capped union. Do not restore it.
 
 **Deterministic, LLM-free transition (Q3 template B).** An action expands to a ``RetrievalRequest``
 via a pure template — no decision-call LLM — which is what makes ``$0`` reproducible rollouts (and
-on-policy PPO) possible:
+on-policy PPO) possible. A bridge question asks **two** things at once, and each hop wants a
+different one, so each hop searches its own half (E2 / E6 — see ``self_scope_query`` and
+``discovered_scope_query``):
 
-    self-scope         → query = question,              scope = self_ticker
-    discovered-entity#j → query = "{entity_name} {question}",  scope = that entity's ticker
+    self-scope (hop 1)  → query = the RELATION  ("competitors competition compete")
+    discovered / fanout → query = "{entity_name} {TOPIC}"   (hop 2: the topic, not the relation)
+    (non-bridge questions are searched verbatim in both cases)
 
 **Leakage line (Q4.3).** The template is **label-free**: it reads only the question text and the
 discovered entity's alias name, never the gold aspect spans. (The pre-questions Q3 illustration
@@ -33,6 +48,7 @@ prefix is a soft ranking signal (filings say "Micron", not "MU", so the name is 
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -239,6 +255,67 @@ def self_scope_query(question: str) -> str:
     return question  # a bridge cue with no known relation ⇒ fall back to the whole question
 
 
+# Hop-2 query decomposition (A6.2 E6) — the mirror of E2. A bridge question asks two things, and
+# hop 2 wants the OTHER one. Sent whole into a candidate's filings, the question is mostly
+# scaffolding about the *seed* and the *relation*:
+#
+#   "Analog Devices Among the competitors AMD names in its SEC filings, which one discloses
+#    customer concentration in its own filings?"
+#
+# — 20-odd tokens of "competitors / AMD / which one / SEC filings" around the four that matter.
+# Retrieval inside the RIGHT company then fails: measured on the held-out fold, only 33.3% of
+# targets had their evidence retrieved even when the sweep reached them. Hop 2 must search the
+# TOPIC, not the relation. Cues are matched against question TEXT only (never generation metadata),
+# so a deployed policy builds the identical query on a real, unlabeled question.
+_TOPIC_CUES: tuple[str, ...] = (
+    "discloses",
+    "disclose",
+    "warns about",
+    "warns of",
+    "warn about",
+    "mentions",
+    "reports",
+    "describes",
+    "flags",
+)
+# The trailing "... in its own filings?" clause is scaffolding too — it belongs to the question
+# frame, not to the topic being searched for.
+_TOPIC_TAIL = re.compile(
+    r"\s+in (?:its|their) own (?:sec )?filings\b.*$|\s*[?.]+\s*$", re.IGNORECASE
+)
+
+
+def discovered_scope_query(question: str, entity_name: str) -> str:
+    """The hop-2 query for one candidate: ``"{name} {topic}"`` on a bridge question, else the whole.
+
+    Strips the bridge frame ("Among the competitors X names …, which one discloses …") down to the
+    topic clause, and prefixes the candidate's display alias (filings say "Micron", not "MU", so the
+    name is the useful ranking token). Non-bridge questions are searched verbatim, and a bridge
+    question with no recognizable topic cue falls back to the whole question — never a guess.
+
+    Label-free: reads ``question`` and the discovered entity's alias only, never the gold aspects.
+
+    **Benchmark caveat (do not over-read the lift this produces).** The generated benchmark builds
+    its questions by interpolating the gold A2 span verbatim as ``{topic}``, so on *this* corpus the
+    extracted clause recovers the gold span exactly, and hop-2 retrieval looks easier than it will
+    be on a real user question whose topic is paraphrased. The measured gain is therefore an upper
+    bound; the paid LLM-query-writer (sim-to-real) run is what arbitrates the real number.
+    """
+    from stock_agent.research.bridge import is_bridging  # lazy: research imports rag (circular)
+
+    if not is_bridging(question):
+        return f"{entity_name} {question}"
+    low = question.lower()
+    for cue in _TOPIC_CUES:
+        idx = low.find(f" {cue} ")
+        if idx < 0:
+            continue
+        topic = _TOPIC_TAIL.sub("", question[idx + len(cue) + 2 :]).strip()
+        if topic:
+            return f"{entity_name} {topic}"
+    return f"{entity_name} {question}"  # bridge frame we do not recognize ⇒ keep today's behaviour
+
+
 def _discovered_request(arm: str, question: str, entity: DiscoveredEntity) -> RetrievalRequest:
     """The per-candidate hop-2 request. Shared by DISCOVERED and FANOUT — deliberately identical.
 
@@ -248,7 +325,7 @@ def _discovered_request(arm: str, question: str, entity: DiscoveredEntity) -> Re
     sweep affordable inside a PPO training loop.
     """
     return RetrievalRequest(
-        arm=arm, query=f"{entity.name} {question}", scope_ticker=entity.ticker
+        arm=arm, query=discovered_scope_query(question, entity.name), scope_ticker=entity.ticker
     )
 
 
