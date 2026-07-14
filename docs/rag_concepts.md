@@ -2750,9 +2750,25 @@ Measured, on held-out HARD (fraction of episodes placing the target in the top 2
 Nothing beats random, exactly as the information argument predicts. **The correct response to
 "I can't rank these" is not a better ranker — it is an action that makes ranking unnecessary.** If
 the candidates cannot be ordered, they must be **swept**: a single *fan-out* action that scopes hop 2
-to all $|C|$ candidates at once. Empirically that lifts A2 coverage from 11.9% to **68.6%**, and it
-converts the policy's job from an impossible guess into a real, learnable cost/quality decision —
-breadth costs $|C| \times \text{cost(arm)}$ and is only worth paying on bridging questions.
+to all $|C|$ candidates at once. It converts the policy's job from an impossible guess into a real,
+learnable cost/quality decision — breadth costs $|C| \times \text{cost(arm)}$ and is only worth
+paying on bridging questions.
+
+**What the sweep actually bought (measured, and a lesson in its own right).** Fan-out repaired
+*reachability* — the target is a discovered candidate on **78.6%** of held-out bridge episodes, up
+from 11.4%. It did **not** produce a large coverage win, because fixing the binding constraint only
+reveals the next one. The honest funnel, per §20.4's seating analysis:
+
+| stage | rate |
+|---|---|
+| target is a discovered candidate (reachability — what fan-out fixed) | 78.6% |
+| its branch **retrieved** the evidence | 50.0% (33.3% before the §20.4 hop-2 query fix) |
+| that chunk was **seated** in the capped union | **21.4%** |
+
+An earlier estimate — "A2 → 68.6%, ceiling ≈0.84" — was **wrong**, and wrong in an instructive way:
+it measured whether the evidence was *retrieved into a branch* and never asked whether it *survived
+the union cap*. **A retrieval that does not reach the synthesis context did not happen.** Always
+measure the funnel to the last stage that the metric actually reads.
 
 ### 20.3 Reward misspecification: paying for evidence that answers nothing
 
@@ -2791,7 +2807,84 @@ LLM judge's yes/no) is only as good as the predicate's **quantifiers**. Ask of e
 this maximised by?* Here the honest answer was "retrieve everything," which is not the behaviour we
 wanted, and the only reason we never saw it is that the agent was too crippled to try.
 
-### 20.4 The checklist this generalises to
+### 20.4 If you cannot rank, sweep — and a sweep is a budget-allocation problem
+
+§20.2 showed the hop-2 target cannot be *ranked*. The only reliable alternative is to **sweep**:
+search every candidate. Two quantities decide whether a sweep actually delivers, and both bite.
+
+**1. Cost is linear in breadth.** A sweep over $N$ candidates pays the arm's cost once per branch:
+
+$$\mathrm{cost}(\text{sweep}) = N \cdot c(\text{arm})$$
+
+**2. Seating — who actually reaches the answer.** Retrieval is not the finish line: the union handed
+to synthesis is capped at $C$ chunks. Write $e$ for chunks already gathered (hop 1), $N$ for the
+number of branches, $k$ for chunks retrieved per branch. A branch only *counts* if at least one of
+its chunks survives into the union, and **the merge order decides who survives**:
+
+| merge order | branches seated |
+|---|---|
+| concatenate the branches (depth-first) | $\mathrm{floor}\left(\frac{C-e}{k}\right)$ |
+| round-robin by rank (breadth-first) | $\min(N, C-e)$ |
+
+Concatenation spends the whole budget going *deep* into whichever branch happens to come first;
+round-robin spends it going *wide*. To seat every candidate at least once you need
+
+$$C \ge e + N$$
+
+**Worked example (our benchmark, the exact numbers the tests assert).** $C = 20$, hop 1 returns
+$e = 6$ chunks, each branch returns $k = 6$, and a HARD episode can have $N = 19$ candidates:
+
+- **concatenate:** $\mathrm{floor}(14/6) = 2$ branches seated — **17 of 19 candidates never reach
+  synthesis**, even though we paid to retrieve all of them.
+- **round-robin, flat cap:** $\min(19, 14) = 14$ seated — better, still 5 short.
+- **round-robin, widened cap** $C' = \max(C, e+N) = 25$: all 19 seated.
+
+So the merge order and the cap are **both** necessary — either alone leaves candidates unseated, and
+the ones dropped are dropped by an *arbitrary* order (alphabetical), which is precisely the bias
+§20.1 diagnosed. A sweep that quietly drops candidates is not a sweep; it is the old bug wearing a
+new action.
+
+**Why not just sort the merged chunks by score?** Because scores are **not comparable across
+branches**. Each branch is a *scoped* retrieval, and under RRF (§6) the score is rank-derived:
+
+$$s(d) = \sum_{L} \frac{1}{k_{\mathrm{RRF}} + \mathrm{rank}_L(d)}$$
+
+The rank-1 chunk of *every* branch therefore carries the *same* score. Sorting by score degenerates
+to the insertion order it was meant to fix. **Rank is the only meaningful cross-branch quantity** —
+which is exactly why the merge is round-robin over ranks.
+
+### 20.5 If the fix is scriptable, the baseline must get it too
+
+A trap that is easy to walk into once §20.1 is fixed, and more seductive than the original bug
+because it produces a **positive** result.
+
+Fan-out makes the correct hop-2 move *expressible*. It also makes it **trivially scriptable**:
+"search the seed, then sweep everything it named" is a two-line policy that requires no learning at
+all. If you give the learner the enlarged action space but leave the baseline in the old one, you
+measure
+
+$$\Delta = R(\text{learner} + \text{fanout}) - R(\text{baseline without fanout})$$
+
+and attribute to *learning* what is really an **action-space asymmetry**. Same error class as
+§20.1 — an artifact of the action set masquerading as a fact about the policy — only with the sign
+flipped.
+
+**The rule: whenever you enlarge the action space to repair a reachability failure, re-express the
+baseline in the enlarged space.** Here the comparator becomes `sweep(hybrid)` = self → fanout →
+STOP, and the promote rule is run against *that*, not against `react(hybrid)`.
+
+Doing so also sharpens what is actually being asked. If the answer is *always* "sweep", a scripted
+sweeper already has it, and the learner's only remaining edge is the **cost** side — knowing when
+**not** to sweep:
+
+- a CTRL question that names no other company (nothing to sweep — the sweep is illegal anyway),
+- an episode already covered by hop 1 (the sweep buys no coverage and still costs $N \cdot c$),
+- a candidate set so large that $N \cdot c$ exceeds the coverage the sweep can buy.
+
+If no policy beats the scripted sweeper on that margin, **RL genuinely adds nothing to this problem**
+— and that is a legitimate, honestly obtained finding, which is what §20 is ultimately for.
+
+### 20.6 The checklist this generalises to
 
 Before believing any RL result — positive **or** negative:
 

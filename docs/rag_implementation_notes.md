@@ -1858,3 +1858,77 @@ Gate: ruff + mypy (198 files) + full suite green.
   the pre-registered promote rule.
 - **Also re-baseline A4/A5/A6.1** under entity-bound coverage — their published numbers used the
   hackable metric.
+
+### A6.2-E3 / E6 — the fan-out action, and the two bottlenecks it uncovered
+
+**E3 — `ScopeKind.FANOUT`** (`rag/rl/action.py`, `rag/rl/env.py`). One action that scopes hop 2 to
+*every* discovered candidate rather than to slot 0/1. Legal iff ≥1 candidate; expands to N
+`RetrievalRequest`s via `action_to_requests()` (the new primitive — `action_to_request()` now
+*raises* on a fan-out rather than silently collapsing it to one branch, because a sweep that quietly
+becomes a single probe is precisely the bug E3 removes). A branch builds the **same**
+`(arm, scope_ticker, query)` triple a `disc` slot would, so the two share `TransitionCache` entries:
+after the first rollout a sweep is N dict lookups, which is what keeps it affordable inside PPO.
+`_recompute_discovered()` no longer truncates to the J slots — that truncation *was* the
+reachability bug.
+
+**Two correctness traps, both found in design, both independently load-bearing** (verified by
+reintroducing each alone and watching the regression test fail):
+
+1. `_dedup_union` **appends** — so concatenating the branches spends the union budget going *deep*
+   into the alphabetically-first candidate. `_merge_branches()` interleaves branches **by rank**
+   (breadth before depth). Sorting by score does *not* help: each branch is a scoped retrieval and
+   RRF scores are rank-derived, so every branch's rank-1 chunk carries the *same* score —
+   score-sorting degenerates to the insertion order it was meant to fix.
+2. The union cap (`max_evidence=20`, and hop 1 spends 6) leaves 14 seats, but a HARD episode can
+   have **19** candidates — only 69% of held-out HARD could seat all of theirs. `_evidence_cap()`
+   widens to `len(union) + n_branches` when a sweep needs it: one guaranteed seat per branch.
+   Single-branch actions keep the flat cap, so every pre-E3 number and the A4/A5 baselines are
+   measured under exactly the budget they always were.
+
+Either trap alone would have silently re-created the alphabetical bias E3 exists to remove.
+
+**`SweepBridgePolicy` (`sweep(arm)`) — the honest comparator** (`rag/rl/rleval.py`). Fan-out is
+*trivially scriptable* ("search the seed, then sweep what it named"). Handing the learner fan-out
+while the baseline stays on `disc0` would manufacture a win out of an **action-space asymmetry** —
+the same error class as the original bug, with the sign flipped. So the baseline gets the sweep too,
+and **RL must beat `sweep()`, not `react()`**. Rule of thumb now recorded in `rag_concepts.md`
+§20.5: *whenever you enlarge the action space to repair a reachability failure, re-express the
+baseline in the enlarged space.*
+
+**E6 — `discovered_scope_query()`** — found by re-measuring the funnel *after* E3 landed. Hop 2 was
+making E2's mistake in reverse: it sent the **whole** bridge question into the candidate's filings,
+which is mostly scaffolding about the *seed* (`"Analog Devices Among the competitors AMD names in
+its SEC filings, which one discloses customer concentration in its own filings?"` — ~20 tokens
+around the 2 that matter). Hop 1 takes the **relation** (E2); hop 2 takes the **topic** (E6). Label-
+free: reads question text only, falls back to the whole question on an unrecognized frame.
+
+**What the measurements actually said** (held-out fold, $0):
+
+| stage | pre-E3 | +E3 | +E3+E6 |
+|---|---|---|---|
+| target is a discovered candidate (**reachability**) | 11.4% | **78.6%** | 78.6% |
+| its branch **retrieved** the evidence | — | 33.3% | **50.0%** |
+| that chunk **seated** in the capped union | — | 21.4% | 21.4% ← now binding |
+
+E3 fixed what it was built to fix. It did **not** produce a big win: `sweep(hybrid)` scores 0.500
+HARD coverage vs `react(hybrid)`'s 0.486, and **loses on return** (−0.015) once its 3.7× arm cost is
+charged. Fixing the binding constraint just revealed the next one — **evidence seating**. The sweep
+seats ~1 chunk per branch, but the target's span-bearing chunk is rank-0 only 27.3% of the time, so
+12 of 21 retrieved targets never reach synthesis. Seating them needs `m ≥ 2` per branch ⇒ a 44-chunk
+synthesis context in the worst case: a real coverage-vs-context Pareto choice, not a free fix.
+
+**A number was killed here.** The earlier "fan-out lifts A2 to 68.6%, ceiling ≈0.84" estimate was
+**wrong** — it measured retrieval *into a branch* and never asked whether the chunk survived the
+union cap. It had already propagated into three docs and a docstring before being caught. Lesson,
+now in §20.4: *a retrieval that never reaches the synthesis context did not happen* — measure the
+funnel to the last stage the metric actually reads.
+
+**Also learned:** reranking is **hop-dependent**. It is catastrophic on hop 1 (8.6% vs 48.6% — the
+cross-encoder chases the topic and buries the naming paragraph) but *helps* hop 2 (rank-0 27.3% →
+33.3%, top-2 30.3% → 42.4%). The arm that wins depends on which hop you are on — which is itself an
+argument for a learned per-hop policy, and a knob E5 should give it.
+
+**Next (E5):** retrain in the fixed env and re-run the pre-registered promote rule against
+`sweep(hybrid)`. The learnable margin is now explicit and narrow: the **cost** side (when *not* to
+sweep) and **per-hop arm choice**. If nothing beats the scripted sweeper there, RL genuinely adds
+nothing to this problem — a legitimate finding.

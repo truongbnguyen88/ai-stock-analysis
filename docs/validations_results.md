@@ -1059,10 +1059,79 @@ A6.2 rewards.** Treat every published coverage number as an upper bound until re
 - **Reranking makes hop-1 dramatically worse** (8.6% vs 48.6% with the template): the cross-encoder
   chases the topic and buries the competitor paragraph. Do **not** un-prune `hybrid+rerank` for the
   self hop.
-- **Fan-out works**: scoping hop 2 to *all* discovered candidates lifts A2 from 11.9% → **68.6%** (true,
-  entity-bound). Ceiling on HARD rises **~0.26 → ~0.84**.
+- ~~**Fan-out works**: scoping hop 2 to *all* discovered candidates lifts A2 from 11.9% → **68.6%**.
+  Ceiling on HARD rises **~0.26 → ~0.84**.~~ ⚠️ **RETRACTED (2026-07-13, same day).** This estimate
+  measured whether the evidence was *retrieved into a branch* and never asked whether the chunk
+  survived the capped union (`max_evidence=20`). It did not. See "E3/E6 measured results" below —
+  the true seated rate is **21.4%**, and `sweep(hybrid)` beats `react(hybrid)` by only +0.014
+  coverage while **losing on return**. A retrieval that never reaches the synthesis context did not
+  happen.
+
+### E3 / E6 — measured results (held-out fold, n=63; $0, no LLM)
+
+**The hop-2 funnel** (42 bridge episodes with an A2 target):
+
+| stage | pre-E3 | after E3 | after E3+E6 |
+|---|---|---|---|
+| 1. target IS a discovered candidate (**reachability**) | 11.4% | **78.6%** | 78.6% |
+| 2. its branch **retrieved** the evidence | — | 33.3% | **50.0%** |
+| 3. that chunk **seated** in the capped union | — | 21.4% | **21.4%** ← now binding |
+| 4. A2 scored covered | ~0% | 21.4% | 21.4% |
+
+**E3 did its job** — reachability 11.4% → 78.6%, exactly the defect that invalidated the verdict.
+**But each fix reveals the next bottleneck**, and the sweep's headline gain is small:
+
+| policy | HARD | MED | CTRL | ALL | arm cost | **return** |
+|---|---|---|---|---|---|---|
+| `react(hybrid)` | 0.486 | 0.429 | 0.571 | 0.508 | 0.225 | **+0.497** |
+| `sweep(hybrid)` | 0.500 | 0.500 | 0.571 | 0.524 | 0.835 | **+0.482** |
+
+Δ coverage = **+0.016** (6 episodes improved, 53 unchanged, 4 worse). Δ **return = −0.015**: the
+sweep's 3.7× arm cost outweighs the coverage it buys. **The scripted sweep does not currently pay
+for itself** — which is a genuine result, not a bug, and it is exactly the cost/quality margin a
+learned policy would have to win on.
+
+**Why seating is now the constraint.** The sweep seats ~1 chunk per branch (the union cap widens to
+`len(union) + n_branches`; with 19 candidates that is already 25 chunks). But the target's
+span-bearing chunk is only the *top* hit in its branch 27.3% of the time — rank histogram over the
+33 reachable targets: `{rank0: 9, rank1: 1, rank2: 3, rank3: 4, rank4: 4}`. So **12 targets are
+retrieved but never seated.** Seating them needs `m ≥ 2` chunks per branch ⇒ cap = `e + m·N`, i.e.
+6 + 2×19 = **44 chunks** of synthesis context in the worst case. That is a real coverage-vs-context
+Pareto choice, not a free fix.
+
+**Reranking the hop-2 branches — modest, not a silver bullet** (33 reachable targets, top_k=6):
+
+| arm | evidence at rank 0 | in top-2 | found anywhere |
+|---|---|---|---|
+| `hybrid` | 27.3% | 30.3% | 63.6% |
+| `hybrid+rerank` | **33.3%** | **42.4%** | 60.6% |
+| `reranked` | 30.3% | 36.4% | 54.5% |
+
+Rerank moves ~2 more targets to rank 0 and *lowers* recall-anywhere. Note this is the **opposite
+sign** to hop 1, where reranking was catastrophic (8.6% vs 48.6%) — the two hops are different
+tasks (hop 1 = find the chunk that *names* companies; hop 2 = find a *topic* inside one company),
+so the arm that wins is hop-dependent. **That is itself an argument for a learned per-hop policy.**
+
+Even with perfect seating, the retrieval ceiling is 63.6% of reachable ⇒ ~50% of bridge episodes:
+the span simply is not in the target's top-6 for the topic query 36.4% of the time.
 
 ### Status
-E1 (entity-bound coverage) and E2 (relation-targeted hop-1 query) are **landed and green**. E3
-(fan-out action) / E4 (candidate state features) / E5 (retrain + re-evaluate) are **open**. No RL
-verdict is supportable until the re-run on the fixed environment.
+E1 (entity-bound coverage), E2 (relation-targeted hop-1 query), E3 (fan-out action + `sweep()`
+baseline) and E6 (topic-targeted hop-2 query) are **landed and green**. **E4 is closed as obsolete,
+not built** — it existed so the policy could *rank* `disc0` vs `disc1`, and the information argument
+that motivated E3 (`I(Y; E₁) ≈ 0`) says per-candidate features are uninformative *by construction*;
+what the policy needs to *price* a sweep (`n_discovered_unretrieved`, `is_bridging`,
+`budget_remaining`) is already in the 18-dim state.
+
+**E5 (retrain + re-evaluate) is open**, and it must now be run against **`sweep(hybrid)`**, not
+`react(hybrid)`: fan-out is trivially scriptable, so handing the learner fan-out while the baseline
+stays on `disc0` would manufacture a win out of an action-space asymmetry — the same error class as
+the original bug (see `rag_concepts.md` §20.5).
+
+**The open question E5 answers is sharper than before.** The scripted sweep gets +0.016 coverage but
+**−0.015 return** — it does not pay for itself. So the learnable margin is explicitly the *cost*
+side: sweep only when it will pay (skip CTRL, skip episodes hop 1 already covered, skip candidate
+sets too large to be worth `N × cost`), and possibly pick a **different arm per hop** (rerank helps
+hop 2, is catastrophic on hop 1). If no policy beats the scripted sweeper on that margin, **RL
+genuinely adds nothing here** — a legitimate finding, honestly obtained. No RL verdict is
+supportable until that re-run.

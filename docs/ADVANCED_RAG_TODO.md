@@ -1060,13 +1060,38 @@ Ridge backend = hand-rolled numpy normal equations (no sklearn dep). (4) `λ_c`=
 >   published A4/A5/A6.1 coverage numbers** — they used the hackable metric.
 > - [x] **E2 — relation-targeted hop-1 query.** `self_scope_query()`; a bridge question's self-hop
 >   searches for the *relation*, not the topic. Naming-chunk retrieval 48.6% → **100%**.
-> - [ ] **E3 — fan-out action.** Candidates provably cannot be ranked (no label-free ordering beats
->   random), so they must be swept. A2 coverage 11.9% → **68.6%**; cost = n_candidates × arm cost,
->   which is what finally gives the policy a real decision.
-> - [ ] **E4 — candidate state features** so the policy can price the fan-out (the 18-dim state has no
->   per-entity features: `disc0` vs `disc1` was uninformable).
-> - [ ] **E5 — retrain + re-evaluate** against the new ceiling (HARD ~0.26 → **~0.84**); re-run the
->   pre-registered promote rule. Also re-baseline A4/A5/A6.1 under entity-bound coverage.
+> - [x] **E3 — fan-out action.** Candidates provably cannot be ranked (no label-free ordering beats
+>   random), so they must be swept. `ScopeKind.FANOUT` expands to one request per candidate; cost =
+>   n_candidates × arm cost, which is what finally gives the policy a real decision. Two traps fixed
+>   while building it, each independently load-bearing: the branch merge must be **breadth-first**
+>   (`_dedup_union` appends, so concatenating spends the union on the alphabetically-first candidate)
+>   and the union cap must **widen to seat every branch** (only 69% of held-out HARD could seat all
+>   their candidates under the flat cap of 20). Both would have silently re-created the very
+>   alphabetical bias E3 removes.
+>   **Also adds the `sweep(arm)` baseline** — fan-out is trivially scriptable, so giving the learner
+>   fan-out while the baseline stays on `disc0` would manufacture a win out of an action-space
+>   asymmetry (the same error class as the original bug). **RL must beat `sweep()`, not `react()`.**
+> - [x] **E4 — candidate state features: CLOSED AS OBSOLETE, not built.** E4 existed so the policy
+>   could *rank* `disc0` vs `disc1`. The information argument that motivated E3 (`I(Y; E₁) ≈ 0` —
+>   hop-1 evidence carries no signal about *which* candidate discloses the topic) says per-candidate
+>   features are **uninformative by construction**: they would add noise dimensions to a 149-episode
+>   training set to support a decision that provably cannot be made. What the policy needs in order
+>   to *price a sweep* is already in the 18-dim state: `n_discovered_unretrieved` (= the candidate
+>   count = the cost driver, since cost = N × arm cost), `is_bridging`, and `budget_remaining`.
+> - [x] **E6 — topic-targeted hop-2 query** (discovered *after* E3, the mirror of E2). Hop 2 was
+>   sending the whole bridge question into the candidate's filings — ~20 tokens of scaffolding about
+>   the *seed* around the 2 that matter. `discovered_scope_query()` strips the frame to the topic.
+>   Target's-branch retrieval **33.3% → 50.0%**. ⚠️ the benchmark interpolates the gold span verbatim
+>   as `{topic}`, so this lift is an **upper bound**; the paid LLM-query-writer run arbitrates.
+> - [ ] **E5 — retrain + re-evaluate**, now against **`sweep(hybrid)`** (not `react`). Also
+>   re-baseline A4/A5/A6.1 under entity-bound coverage.
+>   **Measured reality check (see validations_results.md):** E3 fixed *reachability* (11.4% →
+>   **78.6%**) but the scripted `sweep(hybrid)` gains only **+0.016 coverage** and **−0.015 return**
+>   — it does not pay for its 3.7× arm cost. The bottleneck moved to **evidence seating** (21.4%: the
+>   sweep seats ~1 chunk/branch, but the target's chunk is rank-0 only 27.3% of the time). So the
+>   learnable margin is now explicitly the **cost** side (when *not* to sweep) plus **per-hop arm
+>   choice** (rerank helps hop 2 +6pts, is catastrophic on hop 1). The old "ceiling ~0.84" was
+>   **wrong** — it never checked whether retrieved chunks survived the union cap.
 
 
 > **Detailed execution plan (slice-by-slice, module/interface designs, TransitionCache, action-space
