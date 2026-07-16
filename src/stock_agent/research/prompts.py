@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from stock_agent.schemas.agentic import StepTrace
+from stock_agent.schemas.research import NewsAnalysis
 from stock_agent.schemas.retrieval import RetrievedChunk
 
 VERSION = "research.v1"
@@ -93,13 +94,34 @@ def build_memo_user(
     quant_lines: list[str],
     news_themes: list[str],
     chunks: Sequence[RetrievedChunk],
+    *,
+    news: NewsAnalysis | None = None,
 ) -> str:
-    """Render the memo user message: quant signals + news themes + numbered SEC sources."""
+    """Render the memo user message: quant signals + news (themes + insights) + SEC sources.
+
+    ``news`` (when present) adds the bullish/bearish/catalyst/risk insight points so the
+    executive summary reflects the recent-news analysis, not just its themes. These are
+    context only (no ``[n]`` marker — they carry article URLs, not SEC chunks); the model
+    still cites SEC claims with ``[n]``.
+    """
     parts = [f"TICKER: {ticker}  (as of {as_of})", "", "QUANTITATIVE SIGNALS:"]
     parts.extend(quant_lines or ["- (none available)"])
 
     parts += ["", "NEWS THEMES:"]
     parts.extend(f"- {t}" for t in news_themes) if news_themes else parts.append("- (none)")
+
+    if news is not None:
+        # Bounded per category so the recent-news analysis informs the summary without
+        # crowding the SEC evidence that carries the load-bearing, citable claims.
+        for label, points in (
+            ("BULLISH", news.bullish),
+            ("BEARISH", news.bearish),
+            ("CATALYSTS", news.catalysts),
+            ("RISKS", news.risks),
+        ):
+            if points:
+                parts += ["", f"NEWS {label}:"]
+                parts.extend(f"- {p}" for p in points[:5])
 
     parts += ["", "SEC FILING SOURCES (cite with [n]):"]
     if not chunks:

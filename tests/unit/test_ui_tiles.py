@@ -99,6 +99,48 @@ def test_sentiment_tile_signed_and_count() -> None:
     assert t["direction"] == "up"  # avg_sentiment > 0
 
 
+# ---- executive brief: the consolidated 5-card header row --------------------------
+def _brief_result() -> dict[str, Any]:
+    """A research_summary payload shaped like the MU run (all 5 cards populated)."""
+    return {
+        "price_snapshot": {"last_close": 975.56, "pct_change": -0.0205, "window_days": 30},
+        "news": {"avg_sentiment": 0.16, "article_count": 25},
+        "forecasts": [
+            {"horizon_days": 20, "prob_up": 0.67, "expected_return": 0.127},
+            {"horizon_days": 60, "prob_up": 0.81, "expected_return": 0.519},
+        ],
+        "large_move": {
+            "prob_large_move": 0.93, "threshold": 0.05, "horizon_days": 20, "lean": "balanced"
+        },
+    }
+
+
+def test_research_summary_emits_full_five_card_row() -> None:
+    tiles = stat_tiles_from_tool_results([_Inv("research_summary", _brief_result())])
+    assert _labels(tiles) == ["Last close", "Net sentiment", "P(up)", "Exp. return", "P(±5%)"]
+    assert _by_label(tiles, "Last close")["value"] == "$975.56"
+    assert _by_label(tiles, "Last close")["direction"] == "down"  # pct_change < 0
+    assert _by_label(tiles, "Net sentiment")["value"] == "+0.16"
+    # P(up) / Exp. return come from the SHORTEST horizon (20d), matching the large-move card.
+    assert _by_label(tiles, "P(up)")["value"] == "67%" and _by_label(tiles, "P(up)")["sub"] == "20d"
+    assert _by_label(tiles, "Exp. return")["value"] == "+12.7%"
+    assert _by_label(tiles, "P(±5%)")["value"] == "93%"
+    assert "balanced" in _by_label(tiles, "P(±5%)")["sub"]
+    assert "direction" not in _by_label(tiles, "P(±5%)")  # balanced lean → neutral
+
+
+def test_research_summary_subtiles_noop_when_slices_absent() -> None:
+    # A degraded brief (no news scores, no large-move) still yields the price + forecast cards.
+    r = {"price_snapshot": {"last_close": 10.0, "pct_change": 0.0, "window_days": 30},
+         "forecasts": [{"horizon_days": 20, "prob_up": 0.5, "expected_return": 0.0}]}
+    tiles = stat_tiles_from_tool_results([_Inv("research_summary", r)])
+    assert _labels(tiles) == ["Last close", "P(up)", "Exp. return"]
+
+
+def test_research_summary_error_yields_no_tiles() -> None:
+    assert stat_tiles_from_tool_results([_Inv("research_summary", {"error": "boom"})]) == []
+
+
 # ---- tool-driven value direction (green/red) --------------------------------------
 def test_direction_is_neutral_at_the_midpoint_and_zero() -> None:
     # P(up) exactly 0.5 and expected_return exactly 0.0 carry NO direction (neutral value),

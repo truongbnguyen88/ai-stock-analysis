@@ -33,7 +33,11 @@ from stock_agent.llm.client import AnthropicClient, TextLLM
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
-from stock_agent.pipelines.research import ResearchPipelineError, run_research
+from stock_agent.pipelines.research import (
+    DEFAULT_NEWS_LOOKBACK_DAYS,
+    ResearchPipelineError,
+    run_research,
+)
 from stock_agent.providers._cache import DiskCache
 from stock_agent.providers.sec_edgar import SecEdgarProvider
 from stock_agent.rag.embeddings import (
@@ -153,7 +157,9 @@ def analyze(
 @app.command()
 def research(
     ticker: Annotated[str, typer.Option("--ticker", "-t", help="Ticker symbol, e.g. NVDA")],
-    days: Annotated[int, typer.Option("--days", "-d", help="News lookback window in days")] = 30,
+    days: Annotated[
+        int, typer.Option("--days", "-d", help="News lookback window in days")
+    ] = DEFAULT_NEWS_LOOKBACK_DAYS,
     output: Annotated[
         Path | None, typer.Option("--output", "-o", help="Write the memo Markdown to this file")
     ] = None,

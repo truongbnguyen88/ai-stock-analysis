@@ -64,6 +64,118 @@ def test_error_forecast_yields_no_chart() -> None:
     assert charts_for([_Inv("run_forecast", {"error": "nope"})]) == []
 
 
+# ---- executive brief (research_summary): one bucket chart per horizon ----------
+def _brief(horizons: list[int]) -> dict[str, Any]:
+    """A research_summary tool result carrying per-horizon bucket distributions."""
+    labels = ["< -10%", "-10% to -5%", "-5% to 0%", "0% to +5%", "+5% to +10%", "> +10%"]
+    return {
+        "ticker": "NVDA",
+        "forecast_buckets": [
+            {
+                "model_name": "ensemble",
+                "horizon_days": h,
+                "buckets": [
+                    {"label": lbl, "probability": p}
+                    for lbl, p in zip(labels, _EVEN, strict=True)
+                ],
+            }
+            for h in horizons
+        ],
+    }
+
+
+def test_brief_emits_one_forecast_chart_per_horizon() -> None:
+    specs = charts_for([_Inv("research_summary", _brief([20, 30, 60]))])
+    fc_specs = [s for s in specs if "scenario probabilities" in s.title.lower()]
+    assert len(fc_specs) == 3  # one per horizon, each with its own scaled bands
+    assert all(s.kind == "bar" and s.color is None and s.y_is_percent for s in fc_specs)
+    assert all(len(s.data) == 6 for s in fc_specs)  # six buckets each
+    # Each chart names its horizon so the three are distinguishable.
+    titles = " ".join(s.title for s in fc_specs)
+    assert all(f"{h}-day" in titles for h in (20, 30, 60))
+
+
+def test_brief_skips_horizons_with_no_buckets() -> None:
+    r = _brief([20, 60])
+    r["forecast_buckets"][1]["buckets"] = []  # e.g. the model skipped this horizon
+    specs = charts_for([_Inv("research_summary", r)])
+    assert len([s for s in specs if "scenario probabilities" in s.title.lower()]) == 1
+
+
+def test_brief_with_no_forecast_buckets_yields_no_chart() -> None:
+    # Mirrors the _memo() test fixture whose forecast has buckets=[].
+    assert charts_for([_Inv("research_summary", {"ticker": "NVDA", "forecast_buckets": []})]) == []
+    assert charts_for([_Inv("research_summary", {"error": "boom"})]) == []
+
+
+# ---- executive brief: recent-news insight + sentiment charts -------------------
+def _brief_news() -> dict[str, Any]:
+    r = _brief([20])
+    r["news"] = {
+        "lookback_days": 21,
+        "article_count": 10,
+        "bullish": ["a", "b"],
+        "bearish": ["c"],
+        "risks": ["d"],
+        "catalysts": [],
+        "pct_positive": 0.5,
+        "pct_negative": 0.2,
+        "sentiment_coverage": 0.4,
+    }
+    return r
+
+
+def test_brief_emits_news_insight_and_sentiment_charts() -> None:
+    specs = charts_for([_Inv("research_summary", _brief_news())])
+    ins = _spec_titled(specs, "insights by category")
+    assert ins.kind == "bar"
+    counts = dict(zip(ins.data["category"], ins.data["count"], strict=True))
+    assert counts == {"Bullish": 2, "Bearish": 1, "Risks": 1, "Catalysts": 0}
+    sent = _spec_titled(specs, "sentiment composition")
+    assert sent.y_is_percent
+    assert abs(float(sent.data["share"].sum()) - 1.0) < 1e-9  # pos + neutral + neg = 1
+
+
+def test_brief_news_charts_noop_without_scores_or_points() -> None:
+    r = _brief([20])
+    r["news"] = {
+        "lookback_days": 21,
+        "article_count": 0,
+        "bullish": [],
+        "bearish": [],
+        "risks": [],
+        "catalysts": [],
+        "pct_positive": None,  # no provider scores → no sentiment chart
+        "pct_negative": None,
+        "sentiment_coverage": 0.0,
+    }
+    specs = charts_for([_Inv("research_summary", r)])
+    news_titled = [s for s in specs if "news" in s.title.lower() or "sentiment" in s.title.lower()]
+    assert news_titled == []  # forecast chart still present, but no news charts
+
+
+# ---- executive brief: consolidated large-move chart ----------------------------
+def test_brief_emits_large_move_chart_from_consolidated_block() -> None:
+    r = _brief([20])
+    r["large_move"] = {
+        "prob_big_up": 0.47,
+        "prob_big_down": 0.46,
+        "prob_large_move": 0.93,
+        "threshold": 0.05,  # fractional (LargeMoveBreakdown dump) → chart derives ±5%
+        "horizon_days": 20,
+    }
+    spec = _spec_titled(charts_for([_Inv("research_summary", r)]), "large-move")
+    assert spec.kind == "bar" and spec.y_is_percent
+    assert "±5%" in spec.title
+    # up-tail + no-big-move + down-tail sums to 1.
+    assert abs(float(spec.data["probability"].sum()) - 1.0) < 1e-9
+
+
+def test_brief_without_large_move_block_emits_no_large_move_chart() -> None:
+    specs = charts_for([_Inv("research_summary", _brief([20]))])  # no "large_move" key
+    assert [s for s in specs if "large-move" in s.title.lower()] == []
+
+
 # ---- large move ---------------------------------------------------------------
 def test_large_move_split_sums_to_one() -> None:
     r = {

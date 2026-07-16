@@ -9,9 +9,15 @@ import pytest
 
 from stock_agent.indicators.snapshot import IndicatorSnapshot
 from stock_agent.research.memo import MemoGuardError, build_memo, render_memo_markdown
+from stock_agent.research.prompts import build_memo_user
 from stock_agent.schemas.documents import DocumentChunk
-from stock_agent.schemas.forecast import ProbBucket, ScenarioForecast
-from stock_agent.schemas.research import ResearchMemo
+from stock_agent.schemas.earnings import EarningsContext
+from stock_agent.schemas.forecast import LargeMoveBreakdown, ProbBucket, ScenarioForecast
+from stock_agent.schemas.research import (
+    NewsAnalysis,
+    PriceSnapshot,
+    ResearchMemo,
+)
 from stock_agent.schemas.retrieval import EvidenceSet, RetrievedChunk
 
 _AS_OF = date(2026, 2, 25)
@@ -100,6 +106,46 @@ def _build(*responses: str, evidence: EvidenceSet | None = None) -> tuple[Resear
     return memo, llm
 
 
+def _news() -> NewsAnalysis:
+    return NewsAnalysis(
+        lookback_days=21,
+        article_count=12,
+        overview="AI demand remains the dominant narrative.",
+        key_themes=["AI capex"],
+        bullish=["Hyperscaler capex guidance raised"],
+        bearish=["China export restrictions widened"],
+        catalysts=["GTC keynote next month"],
+        risks=["Customer concentration"],
+        pct_positive=0.5,
+        pct_negative=0.25,
+        sentiment_coverage=0.4,
+        avg_sentiment=0.18,
+    )
+
+
+def _price() -> PriceSnapshot:
+    return PriceSnapshot(
+        window_days=30, n_bars=20, first_close=90.0, last_close=100.0,
+        period_high=110.0, period_low=85.0, pct_change=0.1111, last_return=-0.021,
+    )
+
+
+def _large_move() -> LargeMoveBreakdown:
+    return LargeMoveBreakdown(
+        ticker="NVDA", as_of=_AS_OF, horizon_days=20, model_name="ensemble",
+        threshold=0.05, prob_large_move=0.93, prob_big_up=0.47, prob_big_down=0.46,
+        lean="balanced",
+    )
+
+
+def _earnings() -> EarningsContext:
+    return EarningsContext(
+        ticker="NVDA", as_of=_AS_OF, next_earnings_date=date(2026, 5, 20),
+        last_earnings_date=date(2026, 2, 20), days_to_next_earnings=84,
+        horizon_days=20, earnings_in_horizon=False,
+    )
+
+
 # ---- assembly + single call --------------------------------------------------
 def test_build_memo_assembles_sections_one_call() -> None:
     memo, llm = _build(_GOOD)
@@ -117,6 +163,77 @@ def test_build_memo_assembles_sections_one_call() -> None:
     assert "Item 7" in memo.citations[0].label
 
 
+# ---- recent-news analysis integration ----------------------------------------
+def test_build_memo_stores_and_renders_news_analysis() -> None:
+    llm = _FakeLLM(_GOOD)
+    memo = build_memo(
+        "NVDA", _AS_OF,
+        snapshot=_snapshot(), forecasts=[_forecast()],
+        evidence=_evidence(), llm=llm, news_analysis=_news(),
+    )
+    assert memo.news is not None
+    assert memo.news.article_count == 12 and memo.news.lookback_days == 21
+    md = render_memo_markdown(memo)
+    assert "## Recent-News Analysis (12 articles, last 21d)" in md
+    assert "Hyperscaler capex guidance raised" in md  # bullish insight rendered
+    assert "50% positive" in md  # sentiment composition line
+
+
+def test_build_memo_stores_and_renders_context_signals() -> None:
+    # Price snapshot + large-move + earnings are consolidated into the brief (were separate tools).
+    llm = _FakeLLM(_GOOD)
+    memo = build_memo(
+        "NVDA", _AS_OF,
+        snapshot=_snapshot(), forecasts=[_forecast()], evidence=_evidence(), llm=llm,
+        price_snapshot=_price(), large_move=_large_move(), earnings=_earnings(),
+    )
+    assert memo.price_snapshot is not None and memo.price_snapshot.last_close == 100.0
+    assert memo.large_move is not None and memo.large_move.lean == "balanced"
+    assert memo.earnings is not None and memo.earnings.earnings_in_horizon is False
+    md = render_memo_markdown(memo)
+    assert "## Price Snapshot (last 30d, 20 bars)" in md
+    assert "## Large-Move Probability (20d, ±5%)" in md
+    assert "lean **balanced**" in md
+    assert "## Earnings Context" in md
+    assert "2026-05-20" in md  # next earnings date rendered
+
+
+def test_memo_narrative_may_reference_large_move_number() -> None:
+    # Grounding is seeded from the large-move dump, so citing its P(|r|>k) doesn't trip the guard.
+    resp = json.dumps(
+        {
+            "executive_summary": "Model sees a 93% chance of a >5% move over 20 days [1].",
+            "management_commentary": "Management cited 41% data center revenue growth [1].",
+            "business_drivers": ["Demand [1]"],
+            "risk_factors": ["Foundry risk [2]"],
+            "bullish_evidence": ["Momentum [1]"],
+            "bearish_evidence": ["Concentration [2]"],
+            "uncertainty_notes": ["Events unseen"],
+            "citations": [1, 2],
+        }
+    )
+    llm = _FakeLLM(resp)
+    memo = build_memo(
+        "NVDA", _AS_OF,
+        snapshot=_snapshot(), forecasts=[_forecast()], evidence=_evidence(), llm=llm,
+        large_move=_large_move(),
+    )
+    assert llm.calls == 1  # no corrective retry — the 93% figure is grounded
+    assert "93%" in memo.executive_summary
+
+
+def test_memo_user_prompt_carries_news_insights() -> None:
+    """The synthesis prompt must expose the news insights so the summary can reflect them."""
+    na = _news()
+    user = build_memo_user(
+        "NVDA", _AS_OF.isoformat(), ["- P(up) 60%"], na.key_themes, _evidence().chunks, news=na
+    )
+    assert "NEWS BULLISH:" in user and "Hyperscaler capex guidance raised" in user
+    assert "NEWS RISKS:" in user and "Customer concentration" in user
+    # Insights sit before the SEC sources block (context, not citable evidence).
+    assert user.index("NEWS BULLISH:") < user.index("SEC FILING SOURCES")
+
+
 # ---- citation guard ----------------------------------------------------------
 def test_fabricated_citation_retried_then_raises() -> None:
     bad = json.dumps({"executive_summary": "Per [9].", "citations": [9]})
@@ -130,6 +247,20 @@ def test_invented_number_retried_then_raises() -> None:
     bad = json.dumps({"executive_summary": "Margin reached 88.8% [1].", "citations": [1]})
     with pytest.raises(MemoGuardError):
         _build(bad, bad)
+
+
+def test_truncated_response_retried_then_succeeds() -> None:
+    # A response truncated mid-JSON (output hit max_tokens) is unparseable → retry once, succeed.
+    truncated = '```json\n{"executive_summary": "Micron sits at an inflection point as demand'
+    memo, llm = _build(truncated, _GOOD)
+    assert llm.calls == 2  # first (truncated) + one fresh retry
+    assert memo.business_drivers and memo.risk_factors
+
+
+def test_unparseable_response_twice_raises_clean_error() -> None:
+    # Two unparseable responses → a clean MemoGuardError (NOT a raw JSONDecodeError to the agent).
+    with pytest.raises(MemoGuardError, match="not valid JSON"):
+        _build("not json at all", "still not json")
 
 
 def test_grounded_numbers_pass() -> None:

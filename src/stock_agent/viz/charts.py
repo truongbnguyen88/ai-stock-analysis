@@ -114,6 +114,113 @@ def _forecast_chart(results: list[dict[str, Any]]) -> ChartSpec | None:
     )
 
 
+def _research_forecast_charts(r: dict[str, Any]) -> list[ChartSpec]:
+    """One scenario-probability bar chart per horizon from the executive brief.
+
+    The brief runs a single model (the ensemble) across several horizons, and each
+    horizon has its OWN return bands (buckets scale with horizon — ±5/10% at 20d vs
+    ±15/30% at 60d; see forecasting.buckets), so a shared x-axis would misalign. We
+    emit a separate chart per horizon using that horizon's real bucket labels — the
+    same visual as ``_forecast_chart`` for a single ``run_forecast``. Numbers are the
+    model's bucket probabilities, never the LLM's.
+    """
+    if not _ok(r):
+        return []
+    specs: list[ChartSpec] = []
+    for e in r.get("forecast_buckets") or []:
+        buckets = e.get("buckets") or []
+        if not buckets:
+            continue  # e.g. a horizon the model skipped — nothing to plot
+        model = str(e.get("model_name", "model"))
+        h = e.get("horizon_days")
+        htxt = f", {h}-day" if h is not None else ""
+        order = [b["label"] for b in buckets]
+        rows = [{"bucket": b["label"], "probability": b["probability"]} for b in buckets]
+        specs.append(
+            ChartSpec(
+                title=f"Forecast scenario probabilities ({model}{htxt})",
+                kind="bar",
+                data=pd.DataFrame(rows),
+                x="bucket",
+                y="probability",
+                x_sort=tuple(order),
+                y_is_percent=True,
+                caption="Probability the return lands in each range (from the ensemble's buckets).",
+            )
+        )
+    return specs
+
+
+def _research_news_charts(r: dict[str, Any]) -> list[ChartSpec]:
+    """Recent-news charts for the executive brief: insight counts + sentiment composition.
+
+    Reads the brief's ``news`` block (a NewsAnalysis dump). Each chart no-ops when its
+    inputs are absent — the insight chart needs at least one cited point; the sentiment
+    chart needs provider scores (``pct_positive``/``pct_negative`` are ``None`` otherwise).
+    """
+    if not _ok(r):
+        return []
+    news = r.get("news")
+    if not isinstance(news, dict):
+        return []
+    specs: list[ChartSpec] = []
+
+    keys = ("bullish", "bearish", "risks", "catalysts")
+    counts = [len(news.get(k) or []) for k in keys]
+    if sum(counts) > 0:
+        cat_labels = ("Bullish", "Bearish", "Risks", "Catalysts")
+        days = news.get("lookback_days") or 0
+        specs.append(
+            ChartSpec(
+                title="Recent-news insights by category",
+                kind="bar",
+                data=pd.DataFrame({"category": list(cat_labels), "count": counts}),
+                x="category",
+                y="count",
+                x_sort=cat_labels,
+                caption=f"Number of cited recent-news points in each category (last {days}d).",
+            )
+        )
+
+    pos, neg = news.get("pct_positive"), news.get("pct_negative")
+    if pos is not None and neg is not None:
+        sent_labels = ("Positive", "Neutral", "Negative")
+        # Neutral = complement; it also absorbs unscored articles (see sentiment_coverage).
+        df = pd.DataFrame(
+            {"label": list(sent_labels), "share": [pos, max(0.0, 1.0 - pos - neg), neg]}
+        )
+        n = int(news.get("article_count", 0) or 0)
+        cov = news.get("sentiment_coverage")
+        cov_txt = f"; {cov:.0%} of articles scored" if cov is not None else ""
+        specs.append(
+            ChartSpec(
+                title="Recent-news sentiment composition",
+                kind="bar",
+                data=df,
+                x="label",
+                y="share",
+                x_sort=sent_labels,
+                y_is_percent=True,
+                caption=f"Share of {n} article(s) by sentiment{cov_txt}.",
+            )
+        )
+    return specs
+
+
+def _research_large_move_chart(r: dict[str, Any]) -> ChartSpec | None:
+    """Large-move tail split for the executive brief (reads the consolidated ``large_move`` block).
+
+    The brief's ``large_move`` sub-dict is a ``LargeMoveBreakdown`` dump — the same shape
+    ``_large_move_chart`` reads for a standalone ``get_large_move`` — so reuse that builder.
+    """
+    if not _ok(r):
+        return None
+    lm = r.get("large_move")
+    if not isinstance(lm, dict):
+        return None
+    return _large_move_chart(lm)
+
+
 def _large_move_chart(r: dict[str, Any]) -> ChartSpec | None:
     """P(|r|>k) split into up-tail / no-big-move / down-tail."""
     if not _ok(r):
@@ -358,6 +465,17 @@ def charts_for(invocations: Sequence[_Invocation]) -> list[ChartSpec]:
         spec = _forecast_chart(forecasts)
         if spec is not None:
             specs.append(spec)
+
+    # The executive brief (research_summary) carries per-horizon buckets + a news block +
+    # a large-move split → one forecast chart per horizon, the news insight/sentiment charts,
+    # then the large-move tail chart.
+    for t in invocations:
+        if t.name == "research_summary":
+            specs.extend(_research_forecast_charts(t.result))
+            specs.extend(_research_news_charts(t.result))
+            lm_spec = _research_large_move_chart(t.result)
+            if lm_spec is not None:
+                specs.append(lm_spec)
 
     seen: set[tuple[Any, ...]] = set()
     for t in invocations:

@@ -36,7 +36,11 @@ from stock_agent.news.topics import (
     resolve_topic,
 )
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
-from stock_agent.pipelines.research import ResearchPipelineError, run_research
+from stock_agent.pipelines.research import (
+    DEFAULT_NEWS_LOOKBACK_DAYS,
+    ResearchPipelineError,
+    run_research,
+)
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.rag.embeddings import embedding_namespace
@@ -91,9 +95,10 @@ _MAX_TICKERS = 6
 _COMPARE_TIMEOUT_S = 90.0
 
 # research_summary is the heaviest tool (prices + forecast + retrieval + a news-summary
-# call + the memo synthesis call ≈ 2 LLM calls). Bound the chat's wait like run_backtest;
-# the underlying LLM client carries its own per-request timeout, this is the wall-clock cap.
-_RESEARCH_TIMEOUT_S = 120.0
+# call + the memo synthesis call ≈ 2 LLM calls). run_research runs its 3 independent gather
+# stages concurrently (≈ their max, not sum), so this is comfortable headroom over the observed
+# ~80-95s; it's the wall-clock cap (the LLM client carries its own per-request timeout).
+_RESEARCH_TIMEOUT_S = 180.0
 
 # Curated theme slugs surfaced to the model (free-form themes also work).
 _KNOWN_TOPICS_DESC = ", ".join(list_topics())
@@ -1375,6 +1380,25 @@ class ToolExecutor:
             for fc in forecasts
         ]
 
+    @staticmethod
+    def _forecast_buckets_payload(forecasts: list[ScenarioForecast]) -> list[dict[str, Any]]:
+        """Per-horizon scenario-bucket distributions so the client can chart the brief.
+
+        The bucket probabilities are the model's own numbers (never the LLM's); the chart
+        builder (viz.charts._research_forecast_charts) renders one bar chart per horizon,
+        since each horizon carries its own horizon-scaled return bands.
+        """
+        return [
+            {
+                "model_name": fc.model_name,
+                "horizon_days": fc.horizon_days,
+                "buckets": [
+                    {"label": b.label, "probability": b.probability} for b in fc.buckets
+                ],
+            }
+            for fc in forecasts
+        ]
+
     def _tool_research_summary(self, args: dict[str, Any]) -> dict[str, Any]:
         # Heaviest tool: P8's run_research (forecast + SEC retrieval + news summary + the memo
         # synthesis call). Numbers + filing citations are already guarded inside the memo, so
@@ -1382,7 +1406,7 @@ class ToolExecutor:
         if self._llm is None:
             return {"error": "research summary unavailable (no LLM configured)"}
         ticker = str(args["ticker"]).upper()
-        days = int(args.get("days", 30))
+        days = int(args.get("days", DEFAULT_NEWS_LOOKBACK_DAYS))
 
         def _run() -> ResearchMemo:
             return run_research(
@@ -1413,7 +1437,16 @@ class ToolExecutor:
             "bearish_evidence": memo.bearish_evidence,
             "uncertainty_notes": memo.uncertainty_notes,
             "recent_news": memo.recent_news,
+            "news": memo.news.model_dump() if memo.news else None,
             "forecasts": self._forecast_headline(memo.forecasts),
+            "forecast_buckets": self._forecast_buckets_payload(memo.forecasts),
             "technical_indicators": memo.technical_indicators,
+            # Consolidated brief signals (were separate tools): recent price window, the
+            # large-move tail split, and earnings context — so one call carries the full brief.
+            "price_snapshot": memo.price_snapshot.model_dump(mode="json")
+            if memo.price_snapshot
+            else None,
+            "large_move": memo.large_move.model_dump(mode="json") if memo.large_move else None,
+            "earnings": memo.earnings.model_dump(mode="json") if memo.earnings else None,
             "citations": self._citations_payload(memo.citations),
         }
