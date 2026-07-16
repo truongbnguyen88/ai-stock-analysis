@@ -9,9 +9,10 @@ import pytest
 
 from stock_agent.indicators.snapshot import IndicatorSnapshot
 from stock_agent.research.memo import MemoGuardError, build_memo, render_memo_markdown
+from stock_agent.research.prompts import build_memo_user
 from stock_agent.schemas.documents import DocumentChunk
 from stock_agent.schemas.forecast import ProbBucket, ScenarioForecast
-from stock_agent.schemas.research import ResearchMemo
+from stock_agent.schemas.research import NewsAnalysis, ResearchMemo
 from stock_agent.schemas.retrieval import EvidenceSet, RetrievedChunk
 
 _AS_OF = date(2026, 2, 25)
@@ -100,6 +101,22 @@ def _build(*responses: str, evidence: EvidenceSet | None = None) -> tuple[Resear
     return memo, llm
 
 
+def _news() -> NewsAnalysis:
+    return NewsAnalysis(
+        lookback_days=21,
+        article_count=12,
+        overview="AI demand remains the dominant narrative.",
+        key_themes=["AI capex"],
+        bullish=["Hyperscaler capex guidance raised"],
+        bearish=["China export restrictions widened"],
+        catalysts=["GTC keynote next month"],
+        risks=["Customer concentration"],
+        pct_positive=0.5,
+        pct_negative=0.25,
+        sentiment_coverage=0.4,
+    )
+
+
 # ---- assembly + single call --------------------------------------------------
 def test_build_memo_assembles_sections_one_call() -> None:
     memo, llm = _build(_GOOD)
@@ -115,6 +132,34 @@ def test_build_memo_assembles_sections_one_call() -> None:
     assert {c.marker for c in memo.citations} == {1, 2}
     assert memo.citations[0].chunk_id == _evidence().chunks[0].chunk.chunk_id
     assert "Item 7" in memo.citations[0].label
+
+
+# ---- recent-news analysis integration ----------------------------------------
+def test_build_memo_stores_and_renders_news_analysis() -> None:
+    llm = _FakeLLM(_GOOD)
+    memo = build_memo(
+        "NVDA", _AS_OF,
+        snapshot=_snapshot(), forecasts=[_forecast()],
+        evidence=_evidence(), llm=llm, news_analysis=_news(),
+    )
+    assert memo.news is not None
+    assert memo.news.article_count == 12 and memo.news.lookback_days == 21
+    md = render_memo_markdown(memo)
+    assert "## Recent-News Analysis (12 articles, last 21d)" in md
+    assert "Hyperscaler capex guidance raised" in md  # bullish insight rendered
+    assert "50% positive" in md  # sentiment composition line
+
+
+def test_memo_user_prompt_carries_news_insights() -> None:
+    """The synthesis prompt must expose the news insights so the summary can reflect them."""
+    na = _news()
+    user = build_memo_user(
+        "NVDA", _AS_OF.isoformat(), ["- P(up) 60%"], na.key_themes, _evidence().chunks, news=na
+    )
+    assert "NEWS BULLISH:" in user and "Hyperscaler capex guidance raised" in user
+    assert "NEWS RISKS:" in user and "Customer concentration" in user
+    # Insights sit before the SEC sources block (context, not citable evidence).
+    assert user.index("NEWS BULLISH:") < user.index("SEC FILING SOURCES")
 
 
 # ---- citation guard ----------------------------------------------------------

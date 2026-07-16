@@ -71,10 +71,10 @@ def run_forecast(
         PriceLoader(registry).load_recent(ticker.upper(), _PRICE_LOOKBACK_DAYS, min_bars=30).series
     )
     forecast = _build_model(model_name, registry).forecast(series, horizon_days=horizon_days)
-    return _apply_conformal(forecast, settings)
+    return apply_conformal(forecast, settings)
 
 
-def _apply_conformal(forecast: ScenarioForecast, settings: Settings) -> ScenarioForecast:
+def apply_conformal(forecast: ScenarioForecast, settings: Settings) -> ScenarioForecast:
     """Widen/​tighten the served CI + VaR by the offline pooled conformal ``q`` (if any).
 
     ``ci_low``/``var_95`` are the same 5% lower quantile, so both shift by ``-q``;

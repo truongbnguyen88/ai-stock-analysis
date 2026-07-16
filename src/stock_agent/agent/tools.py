@@ -36,7 +36,11 @@ from stock_agent.news.topics import (
     resolve_topic,
 )
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
-from stock_agent.pipelines.research import ResearchPipelineError, run_research
+from stock_agent.pipelines.research import (
+    DEFAULT_NEWS_LOOKBACK_DAYS,
+    ResearchPipelineError,
+    run_research,
+)
 from stock_agent.providers.base import ProviderError
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.rag.embeddings import embedding_namespace
@@ -1375,6 +1379,25 @@ class ToolExecutor:
             for fc in forecasts
         ]
 
+    @staticmethod
+    def _forecast_buckets_payload(forecasts: list[ScenarioForecast]) -> list[dict[str, Any]]:
+        """Per-horizon scenario-bucket distributions so the client can chart the brief.
+
+        The bucket probabilities are the model's own numbers (never the LLM's); the chart
+        builder (viz.charts._research_forecast_charts) renders one bar chart per horizon,
+        since each horizon carries its own horizon-scaled return bands.
+        """
+        return [
+            {
+                "model_name": fc.model_name,
+                "horizon_days": fc.horizon_days,
+                "buckets": [
+                    {"label": b.label, "probability": b.probability} for b in fc.buckets
+                ],
+            }
+            for fc in forecasts
+        ]
+
     def _tool_research_summary(self, args: dict[str, Any]) -> dict[str, Any]:
         # Heaviest tool: P8's run_research (forecast + SEC retrieval + news summary + the memo
         # synthesis call). Numbers + filing citations are already guarded inside the memo, so
@@ -1382,7 +1405,7 @@ class ToolExecutor:
         if self._llm is None:
             return {"error": "research summary unavailable (no LLM configured)"}
         ticker = str(args["ticker"]).upper()
-        days = int(args.get("days", 30))
+        days = int(args.get("days", DEFAULT_NEWS_LOOKBACK_DAYS))
 
         def _run() -> ResearchMemo:
             return run_research(
@@ -1413,7 +1436,9 @@ class ToolExecutor:
             "bearish_evidence": memo.bearish_evidence,
             "uncertainty_notes": memo.uncertainty_notes,
             "recent_news": memo.recent_news,
+            "news": memo.news.model_dump() if memo.news else None,
             "forecasts": self._forecast_headline(memo.forecasts),
+            "forecast_buckets": self._forecast_buckets_payload(memo.forecasts),
             "technical_indicators": memo.technical_indicators,
             "citations": self._citations_payload(memo.citations),
         }

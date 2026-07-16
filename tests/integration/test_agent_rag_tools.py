@@ -22,7 +22,7 @@ from stock_agent.rag.retriever import Retriever
 from stock_agent.rag.vector_store import InMemoryVectorStore
 from stock_agent.schemas.documents import DocumentChunk, DocumentType
 from stock_agent.schemas.forecast import ScenarioForecast
-from stock_agent.schemas.research import ResearchMemo, SourceCitation
+from stock_agent.schemas.research import NewsAnalysis, ResearchMemo, SourceCitation
 from stock_agent.settings import Settings
 
 _EMB = FakeEmbedder(dim=32)
@@ -310,6 +310,17 @@ def _memo() -> ResearchMemo:
         bearish_evidence=["Customer concentration [1]"],
         uncertainty_notes=["Pace of AI capex"],
         recent_news=["AI demand"],
+        news=NewsAnalysis(
+            lookback_days=21,
+            article_count=8,
+            overview="AI demand dominates.",
+            key_themes=["AI demand"],
+            bullish=["Capex guidance raised"],
+            risks=["Export controls"],
+            pct_positive=0.5,
+            pct_negative=0.25,
+            sentiment_coverage=0.4,
+        ),
         citations=[
             SourceCitation(
                 marker=1,
@@ -338,8 +349,25 @@ def test_research_summary_compact_shape(monkeypatch: pytest.MonkeyPatch) -> None
     assert fc["prob_up"] == 0.76
     assert out["technical_indicators"]["rsi_14"] == 55.0
     assert out["citations"][0]["chunk_id"] == "NVDA:10-K:2026-02-25:0"
+    # Recent-news analysis block surfaced (themes + insights + sentiment) for chart + agent use.
+    assert out["news"]["lookback_days"] == 21 and out["news"]["article_count"] == 8
+    assert out["news"]["bullish"] == ["Capex guidance raised"]
+    assert out["news"]["pct_positive"] == 0.5
     # The full Markdown is NOT returned (too long for a tool result).
     assert "##" not in json.dumps(out)
+
+
+def test_research_summary_defaults_to_21_day_news_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _capture(*a: object, **k: object) -> ResearchMemo:
+        captured.update(k)
+        return _memo()
+
+    monkeypatch.setattr("stock_agent.agent.tools.run_research", _capture)
+    ex = _executor(llm=_FakeLLM(), retriever=_retriever([]))
+    ex.execute("research_summary", {"ticker": "NVDA"})
+    assert captured["days"] == 21  # brief pulls 3 weeks of news by default
 
 
 def test_research_summary_without_llm_errors() -> None:

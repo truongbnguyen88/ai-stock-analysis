@@ -25,7 +25,7 @@ from stock_agent.logging_config import get_logger
 from stock_agent.research._shared import correction, loads_lenient, markers_in_text
 from stock_agent.research.prompts import MEMO_SYSTEM, build_memo_user
 from stock_agent.schemas.forecast import ScenarioForecast
-from stock_agent.schemas.research import ResearchMemo, SourceCitation
+from stock_agent.schemas.research import NewsAnalysis, ResearchMemo, SourceCitation
 from stock_agent.schemas.retrieval import EvidenceSet
 
 log = get_logger(__name__)
@@ -98,6 +98,7 @@ def build_memo(
     evidence: EvidenceSet,
     llm: TextLLM,
     news_summary: NewsSummary | None = None,
+    news_analysis: NewsAnalysis | None = None,
     max_tokens: int = _MAX_TOKENS,
 ) -> ResearchMemo:
     """Assemble an integrated memo: deterministic quant sections + one grounded narrative call."""
@@ -116,7 +117,9 @@ def build_memo(
     for rc in evidence.chunks:
         grounding.add_from(rc.chunk.text)  # SEC figures are quotable
 
-    user = build_memo_user(ticker, as_of.isoformat(), quant_lines, news_themes, evidence.chunks)
+    user = build_memo_user(
+        ticker, as_of.isoformat(), quant_lines, news_themes, evidence.chunks, news=news_analysis
+    )
     raw = llm.complete_json(system=MEMO_SYSTEM, user=user, max_tokens=max_tokens)
     parsed = _guarded(evidence, grounding, raw, user, llm, max_tokens, retry=True)
 
@@ -141,6 +144,7 @@ def build_memo(
         bearish_evidence=parsed.bearish_evidence,
         uncertainty_notes=parsed.uncertainty_notes,
         recent_news=news_themes,
+        news=news_analysis,
         citations=citations,
     )
 
@@ -207,6 +211,27 @@ def render_memo_markdown(memo: ResearchMemo) -> str:
                 f"- **{fc.model_name}** ({fc.horizon_days}d): P(up) {fc.upside_prob:.0%}, "
                 f"P(down) {fc.downside_prob:.0%}, E[r] {fc.expected_return:+.1%}{var}"
             )
+
+    if memo.news is not None:
+        na = memo.news
+        hdr = f"## Recent-News Analysis ({na.article_count} articles, last {na.lookback_days}d)"
+        out += ["", hdr]
+        if na.overview:
+            out += [na.overview]
+        if na.pct_positive is not None and na.pct_negative is not None:
+            neutral = max(0.0, 1.0 - na.pct_positive - na.pct_negative)
+            out += [
+                f"- **Sentiment**: {na.pct_positive:.0%} positive / {neutral:.0%} neutral / "
+                f"{na.pct_negative:.0%} negative"
+            ]
+        for label, pts in (
+            ("Bullish", na.bullish),
+            ("Bearish", na.bearish),
+            ("Catalysts", na.catalysts),
+            ("Risks", na.risks),
+        ):
+            if pts:
+                out += ["", f"**{label}**", *_bullets(pts)]
 
     for title, items in (
         ("Recent News", memo.recent_news),

@@ -13,23 +13,33 @@ from collections.abc import Sequence
 from pydantic import ValidationError
 
 from stock_agent.data.loader import PriceLoader
-from stock_agent.forecasting.historical import HistoricalSimulation
+from stock_agent.features.news_features import build_news_features
+from stock_agent.forecasting.ensemble import full_ensemble
 from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import AnthropicClient, LLMError, TextLLM
+from stock_agent.llm.guards import NewsSummary
 from stock_agent.llm.news_summarizer import SummaryGuardError, summarize_news
 from stock_agent.logging_config import get_logger
 from stock_agent.news.fetch import NewsFetcher
+from stock_agent.pipelines.forecast import apply_conformal
 from stock_agent.providers.registry import ProviderRegistry, build_default_registry
 from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.research.memo import MemoGuardError, build_memo
-from stock_agent.schemas.research import ResearchMemo
+from stock_agent.schemas.news import NewsBundle
+from stock_agent.schemas.research import NewsAnalysis, ResearchMemo
 from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChunk
 from stock_agent.settings import Settings
 
 log = get_logger(__name__)
 
-DEFAULT_HORIZONS: tuple[int, ...] = (5, 20, 60)
+# 20/30/60 are the horizons with trained pooled-ML artifacts AND exact return bands
+# (see forecasting.buckets._HORIZON_BANDS), so the ensemble seats all 5 members at each.
+DEFAULT_HORIZONS: tuple[int, ...] = (20, 30, 60)
+# Recent-news lookback for the brief: 3 weeks captures the current news cycle without
+# diluting it with stale items. Shared by the CLI `research` command and the agent's
+# `research_summary` tool so the two never diverge.
+DEFAULT_NEWS_LOOKBACK_DAYS = 21
 _PRICE_LOOKBACK_DAYS = 420
 # Targeted retrievals so the memo's filing-grounded sections each get coverage; the
 # results are merged + deduped, then capped (more sources = more prompt tokens / cost).
@@ -93,6 +103,32 @@ def _gather_sec_evidence(
     return EvidenceSet(query=f"{ticker} research memo", chunks=chunks)
 
 
+def _news_analysis(
+    summary: NewsSummary, bundle: NewsBundle, *, lookback_days: int
+) -> NewsAnalysis:
+    """Flatten the LLM news summary + free provider-sentiment shares into the pure schema.
+
+    Sentiment shares come from ``build_news_features`` (provider ``article.sentiment``
+    scores, no LLM). They are ``None`` — not 0.0 — when no article carried a score, so a
+    downstream chart no-ops instead of drawing a misleading "all neutral" bar.
+    """
+    feats = build_news_features(bundle)  # free AV scores; no LLM call
+    has_scores = (feats.get("sentiment_coverage") or 0.0) > 0.0
+    return NewsAnalysis(
+        lookback_days=lookback_days,
+        article_count=int(feats.get("article_count", 0.0)),
+        overview=summary.overview,
+        key_themes=list(summary.key_themes),
+        bullish=[p.point for p in summary.bullish],
+        bearish=[p.point for p in summary.bearish],
+        risks=[p.point for p in summary.risks],
+        catalysts=[p.point for p in summary.catalysts],
+        pct_positive=feats["pct_positive"] if has_scores else None,
+        pct_negative=feats["pct_negative"] if has_scores else None,
+        sentiment_coverage=feats.get("sentiment_coverage"),
+    )
+
+
 def run_research(
     ticker: str,
     *,
@@ -100,7 +136,7 @@ def run_research(
     registry: ProviderRegistry | None = None,
     llm: TextLLM | None = None,
     horizons: Sequence[int] = DEFAULT_HORIZONS,
-    days: int = 30,
+    days: int = DEFAULT_NEWS_LOOKBACK_DAYS,
     company_name: str | None = None,
     use_news: bool = True,
     retriever: RetrievalSystem | None = None,
@@ -119,15 +155,19 @@ def run_research(
             "The research memo requires an LLM. Set ANTHROPIC_API_KEY in your .env."
         )
 
-    # Prices -> indicators -> baseline forecasts.
+    # Prices -> indicators -> ensemble forecasts (same model + conformal calibration the
+    # standalone `run_forecast` serves, so the brief and a direct forecast query agree).
+    # `full_ensemble` seats 3 stateless members + pooled logistic/lightgbm; an ML member
+    # with no trained artifact for the horizon self-drops (see forecasting.ensemble).
     series = PriceLoader(registry).load_recent(ticker, _PRICE_LOOKBACK_DAYS, min_bars=30).series
     snapshot = compute_snapshot(series)
     as_of = series.bars[-1].date
-    model = HistoricalSimulation()
+    model = full_ensemble(registry)
     forecasts = []
     for h in horizons:
         try:
-            forecasts.append(model.forecast(series, horizon_days=h, as_of=as_of))
+            fc = model.forecast(series, horizon_days=h, as_of=as_of)
+            forecasts.append(apply_conformal(fc, settings))
         except ValueError:
             log.info("research.skip_horizon", ticker=ticker, horizon=h)
 
@@ -136,14 +176,18 @@ def run_research(
     if evidence.is_empty:
         log.warning("research.no_sec_evidence", ticker=ticker)
 
-    # News summary (optional; degrade gracefully on failure).
+    # Recent-news pull (`days`-window) + qualitative analysis (optional; degrade gracefully).
+    # The summary feeds the memo's grounding + narrative; `news_analysis` is the structured
+    # block surfaced to the client (themes + insights + free provider-sentiment shares).
     news_summary = None
+    news_analysis = None
     if use_news:
         try:
             bundle = NewsFetcher(registry).fetch(
                 ticker, lookback_days=days, company_name=company_name, top_n=25
             )
             news_summary = summarize_news(bundle, client)
+            news_analysis = _news_analysis(news_summary, bundle, lookback_days=days)
         except (LLMError, SummaryGuardError, ValueError, ValidationError) as exc:
             log.warning("research.news_failed", ticker=ticker, error=str(exc))
 
@@ -158,6 +202,7 @@ def run_research(
             evidence=evidence,
             llm=client,
             news_summary=news_summary,
+            news_analysis=news_analysis,
         )
     except (MemoGuardError, LLMError, ValidationError) as exc:
         raise ResearchPipelineError(f"Memo synthesis failed: {exc}") from exc
