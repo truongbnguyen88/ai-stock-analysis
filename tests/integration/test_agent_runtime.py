@@ -7,11 +7,14 @@ from typing import Any
 
 import pytest
 
+from stock_agent.agent.guards import NumberGrounding
 from stock_agent.agent.runtime import (
     AgentGroundingError,
     AnthropicToolClient,
+    ToolInvocation,
     ToolResponse,
     ToolUse,
+    _grounded_fallback_answer,
     run_agent,
 )
 from stock_agent.agent.tools import ToolExecutor
@@ -175,6 +178,89 @@ def test_persistent_fabrication_raises() -> None:
     script = [_final("A 92.5% chance."), _final("Still 92.5% likely.")]
     with pytest.raises(AgentGroundingError):
         run_agent("will it go up?", llm=FakeToolLLM(script), executor=_executor())
+
+
+# ---- grounded fallback: a successful research_summary is never blanked ---------------------------
+# The result dict `research_summary` returns; every figure here is seeded into grounding at
+# execution, so restating any of them in the fallback is grounded by construction.
+_RESEARCH_RESULT: dict[str, Any] = {
+    "ticker": "MRVL",
+    "as_of": "2026-02-25",
+    "executive_summary": "Marvell shows 60% upside odds over 20 days on data-center demand [1].",
+    "business_drivers": ["Accelerated custom-silicon demand [1]"],
+    "risk_factors": ["Customer concentration [2]"],
+    "bullish_evidence": ["Forecast P(up) 60% aligns with capex strength [1]"],
+    "bearish_evidence": ["Supply concentration risk [2]"],
+    "uncertainty_notes": ["Price-only model cannot see scheduled events"],
+}
+
+
+def _research_tool_use() -> ToolResponse:
+    return ToolResponse(
+        text="",
+        tool_uses=[ToolUse(id="1", name="research_summary", input={"ticker": "MRVL"})],
+        stop_reason="tool_use",
+        assistant_content=[],
+    )
+
+
+def test_research_summary_grounding_falls_back_to_brief(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Repro of the observed MRVL failure: the tool succeeds (111s), but the agent's re-narration
+    # injects an ungrounded figure ("-68%") that survives every retry. Instead of blanking the turn
+    # (Error → client sees ✓ then nothing), the loop surfaces the tool's OWN grounded brief.
+    ex = _executor()
+    monkeypatch.setattr(ex, "execute", lambda name, args: _RESEARCH_RESULT)
+    script = [
+        _research_tool_use(),
+        # "-68%" is in no tool output; "60%" and "2021" are (grounded / bare-int, not flagged).
+        _final("Marvell is -68% off its 2021 peak, though I still see 60% upside near-term [1]."),
+    ]
+    llm = FakeToolLLM(script)
+    result = run_agent("full executive brief on MRVL", llm=llm, executor=ex)
+
+    assert llm.calls == 4  # tool + initial answer + 2 corrective retries, all ungrounded → fallback
+    assert "research_summary" in result.tool_calls
+    assert result.tool_results and result.tool_results[0].name == "research_summary"  # tiles/charts
+    assert "-68%" not in result.text  # the rejected figure never reaches the client
+    assert "Executive brief — MRVL" in result.text  # the grounded fallback header
+    assert "60% upside odds over 20 days" in result.text  # the tool's own (guarded) exec summary
+    assert "- Customer concentration [2]" in result.text  # a narrative section rendered
+
+
+def test_errored_research_summary_still_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An errored (e.g. timed-out) research_summary has no grounded brief to fall back to, so a
+    # persistent ungrounded answer must still fail closed — we never fabricate a fallback from a
+    # tool error, and the numbers-vs-narrative guard is not weakened for non-brief outcomes.
+    ex = _executor()
+    errored = {"error": "research summary exceeded 180s"}
+    monkeypatch.setattr(ex, "execute", lambda name, args: errored)
+    script = [_research_tool_use(), _final("There is a 92.5% chance of a rally.")]
+    with pytest.raises(AgentGroundingError):
+        run_agent("full brief on MRVL", llm=FakeToolLLM(script), executor=ex)
+
+
+def test_grounded_fallback_answer_uses_brief_when_grounded() -> None:
+    inv = ToolInvocation(name="research_summary", input={"ticker": "MRVL"}, result=_RESEARCH_RESULT)
+    g = NumberGrounding()
+    g.add_from(_RESEARCH_RESULT)  # seed exactly as the loop does at tool execution
+    text = _grounded_fallback_answer([inv], g)
+    assert text is not None
+    assert "Executive brief — MRVL" in text
+    assert "60% upside odds over 20 days" in text
+    assert "- Customer concentration [2]" in text
+
+
+def test_grounded_fallback_answer_fails_closed_when_ungrounded() -> None:
+    # Defensive branch: if the grounding set lacks the brief's figures, the helper returns None so
+    # the caller fails closed — the fallback can never surface an unverifiable number.
+    inv = ToolInvocation(name="research_summary", input={}, result=_RESEARCH_RESULT)
+    assert _grounded_fallback_answer([inv], NumberGrounding()) is None
+
+
+def test_grounded_fallback_answer_none_without_research_summary() -> None:
+    # Only research_summary carries a pre-guarded brief; other tools have no fallback text.
+    inv = ToolInvocation(name="run_forecast", input={}, result={"upside_prob": 0.6})
+    assert _grounded_fallback_answer([inv], NumberGrounding()) is None
 
 
 class _RecordingAnthropic:
