@@ -249,6 +249,20 @@ def test_invented_number_retried_then_raises() -> None:
         _build(bad, bad)
 
 
+def test_truncated_response_retried_then_succeeds() -> None:
+    # A response truncated mid-JSON (output hit max_tokens) is unparseable → retry once, succeed.
+    truncated = '```json\n{"executive_summary": "Micron sits at an inflection point as demand'
+    memo, llm = _build(truncated, _GOOD)
+    assert llm.calls == 2  # first (truncated) + one fresh retry
+    assert memo.business_drivers and memo.risk_factors
+
+
+def test_unparseable_response_twice_raises_clean_error() -> None:
+    # Two unparseable responses → a clean MemoGuardError (NOT a raw JSONDecodeError to the agent).
+    with pytest.raises(MemoGuardError, match="not valid JSON"):
+        _build("not json at all", "still not json")
+
+
 def test_grounded_numbers_pass() -> None:
     # 60% (upside_prob), 41% (SEC source) are grounded -> clean, one call.
     _, llm = _build(_GOOD)

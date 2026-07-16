@@ -36,7 +36,10 @@ from stock_agent.schemas.retrieval import EvidenceSet
 
 log = get_logger(__name__)
 
-_MAX_TOKENS = 2200
+# The memo JSON carries 7 narrative fields (exec summary + commentary + 5 lists) grounded in
+# ~10 SEC chunks, so it needs real output room. 2200 truncated mid-JSON on dense filers (e.g. MU)
+# → the response hit the ceiling and `loads_lenient` couldn't parse the unclosed object.
+_MAX_TOKENS = 4096
 
 
 class MemoGuardError(RuntimeError):
@@ -210,7 +213,19 @@ def _guarded(
     retry: bool,
 ) -> _RawMemo:
     """Validate the memo's citations + figures; one corrective retry, then raise."""
-    parsed = _RawMemo.model_validate(loads_lenient(raw))
+    # An empty or truncated response (e.g. output hit max_tokens mid-JSON) is unparseable —
+    # `loads_lenient` raises ValueError (JSONDecodeError is a subclass). Retry once with a fresh
+    # call, then fail cleanly as a MemoGuardError (which the pipeline surfaces) rather than letting
+    # a raw JSONDecodeError escape to the agent.
+    try:
+        data = loads_lenient(raw)
+    except ValueError as exc:
+        if retry:
+            log.warning("memo.parse.retry", error=str(exc), resp_len=len(raw))
+            retried = llm.complete_json(system=MEMO_SYSTEM, user=user, max_tokens=max_tokens)
+            return _guarded(evidence, grounding, retried, user, llm, max_tokens, retry=False)
+        raise MemoGuardError(f"memo response was not valid JSON ({exc})") from exc
+    parsed = _RawMemo.model_validate(data)
     n = len(evidence.chunks)
     text = _narrative_text(parsed)
     cited = set(parsed.citations) | markers_in_text(text)

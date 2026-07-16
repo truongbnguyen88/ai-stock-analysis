@@ -95,9 +95,10 @@ _MAX_TICKERS = 6
 _COMPARE_TIMEOUT_S = 90.0
 
 # research_summary is the heaviest tool (prices + forecast + retrieval + a news-summary
-# call + the memo synthesis call ≈ 2 LLM calls). Bound the chat's wait like run_backtest;
-# the underlying LLM client carries its own per-request timeout, this is the wall-clock cap.
-_RESEARCH_TIMEOUT_S = 120.0
+# call + the memo synthesis call ≈ 2 LLM calls). run_research runs its 3 independent gather
+# stages concurrently (≈ their max, not sum), so this is comfortable headroom over the observed
+# ~80-95s; it's the wall-clock cap (the LLM client carries its own per-request timeout).
+_RESEARCH_TIMEOUT_S = 180.0
 
 # Curated theme slugs surfaced to the model (free-form themes also work).
 _KNOWN_TOPICS_DESC = ", ".join(list_topics())

@@ -9,6 +9,7 @@ LLM is required (unlike ``analyze``, which degrades to a synthesis-free report).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 from pydantic import ValidationError
@@ -29,6 +30,7 @@ from stock_agent.providers.registry import ProviderRegistry, build_default_regis
 from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.research.memo import MemoGuardError, build_memo
+from stock_agent.schemas.earnings import EarningsContext
 from stock_agent.schemas.forecast import LargeMoveBreakdown, ScenarioForecast
 from stock_agent.schemas.market import PriceSeries
 from stock_agent.schemas.news import NewsBundle
@@ -203,49 +205,68 @@ def run_research(
             "The research memo requires an LLM. Set ANTHROPIC_API_KEY in your .env."
         )
 
-    # Prices -> indicators -> ensemble forecasts (same model + conformal calibration the
-    # standalone `run_forecast` serves, so the brief and a direct forecast query agree).
-    # `full_ensemble` seats 3 stateless members + pooled logistic/lightgbm; an ML member
-    # with no trained artifact for the horizon self-drops (see forecasting.ensemble).
+    # Prices first — the ensemble forecast and both snapshots read the loaded series.
     series = PriceLoader(registry).load_recent(ticker, _PRICE_LOOKBACK_DAYS, min_bars=30).series
     snapshot = compute_snapshot(series)
     as_of = series.bars[-1].date
-    model = full_ensemble(registry)
-    forecasts = []
-    for h in horizons:
-        try:
-            fc = model.forecast(series, horizon_days=h, as_of=as_of)
-            forecasts.append(apply_conformal(fc, settings))
-        except ValueError:
-            log.info("research.skip_horizon", ticker=ticker, horizon=h)
-
-    # Derived signals off the same series/forecasts (no extra model calls): a recent price
-    # snapshot, the large-move tail split at the shortest horizon, and earnings context for
-    # that horizon. Earnings is the one provider call here; it degrades to empty on failure.
     price_snapshot = _price_snapshot(series)
-    large_move = _primary_large_move(forecasts)
-    primary_h = min((fc.horizon_days for fc in forecasts), default=int(horizons[0]))
-    earnings = fetch_earnings_context(registry, ticker, as_of=as_of, horizon_days=primary_h)
 
-    # SEC evidence (RAG). Empty when nothing has been ingested for the ticker.
-    evidence = _gather_sec_evidence(ticker, settings, settings.rag_top_k, retriever=retriever)
-    if evidence.is_empty:
-        log.warning("research.no_sec_evidence", ticker=ticker)
+    # The three heavy stages are INDEPENDENT — only the memo synthesis (below) needs all three —
+    # so run them concurrently to collapse the wall-clock from their SUM (~130-160s, which blew the
+    # tool's 120s budget) to their MAX. Safe to parallelize: only the news stage calls the LLM; the
+    # forecast stage is compute + disk-cached prices/VIX; SEC retrieval uses the vector store +
+    # embeddings. No shared mutable resource and no concurrent LLM/provider use across stages.
+    def _forecast_stage() -> tuple[
+        list[ScenarioForecast], LargeMoveBreakdown | None, EarningsContext
+    ]:
+        # Same model + conformal calibration `run_forecast` serves (so the brief and a direct
+        # forecast agree). `full_ensemble` seats 3 stateless members + pooled logistic/lightgbm; an
+        # ML member with no artifact for the horizon self-drops (see forecasting.ensemble).
+        model = full_ensemble(registry)
+        fcs: list[ScenarioForecast] = []
+        for h in horizons:
+            try:
+                fc = model.forecast(series, horizon_days=h, as_of=as_of)
+                fcs.append(apply_conformal(fc, settings))
+            except ValueError:
+                log.info("research.skip_horizon", ticker=ticker, horizon=h)
+        # Derived off the forecasts (no extra model calls): large-move tail split at the shortest
+        # horizon + earnings context for it. Earnings is the one provider call; degrades to empty.
+        lm = _primary_large_move(fcs)
+        primary_h = min((fc.horizon_days for fc in fcs), default=int(horizons[0]))
+        ec = fetch_earnings_context(registry, ticker, as_of=as_of, horizon_days=primary_h)
+        return fcs, lm, ec
 
-    # Recent-news pull (`days`-window) + qualitative analysis (optional; degrade gracefully).
-    # The summary feeds the memo's grounding + narrative; `news_analysis` is the structured
-    # block surfaced to the client (themes + insights + free provider-sentiment shares).
-    news_summary = None
-    news_analysis = None
-    if use_news:
+    def _evidence_stage() -> EvidenceSet:
+        # SEC evidence (RAG). Empty when nothing has been ingested for the ticker.
+        return _gather_sec_evidence(ticker, settings, settings.rag_top_k, retriever=retriever)
+
+    def _news_stage() -> tuple[NewsSummary | None, NewsAnalysis | None]:
+        # Recent-news pull (`days` window) + qualitative analysis (optional; degrade gracefully).
+        # The summary feeds the memo's grounding + narrative; `news_analysis` is the structured
+        # block surfaced to the client (themes + insights + free provider-sentiment shares).
+        if not use_news:
+            return None, None
         try:
             bundle = NewsFetcher(registry).fetch(
                 ticker, lookback_days=days, company_name=company_name, top_n=25
             )
-            news_summary = summarize_news(bundle, client)
-            news_analysis = _news_analysis(news_summary, bundle, lookback_days=days)
+            ns = summarize_news(bundle, client)
+            return ns, _news_analysis(ns, bundle, lookback_days=days)
         except (LLMError, SummaryGuardError, ValueError, ValidationError) as exc:
             log.warning("research.news_failed", ticker=ticker, error=str(exc))
+            return None, None
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        fut_forecast = pool.submit(_forecast_stage)
+        fut_evidence = pool.submit(_evidence_stage)
+        fut_news = pool.submit(_news_stage)
+        forecasts, large_move, earnings = fut_forecast.result()
+        evidence = fut_evidence.result()
+        news_summary, news_analysis = fut_news.result()
+
+    if evidence.is_empty:
+        log.warning("research.no_sec_evidence", ticker=ticker)
 
     # The memo IS the synthesis (no graceful no-LLM fallback) — surface a clean error rather
     # than a traceback if the call fails or its guards reject the output after the retry.
