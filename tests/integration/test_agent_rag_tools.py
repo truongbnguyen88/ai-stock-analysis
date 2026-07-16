@@ -21,8 +21,14 @@ from stock_agent.rag.embeddings import FakeEmbedder
 from stock_agent.rag.retriever import Retriever
 from stock_agent.rag.vector_store import InMemoryVectorStore
 from stock_agent.schemas.documents import DocumentChunk, DocumentType
-from stock_agent.schemas.forecast import ScenarioForecast
-from stock_agent.schemas.research import NewsAnalysis, ResearchMemo, SourceCitation
+from stock_agent.schemas.earnings import EarningsContext
+from stock_agent.schemas.forecast import LargeMoveBreakdown, ScenarioForecast
+from stock_agent.schemas.research import (
+    NewsAnalysis,
+    PriceSnapshot,
+    ResearchMemo,
+    SourceCitation,
+)
 from stock_agent.settings import Settings
 
 _EMB = FakeEmbedder(dim=32)
@@ -310,6 +316,19 @@ def _memo() -> ResearchMemo:
         bearish_evidence=["Customer concentration [1]"],
         uncertainty_notes=["Pace of AI capex"],
         recent_news=["AI demand"],
+        price_snapshot=PriceSnapshot(
+            window_days=30, n_bars=20, first_close=90.0, last_close=100.0,
+            period_high=110.0, period_low=85.0, pct_change=0.111, last_return=-0.02,
+        ),
+        large_move=LargeMoveBreakdown(
+            ticker="NVDA", as_of=date(2026, 2, 25), horizon_days=20, model_name="ensemble",
+            threshold=0.05, prob_large_move=0.9, prob_big_up=0.5, prob_big_down=0.4, lean="up",
+        ),
+        earnings=EarningsContext(
+            ticker="NVDA", as_of=date(2026, 2, 25), next_earnings_date=date(2026, 5, 20),
+            last_earnings_date=date(2026, 2, 19), days_to_next_earnings=84,
+            horizon_days=20, earnings_in_horizon=False,
+        ),
         news=NewsAnalysis(
             lookback_days=21,
             article_count=8,
@@ -320,6 +339,7 @@ def _memo() -> ResearchMemo:
             pct_positive=0.5,
             pct_negative=0.25,
             sentiment_coverage=0.4,
+            avg_sentiment=0.16,
         ),
         citations=[
             SourceCitation(
@@ -353,6 +373,12 @@ def test_research_summary_compact_shape(monkeypatch: pytest.MonkeyPatch) -> None
     assert out["news"]["lookback_days"] == 21 and out["news"]["article_count"] == 8
     assert out["news"]["bullish"] == ["Capex guidance raised"]
     assert out["news"]["pct_positive"] == 0.5
+    assert out["news"]["avg_sentiment"] == 0.16  # drives the Net-sentiment card
+    # Consolidated brief signals (were separate tools) → feed the 5 cards + large-move chart.
+    assert out["price_snapshot"]["last_close"] == 100.0
+    assert out["large_move"]["prob_large_move"] == 0.9 and out["large_move"]["lean"] == "up"
+    assert out["earnings"]["next_earnings_date"] == "2026-05-20"  # JSON-mode date string
+    assert out["earnings"]["earnings_in_horizon"] is False
     # The full Markdown is NOT returned (too long for a tool result).
     assert "##" not in json.dumps(out)
 

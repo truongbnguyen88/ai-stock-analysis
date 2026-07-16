@@ -11,8 +11,13 @@ from stock_agent.indicators.snapshot import IndicatorSnapshot
 from stock_agent.research.memo import MemoGuardError, build_memo, render_memo_markdown
 from stock_agent.research.prompts import build_memo_user
 from stock_agent.schemas.documents import DocumentChunk
-from stock_agent.schemas.forecast import ProbBucket, ScenarioForecast
-from stock_agent.schemas.research import NewsAnalysis, ResearchMemo
+from stock_agent.schemas.earnings import EarningsContext
+from stock_agent.schemas.forecast import LargeMoveBreakdown, ProbBucket, ScenarioForecast
+from stock_agent.schemas.research import (
+    NewsAnalysis,
+    PriceSnapshot,
+    ResearchMemo,
+)
 from stock_agent.schemas.retrieval import EvidenceSet, RetrievedChunk
 
 _AS_OF = date(2026, 2, 25)
@@ -114,6 +119,30 @@ def _news() -> NewsAnalysis:
         pct_positive=0.5,
         pct_negative=0.25,
         sentiment_coverage=0.4,
+        avg_sentiment=0.18,
+    )
+
+
+def _price() -> PriceSnapshot:
+    return PriceSnapshot(
+        window_days=30, n_bars=20, first_close=90.0, last_close=100.0,
+        period_high=110.0, period_low=85.0, pct_change=0.1111, last_return=-0.021,
+    )
+
+
+def _large_move() -> LargeMoveBreakdown:
+    return LargeMoveBreakdown(
+        ticker="NVDA", as_of=_AS_OF, horizon_days=20, model_name="ensemble",
+        threshold=0.05, prob_large_move=0.93, prob_big_up=0.47, prob_big_down=0.46,
+        lean="balanced",
+    )
+
+
+def _earnings() -> EarningsContext:
+    return EarningsContext(
+        ticker="NVDA", as_of=_AS_OF, next_earnings_date=date(2026, 5, 20),
+        last_earnings_date=date(2026, 2, 20), days_to_next_earnings=84,
+        horizon_days=20, earnings_in_horizon=False,
     )
 
 
@@ -148,6 +177,49 @@ def test_build_memo_stores_and_renders_news_analysis() -> None:
     assert "## Recent-News Analysis (12 articles, last 21d)" in md
     assert "Hyperscaler capex guidance raised" in md  # bullish insight rendered
     assert "50% positive" in md  # sentiment composition line
+
+
+def test_build_memo_stores_and_renders_context_signals() -> None:
+    # Price snapshot + large-move + earnings are consolidated into the brief (were separate tools).
+    llm = _FakeLLM(_GOOD)
+    memo = build_memo(
+        "NVDA", _AS_OF,
+        snapshot=_snapshot(), forecasts=[_forecast()], evidence=_evidence(), llm=llm,
+        price_snapshot=_price(), large_move=_large_move(), earnings=_earnings(),
+    )
+    assert memo.price_snapshot is not None and memo.price_snapshot.last_close == 100.0
+    assert memo.large_move is not None and memo.large_move.lean == "balanced"
+    assert memo.earnings is not None and memo.earnings.earnings_in_horizon is False
+    md = render_memo_markdown(memo)
+    assert "## Price Snapshot (last 30d, 20 bars)" in md
+    assert "## Large-Move Probability (20d, ±5%)" in md
+    assert "lean **balanced**" in md
+    assert "## Earnings Context" in md
+    assert "2026-05-20" in md  # next earnings date rendered
+
+
+def test_memo_narrative_may_reference_large_move_number() -> None:
+    # Grounding is seeded from the large-move dump, so citing its P(|r|>k) doesn't trip the guard.
+    resp = json.dumps(
+        {
+            "executive_summary": "Model sees a 93% chance of a >5% move over 20 days [1].",
+            "management_commentary": "Management cited 41% data center revenue growth [1].",
+            "business_drivers": ["Demand [1]"],
+            "risk_factors": ["Foundry risk [2]"],
+            "bullish_evidence": ["Momentum [1]"],
+            "bearish_evidence": ["Concentration [2]"],
+            "uncertainty_notes": ["Events unseen"],
+            "citations": [1, 2],
+        }
+    )
+    llm = _FakeLLM(resp)
+    memo = build_memo(
+        "NVDA", _AS_OF,
+        snapshot=_snapshot(), forecasts=[_forecast()], evidence=_evidence(), llm=llm,
+        large_move=_large_move(),
+    )
+    assert llm.calls == 1  # no corrective retry — the 93% figure is grounded
+    assert "93%" in memo.executive_summary
 
 
 def test_memo_user_prompt_carries_news_insights() -> None:

@@ -1440,5 +1440,12 @@ class ToolExecutor:
             "forecasts": self._forecast_headline(memo.forecasts),
             "forecast_buckets": self._forecast_buckets_payload(memo.forecasts),
             "technical_indicators": memo.technical_indicators,
+            # Consolidated brief signals (were separate tools): recent price window, the
+            # large-move tail split, and earnings context — so one call carries the full brief.
+            "price_snapshot": memo.price_snapshot.model_dump(mode="json")
+            if memo.price_snapshot
+            else None,
+            "large_move": memo.large_move.model_dump(mode="json") if memo.large_move else None,
+            "earnings": memo.earnings.model_dump(mode="json") if memo.earnings else None,
             "citations": self._citations_payload(memo.citations),
         }

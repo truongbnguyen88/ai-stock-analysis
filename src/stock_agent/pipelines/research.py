@@ -9,12 +9,15 @@ LLM is required (unlike ``analyze``, which degrades to a synthesis-free report).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import timedelta
 
 from pydantic import ValidationError
 
+from stock_agent.data.earnings import fetch_earnings_context
 from stock_agent.data.loader import PriceLoader
 from stock_agent.features.news_features import build_news_features
 from stock_agent.forecasting.ensemble import full_ensemble
+from stock_agent.forecasting.large_move import large_move_breakdown
 from stock_agent.indicators.snapshot import compute_snapshot
 from stock_agent.llm.client import AnthropicClient, LLMError, TextLLM
 from stock_agent.llm.guards import NewsSummary
@@ -26,8 +29,10 @@ from stock_agent.providers.registry import ProviderRegistry, build_default_regis
 from stock_agent.rag.read_path import build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.research.memo import MemoGuardError, build_memo
+from stock_agent.schemas.forecast import LargeMoveBreakdown, ScenarioForecast
+from stock_agent.schemas.market import PriceSeries
 from stock_agent.schemas.news import NewsBundle
-from stock_agent.schemas.research import NewsAnalysis, ResearchMemo
+from stock_agent.schemas.research import NewsAnalysis, PriceSnapshot, ResearchMemo
 from stock_agent.schemas.retrieval import ChunkFilter, EvidenceSet, RetrievedChunk
 from stock_agent.settings import Settings
 
@@ -126,7 +131,50 @@ def _news_analysis(
         pct_positive=feats["pct_positive"] if has_scores else None,
         pct_negative=feats["pct_negative"] if has_scores else None,
         sentiment_coverage=feats.get("sentiment_coverage"),
+        avg_sentiment=feats.get("avg_sentiment") if has_scores else None,
     )
+
+
+def _price_snapshot(series: PriceSeries, *, window_days: int = 30) -> PriceSnapshot:
+    """Snapshot the trailing ``window_days`` calendar-day window of the loaded series.
+
+    Restates ``get_price_summary`` over the brief's own series (no extra I/O): high/low,
+    period return (last/first over the window), and the most recent single-session return.
+    Falls back to the last two bars if the window is too sparse.
+    """
+    as_of = series.bars[-1].date
+    cutoff = as_of - timedelta(days=window_days)
+    window = [b for b in series.bars if b.date >= cutoff]
+    if len(window) < 2:  # sparse/holiday-heavy window — keep at least the last two bars
+        window = list(series.bars[-2:]) if len(series.bars) >= 2 else list(series.bars)
+    # Adjusted close where available (mirrors PriceSeries.closes / get_price_summary).
+    closes = [b.adj_close if b.adj_close is not None else b.close for b in window]
+    last_return = closes[-1] / closes[-2] - 1.0 if len(closes) >= 2 else None
+    return PriceSnapshot(
+        window_days=window_days,
+        n_bars=len(window),
+        first_close=closes[0],
+        last_close=closes[-1],
+        period_high=max(closes),
+        period_low=min(closes),
+        pct_change=closes[-1] / closes[0] - 1.0,
+        last_return=last_return,
+    )
+
+
+def _primary_large_move(forecasts: Sequence[ScenarioForecast]) -> LargeMoveBreakdown | None:
+    """P(|r|>k) tail split at the shortest-horizon forecast (matches ``get_large_move``).
+
+    Uses the smallest positive bucket boundary as ``k`` (±5% at the 20-day horizon), so the
+    magnitude signal is exact sums of the model's outer buckets. None if no forecast/boundary.
+    """
+    if not forecasts:
+        return None
+    fc = min(forecasts, key=lambda f: f.horizon_days)  # shortest horizon = the primary signal
+    boundaries = sorted({b.lower for b in fc.buckets if b.lower is not None and b.lower > 0})
+    if not boundaries:
+        return None
+    return large_move_breakdown(fc, threshold=boundaries[0])
 
 
 def run_research(
@@ -171,6 +219,14 @@ def run_research(
         except ValueError:
             log.info("research.skip_horizon", ticker=ticker, horizon=h)
 
+    # Derived signals off the same series/forecasts (no extra model calls): a recent price
+    # snapshot, the large-move tail split at the shortest horizon, and earnings context for
+    # that horizon. Earnings is the one provider call here; it degrades to empty on failure.
+    price_snapshot = _price_snapshot(series)
+    large_move = _primary_large_move(forecasts)
+    primary_h = min((fc.horizon_days for fc in forecasts), default=int(horizons[0]))
+    earnings = fetch_earnings_context(registry, ticker, as_of=as_of, horizon_days=primary_h)
+
     # SEC evidence (RAG). Empty when nothing has been ingested for the ticker.
     evidence = _gather_sec_evidence(ticker, settings, settings.rag_top_k, retriever=retriever)
     if evidence.is_empty:
@@ -203,6 +259,9 @@ def run_research(
             llm=client,
             news_summary=news_summary,
             news_analysis=news_analysis,
+            price_snapshot=price_snapshot,
+            large_move=large_move,
+            earnings=earnings,
         )
     except (MemoGuardError, LLMError, ValidationError) as exc:
         raise ResearchPipelineError(f"Memo synthesis failed: {exc}") from exc

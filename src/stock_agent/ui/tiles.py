@@ -173,13 +173,94 @@ def _sentiment_tiles(r: dict[str, Any]) -> list[Tile]:
     ]
 
 
+def _research_tiles(r: dict[str, Any]) -> list[Tile]:
+    """The full header row for the executive brief (``research_summary``) — up to 5 cards.
+
+    Mirrors the cards the individual tools produce, read from the brief's consolidated
+    payload: Last close (price snapshot), Net sentiment (news block), P(up) + Exp. return
+    (shortest-horizon forecast), and P(±k%) (large-move tail split). Every value is a tool
+    number (never the LLM); each sub-tile no-ops when its slice is absent.
+    """
+    if not _ok(r):
+        return []
+    tiles: list[Tile] = []
+
+    ps = r.get("price_snapshot")
+    if isinstance(ps, dict) and (close := _money(ps.get("last_close"))) is not None:
+        chg = _pct(ps.get("pct_change"), signed=True, dp=1)
+        sub = f"{chg} · {ps.get('window_days')}d" if chg else f"{ps.get('window_days')}d"
+        tiles.append(
+            _dir(
+                {"label": "Last close", "value": close, "sub": sub, "tone": "sky"},
+                _sign_dir(ps.get("pct_change")),
+            )
+        )
+
+    news = r.get("news")
+    if isinstance(news, dict) and isinstance(news.get("avg_sentiment"), (int, float)):
+        avg = news["avg_sentiment"]
+        n = news.get("article_count")
+        sub = f"{int(n)} articles" if isinstance(n, (int, float)) else ""
+        tiles.append(
+            _dir(
+                {"label": "Net sentiment", "value": f"{avg:+.2f}", "sub": sub, "tone": "teal"},
+                _sign_dir(avg),
+            )
+        )
+
+    fcs = r.get("forecasts")
+    if isinstance(fcs, list) and fcs:
+        # Shortest horizon = the primary directional signal (matches the large-move card).
+        fc = min(
+            (f for f in fcs if isinstance(f, dict)),
+            key=lambda f: f.get("horizon_days", 1_000_000),
+            default=None,
+        )
+        if fc is not None:
+            h = fc.get("horizon_days")
+            hsub = f"{h}d" if isinstance(h, int) else ""
+            up = _pct(fc.get("prob_up"))
+            if up is not None:
+                tiles.append(
+                    _dir(
+                        {"label": "P(up)", "value": up, "sub": hsub, "tone": "indigo"},
+                        _prob_dir(fc.get("prob_up")),
+                    )
+                )
+            exp = _pct(fc.get("expected_return"), signed=True, dp=1)
+            if exp is not None:
+                tiles.append(
+                    _dir(
+                        {"label": "Exp. return", "value": exp, "sub": hsub, "tone": "violet"},
+                        _sign_dir(fc.get("expected_return")),
+                    )
+                )
+
+    lm = r.get("large_move")
+    if isinstance(lm, dict) and (p := _pct(lm.get("prob_large_move"))) is not None:
+        thr = lm.get("threshold")
+        label = f"P(±{round(thr * 100)}%)" if isinstance(thr, (int, float)) else "P(big move)"
+        lean = lm.get("lean")
+        h = lm.get("horizon_days")
+        sub = f"{h}d · lean {lean}" if isinstance(h, int) and isinstance(lean, str) else ""
+        tiles.append(
+            _dir(
+                {"label": label, "value": p, "sub": sub, "tone": "rose"},
+                lean if lean in ("up", "down") else None,
+            )
+        )
+    return tiles
+
+
 # Tool name -> tile builder. Only these tools produce tiles; everything else (comparisons,
-# RAG, raw news, earnings) surfaces through charts / sources instead.
+# RAG, raw news, earnings) surfaces through charts / sources instead. The executive brief
+# (research_summary) consolidates the individual cards into one full header row.
 _BUILDERS = {
     "get_price_summary": _price_tiles,
     "run_forecast": _forecast_tiles,
     "get_large_move": _large_move_tiles,
     "get_news_sentiment": _sentiment_tiles,
+    "research_summary": _research_tiles,
 }
 
 

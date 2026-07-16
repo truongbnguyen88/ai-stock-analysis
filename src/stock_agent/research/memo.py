@@ -24,8 +24,14 @@ from stock_agent.llm.guards import NewsSummary, NumberGrounding
 from stock_agent.logging_config import get_logger
 from stock_agent.research._shared import correction, loads_lenient, markers_in_text
 from stock_agent.research.prompts import MEMO_SYSTEM, build_memo_user
-from stock_agent.schemas.forecast import ScenarioForecast
-from stock_agent.schemas.research import NewsAnalysis, ResearchMemo, SourceCitation
+from stock_agent.schemas.earnings import EarningsContext
+from stock_agent.schemas.forecast import LargeMoveBreakdown, ScenarioForecast
+from stock_agent.schemas.research import (
+    NewsAnalysis,
+    PriceSnapshot,
+    ResearchMemo,
+    SourceCitation,
+)
 from stock_agent.schemas.retrieval import EvidenceSet
 
 log = get_logger(__name__)
@@ -89,6 +95,43 @@ def _quant_signal_lines(
     return lines
 
 
+def _context_signal_lines(
+    price: PriceSnapshot | None,
+    large_move: LargeMoveBreakdown | None,
+    earnings: EarningsContext | None,
+    grounding: NumberGrounding,
+) -> list[str]:
+    """Render price-snapshot / large-move / earnings signal lines AND seed the grounding.
+
+    These are model/provider numbers (never the LLM's), so seeding grounding from the same
+    dumps lets the memo's narrative reference them without tripping the number-grounding guard.
+    """
+    lines: list[str] = []
+    if price is not None:
+        grounding.add_from(price.model_dump())
+        last_r = f", last day {price.last_return:+.1%}" if price.last_return is not None else ""
+        lines.append(
+            f"- Price ({price.window_days}d): last {price.last_close:,.2f}, "
+            f"range [{price.period_low:,.2f}, {price.period_high:,.2f}], "
+            f"period {price.pct_change:+.1%}{last_r}"
+        )
+    if large_move is not None:
+        grounding.add_from(large_move.model_dump())
+        k = large_move.threshold
+        lines.append(
+            f"- Large move [{large_move.horizon_days}d]: P(|r|>{k:.0%})="
+            f"{large_move.prob_large_move:.0%} (up {large_move.prob_big_up:.0%} / "
+            f"down {large_move.prob_big_down:.0%}, lean {large_move.lean})"
+        )
+    if earnings is not None:
+        grounding.add_from(earnings.model_dump())
+        nxt = earnings.next_earnings_date.isoformat() if earnings.next_earnings_date else "unknown"
+        in_h = earnings.earnings_in_horizon
+        flag = "" if in_h is None else (" — in forecast window" if in_h else " — outside window")
+        lines.append(f"- Earnings: next {nxt}{flag}")
+    return lines
+
+
 def build_memo(
     ticker: str,
     as_of: Date,
@@ -99,11 +142,15 @@ def build_memo(
     llm: TextLLM,
     news_summary: NewsSummary | None = None,
     news_analysis: NewsAnalysis | None = None,
+    price_snapshot: PriceSnapshot | None = None,
+    large_move: LargeMoveBreakdown | None = None,
+    earnings: EarningsContext | None = None,
     max_tokens: int = _MAX_TOKENS,
 ) -> ResearchMemo:
     """Assemble an integrated memo: deterministic quant sections + one grounded narrative call."""
     grounding = NumberGrounding()
     quant_lines = _quant_signal_lines(snapshot, forecasts, grounding)
+    quant_lines += _context_signal_lines(price_snapshot, large_move, earnings, grounding)
 
     news_themes: list[str] = []
     if news_summary is not None:
@@ -136,6 +183,9 @@ def build_memo(
         as_of=as_of,
         technical_indicators=snapshot.numeric_indicators(),
         forecasts=list(forecasts),
+        price_snapshot=price_snapshot,
+        large_move=large_move,
+        earnings=earnings,
         executive_summary=parsed.executive_summary,
         management_commentary=parsed.management_commentary,
         business_drivers=parsed.business_drivers,
@@ -199,6 +249,16 @@ def render_memo_markdown(memo: ResearchMemo) -> str:
         memo.executive_summary or "_n/a_",
     ]
 
+    if memo.price_snapshot is not None:
+        ps = memo.price_snapshot
+        last_r = f", last day {ps.last_return:+.2%}" if ps.last_return is not None else ""
+        out += [
+            "",
+            f"## Price Snapshot (last {ps.window_days}d, {ps.n_bars} bars)",
+            f"- **Last close**: {ps.last_close:,.2f}  ·  **Period**: {ps.pct_change:+.2%}{last_r}",
+            f"- **Range**: {ps.period_low:,.2f} – {ps.period_high:,.2f}",
+        ]
+
     if memo.technical_indicators:
         out += ["", "## Technical Indicators"]
         out += [f"- **{k}**: {v:.4g}" for k, v in memo.technical_indicators.items()]
@@ -211,6 +271,25 @@ def render_memo_markdown(memo: ResearchMemo) -> str:
                 f"- **{fc.model_name}** ({fc.horizon_days}d): P(up) {fc.upside_prob:.0%}, "
                 f"P(down) {fc.downside_prob:.0%}, E[r] {fc.expected_return:+.1%}{var}"
             )
+
+    if memo.large_move is not None:
+        lm = memo.large_move
+        out += [
+            "",
+            f"## Large-Move Probability ({lm.horizon_days}d, ±{lm.threshold:.0%})",
+            f"- **P(|return| > {lm.threshold:.0%})**: {lm.prob_large_move:.0%} "
+            f"(up {lm.prob_big_up:.0%} / down {lm.prob_big_down:.0%}, lean **{lm.lean}**)",
+        ]
+
+    if memo.earnings is not None and (
+        memo.earnings.next_earnings_date or memo.earnings.last_earnings_date
+    ):
+        ea = memo.earnings
+        nxt = ea.next_earnings_date.isoformat() if ea.next_earnings_date else "unknown"
+        last = ea.last_earnings_date.isoformat() if ea.last_earnings_date else "unknown"
+        in_h = ea.earnings_in_horizon
+        flag = "" if in_h is None else (" (in forecast window)" if in_h else " (outside window)")
+        out += ["", "## Earnings Context", f"- **Next**: {nxt}{flag}  ·  **Last**: {last}"]
 
     if memo.news is not None:
         na = memo.news

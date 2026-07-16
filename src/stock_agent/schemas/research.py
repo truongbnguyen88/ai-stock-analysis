@@ -13,7 +13,8 @@ from datetime import date as Date
 
 from pydantic import BaseModel, Field
 
-from stock_agent.schemas.forecast import ScenarioForecast
+from stock_agent.schemas.earnings import EarningsContext
+from stock_agent.schemas.forecast import LargeMoveBreakdown, ScenarioForecast
 
 
 class SourceCitation(BaseModel):
@@ -54,6 +55,24 @@ class NewsAnalysis(BaseModel):
     pct_positive: float | None = None
     pct_negative: float | None = None
     sentiment_coverage: float | None = None  # fraction of articles that carried a score
+    avg_sentiment: float | None = None  # mean provider score over scored articles; None if none
+
+
+class PriceSnapshot(BaseModel):
+    """Recent price-window snapshot for the brief (numbers straight from the price series).
+
+    A compact restatement of the ``get_price_summary`` tool over the brief's own loaded
+    series, sliced to a short trailing window. Pure display data — the LLM never produces it.
+    """
+
+    window_days: int  # trailing calendar-day window the snapshot spans
+    n_bars: int  # trading bars in the window
+    first_close: float
+    last_close: float
+    period_high: float
+    period_low: float
+    pct_change: float  # last/first - 1 over the window
+    last_return: float | None = None  # most recent single-session return; None if <2 bars
 
 
 class ResearchMemo(BaseModel):
@@ -72,6 +91,9 @@ class ResearchMemo(BaseModel):
     # Quantitative — copied verbatim from the modules.
     technical_indicators: dict[str, float] = Field(default_factory=dict)
     forecasts: list[ScenarioForecast] = Field(default_factory=list)
+    price_snapshot: PriceSnapshot | None = None  # recent price window (close, high/low, return)
+    large_move: LargeMoveBreakdown | None = None  # P(|r|>k) tail split at the primary horizon
+    earnings: EarningsContext | None = None  # last/next earnings + in-horizon flag
 
     # Qualitative narrative — produced by the single synthesis call (SEC claims cited [n]).
     executive_summary: str = ""

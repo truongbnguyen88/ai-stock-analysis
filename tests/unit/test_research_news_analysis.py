@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pytest
+
 from stock_agent.llm.guards import CitedPoint, NewsSummary
 from stock_agent.pipelines.research import _news_analysis
 from stock_agent.schemas.news import Article, NewsBundle
@@ -54,6 +56,8 @@ def test_news_analysis_flattens_summary_and_scores() -> None:
     assert na.sentiment_coverage == 0.75
     assert na.pct_positive == 0.5  # 2 of 4 above +0.15
     assert na.pct_negative == 0.25  # 1 of 4 below -0.15
+    # Mean over the 3 SCORED articles: (0.5 - 0.5 + 0.2) / 3.
+    assert na.avg_sentiment == pytest.approx(0.2 / 3)
 
 
 def test_news_analysis_none_shares_when_no_scores() -> None:
@@ -61,6 +65,7 @@ def test_news_analysis_none_shares_when_no_scores() -> None:
     na = _news_analysis(_summary(), bundle, lookback_days=21)
     # No provider scores → shares are None (chart no-ops), not a fake all-neutral 0.0.
     assert na.pct_positive is None and na.pct_negative is None
+    assert na.avg_sentiment is None  # no fabricated 0.0 average either
     assert na.sentiment_coverage == 0.0
     assert na.article_count == 2
 

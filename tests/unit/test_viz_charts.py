@@ -154,6 +154,28 @@ def test_brief_news_charts_noop_without_scores_or_points() -> None:
     assert news_titled == []  # forecast chart still present, but no news charts
 
 
+# ---- executive brief: consolidated large-move chart ----------------------------
+def test_brief_emits_large_move_chart_from_consolidated_block() -> None:
+    r = _brief([20])
+    r["large_move"] = {
+        "prob_big_up": 0.47,
+        "prob_big_down": 0.46,
+        "prob_large_move": 0.93,
+        "threshold": 0.05,  # fractional (LargeMoveBreakdown dump) → chart derives ±5%
+        "horizon_days": 20,
+    }
+    spec = _spec_titled(charts_for([_Inv("research_summary", r)]), "large-move")
+    assert spec.kind == "bar" and spec.y_is_percent
+    assert "±5%" in spec.title
+    # up-tail + no-big-move + down-tail sums to 1.
+    assert abs(float(spec.data["probability"].sum()) - 1.0) < 1e-9
+
+
+def test_brief_without_large_move_block_emits_no_large_move_chart() -> None:
+    specs = charts_for([_Inv("research_summary", _brief([20]))])  # no "large_move" key
+    assert [s for s in specs if "large-move" in s.title.lower()] == []
+
+
 # ---- large move ---------------------------------------------------------------
 def test_large_move_split_sums_to_one() -> None:
     r = {

@@ -207,6 +207,20 @@ def _research_news_charts(r: dict[str, Any]) -> list[ChartSpec]:
     return specs
 
 
+def _research_large_move_chart(r: dict[str, Any]) -> ChartSpec | None:
+    """Large-move tail split for the executive brief (reads the consolidated ``large_move`` block).
+
+    The brief's ``large_move`` sub-dict is a ``LargeMoveBreakdown`` dump — the same shape
+    ``_large_move_chart`` reads for a standalone ``get_large_move`` — so reuse that builder.
+    """
+    if not _ok(r):
+        return None
+    lm = r.get("large_move")
+    if not isinstance(lm, dict):
+        return None
+    return _large_move_chart(lm)
+
+
 def _large_move_chart(r: dict[str, Any]) -> ChartSpec | None:
     """P(|r|>k) split into up-tail / no-big-move / down-tail."""
     if not _ok(r):
@@ -452,12 +466,16 @@ def charts_for(invocations: Sequence[_Invocation]) -> list[ChartSpec]:
         if spec is not None:
             specs.append(spec)
 
-    # The executive brief (research_summary) carries per-horizon buckets + a news block →
-    # one forecast chart per horizon, then the news insight/sentiment charts.
+    # The executive brief (research_summary) carries per-horizon buckets + a news block +
+    # a large-move split → one forecast chart per horizon, the news insight/sentiment charts,
+    # then the large-move tail chart.
     for t in invocations:
         if t.name == "research_summary":
             specs.extend(_research_forecast_charts(t.result))
             specs.extend(_research_news_charts(t.result))
+            lm_spec = _research_large_move_chart(t.result)
+            if lm_spec is not None:
+                specs.append(lm_spec)
 
     seen: set[tuple[Any, ...]] = set()
     for t in invocations:
