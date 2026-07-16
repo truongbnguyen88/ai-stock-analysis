@@ -302,6 +302,61 @@ def _answer_tokens(chunks: list[str], text: str) -> list[str]:
     return chunks if (chunks and "".join(chunks) == text) else [text]
 
 
+# Narrative fields of the research_summary result, rendered in this order as the fallback brief.
+_BRIEF_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("Business drivers", "business_drivers"),
+    ("Risk factors", "risk_factors"),
+    ("Bullish evidence", "bullish_evidence"),
+    ("Bearish evidence", "bearish_evidence"),
+    ("Uncertainty", "uncertainty_notes"),
+)
+
+
+def _grounded_fallback_answer(
+    tool_results: list[ToolInvocation], grounding: NumberGrounding
+) -> str | None:
+    """A grounded answer assembled from a ``research_summary`` tool's own memo fields.
+
+    Used when the agent's re-narration of an expensive brief trips the numeric-grounding guard
+    after all retries. Rather than blank a successful 100s+ turn (the tool produced a full brief,
+    5 cards, charts, sources), we surface the *pipeline's own* text: the executive summary plus the
+    driver/risk/evidence lists. Those fields already passed the memo synthesis' grounding + citation
+    guards, and every number in them was seeded into ``grounding`` from the tool result — so they
+    are grounded by construction. The agent's rejected prose is never surfaced.
+
+    Returns ``None`` when this turn produced no such brief, or (defensively) when the assembled text
+    still trips the guard — the caller then fails closed with the grounding ``Error`` as before,
+    preserving the numbers-vs-narrative invariant.
+    """
+    inv = next(
+        (
+            t
+            for t in reversed(tool_results)
+            if t.name == "research_summary"
+            and isinstance(t.result, dict)
+            and "error" not in t.result
+            and t.result.get("executive_summary")
+        ),
+        None,
+    )
+    if inv is None:
+        return None
+    r = inv.result
+    ticker = str(r.get("ticker") or "").strip()
+    lines: list[str] = [f"**Executive brief — {ticker}**" if ticker else "**Executive brief**", ""]
+    lines.append(str(r["executive_summary"]).strip())
+    for title, key in _BRIEF_SECTIONS:
+        items = [str(x).strip() for x in (r.get(key) or []) if str(x).strip()]
+        if items:
+            lines += ["", f"**{title}:**", *(f"- {x}" for x in items)]
+    text = "\n".join(lines).strip()
+    # Defensive re-check: the memo fields are pre-grounded, but verify against THIS turn's grounding
+    # set so we can never surface a figure the agent guard itself would reject. Fail closed if not.
+    if grounding.ungrounded(text):
+        return None
+    return text
+
+
 def run_agent_events(
     query: str,
     *,
@@ -311,7 +366,7 @@ def run_agent_events(
     system: str = SYSTEM,
     tools: list[dict[str, Any]] | None = None,
     max_iterations: int = _MAX_ITERATIONS,
-    grounding_retries: int = 1,
+    grounding_retries: int = 2,
 ) -> Iterator[AgentEvent]:
     """Run the tool-use loop as a generator, yielding events as it goes (plan §4).
 
@@ -323,10 +378,14 @@ def run_agent_events(
     ``tool_results`` via pure ``ui``/``viz`` builders — the runtime never imports presentation
     code) nor ``turn_start``/``route_decided`` (router-owned).
 
-    Grounding contract is unchanged from the pre-refactor loop: a final answer with ungrounded
-    figures triggers one corrective retry (emitting NO tokens for the rejected attempt, so the
-    client never sees ungrounded prose); a second failure yields ``Error(code="grounding")``
-    instead of ``Final``. ``Token`` is emitted only for the accepted, post-guard answer. With a
+    Grounding contract: a final answer with ungrounded figures triggers up to ``grounding_retries``
+    corrective retries (default 2), emitting NO tokens for the rejected attempts so the client
+    never sees ungrounded prose. If retries are exhausted, the loop tries a grounded fallback — the
+    ``research_summary`` tool's own (pre-guarded) brief via :func:`_grounded_fallback_answer` — so
+    an expensive successful tool is never wasted on the agent's re-narration slip; only when no
+    such grounded brief exists does it yield ``Error(code="grounding")`` instead of ``Final``. The
+    surfaced text is always grounded — the accepted answer or the tool's own brief, never the
+    rejected prose. ``Token`` is emitted only for that post-guard text. With a
     streaming LLM (``AnthropicToolClient``, P2.4) that answer is emitted as MULTIPLE ``Token``
     deltas preserving the model's own chunk boundaries (:func:`_answer_tokens`); create-only LLMs
     collapse to a single delta. Crucially the grounding guard runs on the FULL assembled answer
@@ -405,21 +464,40 @@ def run_agent_events(
                 {
                     "role": "user",
                     "content": (
-                        "These figures are not supported by any tool result: "
-                        f"{', '.join(violations)}. They will be rejected. Rewrite the answer so "
-                        "EVERY percentage or decimal is one that a tool actually returned. For any "
-                        "figure not in the tool outputs (e.g. a market-share or growth statistic "
-                        "from general knowledge), do NOT guess a number — either call a tool that "
-                        "produces it, or describe the effect QUALITATIVELY and directionally "
-                        "(larger/smaller, tailwind/headwind, more/less concentrated) with no "
-                        "invented figure. Keep all correctly-sourced numbers as they are."
+                        "These figures appear in NO tool result and will be rejected: "
+                        f"{', '.join(violations)}. Remove each of them — do not restate, re-round, "
+                        "or re-derive them. Rewrite the answer so EVERY percentage or decimal is "
+                        "one that a tool actually returned. For any figure not in the tool outputs "
+                        "(e.g. a market-share or growth statistic from general knowledge), do NOT "
+                        "guess a number — either call a tool that produces it, or describe the "
+                        "effect QUALITATIVELY and directionally (larger/smaller, tailwind/"
+                        "headwind, more/less concentrated) with no invented figure. Keep all "
+                        "correctly-sourced numbers exactly as they are."
                     ),
                 }
             )
             continue
         if violations:
-            # Terminal failure as an event (the drain re-raises AgentGroundingError). No tokens
-            # were emitted for the rejected text, so nothing ungrounded ever reached the client.
+            # The agent's re-narration injected a figure no tool produced. Prefer a grounded
+            # fallback — the research_summary tool's OWN brief — over blanking an expensive
+            # successful turn; only fail closed when there is no grounded brief to fall back to.
+            # Either way the rejected prose is never appended to the transcript or streamed.
+            fallback = _grounded_fallback_answer(tool_results, grounding)
+            if fallback is not None:
+                log.warning("agent.grounding_fallback", figures=violations)
+                messages.append({"role": "assistant", "content": fallback})
+                for delta in _answer_tokens([], fallback):
+                    yield Token(text=delta)
+                yield Final(
+                    tool_calls=tool_calls,
+                    iterations=iteration,
+                    messages=messages,
+                    tool_results=tool_results,
+                )
+                return
+            # No grounded brief this turn → fail closed as an event (the drain re-raises
+            # AgentGroundingError). No tokens were emitted for the rejected text, so nothing
+            # ungrounded ever reached the client.
             yield Error(
                 code="grounding",
                 message=f"unverified figures after retry: {', '.join(violations)}",
@@ -455,7 +533,7 @@ def run_agent(
     system: str = SYSTEM,
     tools: list[dict[str, Any]] | None = None,
     max_iterations: int = _MAX_ITERATIONS,
-    grounding_retries: int = 1,
+    grounding_retries: int = 2,
 ) -> AgentResult:
     """Return a grounded final answer from the tool-use loop (synchronous drain of the generator).
 
