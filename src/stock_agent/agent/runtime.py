@@ -378,6 +378,12 @@ def run_agent_events(
     ``tool_results`` via pure ``ui``/``viz`` builders — the runtime never imports presentation
     code) nor ``turn_start``/``route_decided`` (router-owned).
 
+    Brief short-circuit: if a tool returns a ``brief_markdown`` field (``research_summary``), it has
+    produced a complete, deterministically-rendered answer (tables straight from the numbers). The
+    loop presents that markdown verbatim as the ``Token``/``Final`` and ends the turn — skipping the
+    answer-turn re-narration (cheaper, and the LLM never re-transcribes a figure, so the brief can't
+    trip the grounding guard).
+
     Grounding contract: a final answer with ungrounded figures triggers up to ``grounding_retries``
     corrective retries (default 2), emitting NO tokens for the rejected attempts so the client
     never sees ungrounded prose. If retries are exhausted, the loop tries a grounded fallback — the
@@ -429,6 +435,7 @@ def run_agent_events(
         if resp.tool_uses:
             messages.append({"role": "assistant", "content": resp.assistant_content})
             results: list[dict[str, Any]] = []
+            presented_brief: str | None = None  # a tool's ready-to-present markdown (short-circuit)
             for tu in resp.tool_uses:
                 tool_calls.append(tu.name)
                 yield ToolStart(
@@ -444,6 +451,10 @@ def run_agent_events(
                 yield ToolFinish(tool=tu.name, ok=ok, elapsed_ms=elapsed_ms)
                 grounding.add_from(result)
                 tool_results.append(ToolInvocation(name=tu.name, input=tu.input, result=result))
+                if presented_brief is None and ok and isinstance(result, dict):
+                    brief = result.get("brief_markdown")
+                    if isinstance(brief, str) and brief.strip():
+                        presented_brief = brief
                 results.append(
                     {
                         "type": "tool_result",
@@ -452,6 +463,23 @@ def run_agent_events(
                     }
                 )
             messages.append({"role": "user", "content": results})
+            # Short-circuit: a tool that returns `brief_markdown` (research_summary) has produced a
+            # complete, deterministically-rendered answer whose every figure came straight from the
+            # tools — so we present it verbatim and end the turn, skipping the answer-turn
+            # re-narration. That is both cheaper (one fewer LLM call) and safer: the LLM never
+            # re-transcribes a number, so it cannot trip the grounding guard on the brief. tiles/
+            # charts/sources still flow from `tool_results` at `Final`.
+            if presented_brief is not None:
+                messages.append({"role": "assistant", "content": presented_brief})
+                for delta in _answer_tokens([], presented_brief):
+                    yield Token(text=delta)
+                yield Final(
+                    tool_calls=tool_calls,
+                    iterations=iteration,
+                    messages=messages,
+                    tool_results=tool_results,
+                )
+                return
             continue
 
         # Final answer: enforce numeric grounding.

@@ -48,6 +48,7 @@ from stock_agent.rag.read_path import build_graph_system, build_retrieval_system
 from stock_agent.rag.retriever import RetrievalSystem
 from stock_agent.rag.vector_store import build_vector_store, collection_name_for
 from stock_agent.research.agentic import answer_multistep
+from stock_agent.research.brief import render_research_brief
 from stock_agent.research.synthesis import ResearchGuardError, answer_question
 from stock_agent.schemas.agentic import MultiStepAnswer
 from stock_agent.schemas.backtest import BacktestResult
@@ -1426,10 +1427,15 @@ class ToolExecutor:
             return {
                 "error": f"research summary exceeded {int(_RESEARCH_TIMEOUT_S)}s; try again later."
             }
-        # Compact dict (NOT the full Markdown — too long for a tool result).
+        # Compact dict (NOT the full Markdown — too long for a tool result), PLUS a
+        # ready-to-present `brief_markdown`: the deterministic rich brief (tables from the numbers +
+        # the memo's grounded prose). The runtime presents this verbatim (short-circuiting the
+        # answer-turn re-narration) so the executive brief renders consistently and no figure is
+        # transcribed by the LLM (see agent.runtime + research.brief).
         return {
             "ticker": memo.ticker,
             "as_of": memo.as_of.isoformat(),
+            "brief_markdown": render_research_brief(memo),
             "executive_summary": memo.executive_summary,
             "business_drivers": memo.business_drivers,
             "risk_factors": memo.risk_factors,
