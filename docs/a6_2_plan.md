@@ -1,6 +1,10 @@
 # A6.2 — Full RL for Retrieval — Detailed Execution Plan
 
-> **Status:** planning → executing (branch `feat/adv-rag-a6.2-rl`). This is the *detailed build plan*
+> **Status (2026-07-16):** infra **A6.2a–g ✅ landed**, then the **RL verdict was RETRACTED — the
+> *environment* was invalid, not RL** → env-fix track **A6.2-E (E1–E7 done; E5 is the only open item,
+> power-limited)**. See §9 progress log and [ADVANCED_RAG_TODO.md §A6.2-E](ADVANCED_RAG_TODO.md) (the
+> plan of record for the E-track). Branch `feat/adv-rag-a6.2-rl` (local; `main` fully merged in).
+> This doc is the *detailed build plan*
 > for [ADVANCED_RAG_TODO.md §A6.2](ADVANCED_RAG_TODO.md) (the plan of record) — the slice-by-slice
 > execution notes, concrete module/interface designs, correctness invariants, and tests. Design brief
 > (MDP / state / action / reward, worked trajectories) lives in
@@ -338,7 +342,41 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   `StandardizedPolicy` (greedy actions + action_probs identical), from both an in-memory dict and a
   written file; PPO round-trip torch-gated. ruff(`src tests`)+mypy(340) clean; 1133 torch-free pass
   (+3 skip), 10 PPO tests pass in isolation. Concepts §19.14. Committed on `feat/adv-rag-a6.2-rl`.
-- [ ] A6.2g — held-out eval + verdict + docs
+- [x] **A6.2g — held-out eval + verdict** ✅ (2026-07-13) — `rag/rl/rleval.py` + `rag rl-eval` + the
+  paid sim-to-real real-env head-to-head (commit `80bd497`). Shipped the eval harness, the `$0`-sim
+  verdict, and the paid comparison. **⚠️ THE VERDICT WAS SUBSEQUENTLY RETRACTED (2026-07-13, commit
+  `af724a0`) — the ENVIRONMENT was invalid, not RL.** The env could not express the correct action on
+  ~89% of graded episodes and paid reward for evidence that answers nothing; `react(hybrid)` already sat
+  on the action-space ceiling, so the null result was **structural**, not a fact about RL. Superseded
+  numbers → §"Superseded numbers" in [[advanced-rag-resume]] + `docs/validations_results.md`.
+
+### A6.2-E — environment-fix track (the real story after A6.2g)
+**Plan of record for E1–E7 is [ADVANCED_RAG_TODO.md §A6.2-E](ADVANCED_RAG_TODO.md)** (fully written
+there) — this is the pointer, not a duplicate. In brief (all landed 2026-07-13 except as noted):
+- [x] **E1** entity-bound coverage (`Aspect.ticker`) — closed an 8.6% reward-hack; **invalidates the
+  published A4/A5/A6.1 coverage numbers** (treat as upper bounds; re-baseline is part of E5).
+- [x] **E2** relation-targeted hop-1 query (`self_scope_query`) — naming-chunk retrieval 48.6% → **100%**.
+- [x] **E3** fan-out action (`ScopeKind.FANOUT`) + `sweep(arm)` baseline — reachability 11.4% → **78.6%**;
+  RL must beat **`sweep(hybrid)`**, not `react(hybrid)` (else a manufactured win from an action-space
+  asymmetry). Two load-bearing traps fixed: breadth-first branch merge + union cap widened to seat every
+  branch.
+- [x] **E4** — **CLOSED AS OBSOLETE, not built** (`I(Y;E₁)≈0` ⇒ per-candidate ranking features are
+  uninformative by construction; the cost driver `n_discovered_unretrieved` is already in the 18-dim state).
+- [x] **E6** topic-targeted hop-2 query (`discovered_scope_query`) — target's-branch retrieval
+  33.3% → **50.0%**. ⚠️ upper bound (benchmark interpolates the gold span verbatim as `{topic}`).
+- [x] **E7 (the big win)** pooled-rerank **seating** (`rag/rl/seating.py`, commit `4431c41`) — coverage
+  0.500 → **0.607 local / 0.655 Voyage**; seating *efficiency* 43% → **96%**. E3's `breadth_first` cap
+  was arithmetically "seat rank-0 of every branch and nothing deeper," evicting 12 of 21 episodes whose
+  branch had the span. Cross-encoder scores are comparable across branches (RRF's are not) ⇒ rank
+  **a posteriori**. Killed the false "44-chunk Pareto" dilemma.
+- [ ] **E5 — retrain + re-evaluate (the ONLY open A6.2 item)** — retrain REINFORCE in the **E7-seated**
+  env against **`sweep(hybrid)`**; re-baseline A4/A5/A6.1 under entity-bound coverage. Bottleneck is now
+  back at **stage 2 = query formulation** (span not in target's top-6 for 12 of 33 reachable episodes;
+  deeper fetch barely helps) — the LLM query-writer's lever, not seating/depth. RL's learnable margin is
+  the **cost** side (when *not* to sweep) + **per-hop arm choice** (rerank helps hop 2, is catastrophic
+  on hop 1). ⚠️ **POWER-LIMITED: 18 test groups ⇒ ±0.077 CI vs a ~0.02–0.05 effect** ⇒ run E5
+  descriptively (`$0`); *promote* is blocked on **benchmark size** (A6.0 grow-to-100), not on RL.
+- Theory for the E-track → `rag_concepts.md §20`; build journal → `rag_implementation_notes.md §A6.2-E`.
 
 ### Resume notes (for the next session)
 - **On A6.2a:** state = static `featurize()` (11-dim, unchanged) ⊕ dynamic evidence block; the crux
@@ -388,14 +426,14 @@ Ng–Harada; renumber References §19→§20), obeying the GitHub-MathJax escapi
   `train.py` + the CLI import torch **only** in the ppo branch (lazy) — CI floor stays torch-free.
   The training loops live with their learner (`train_reinforce`/`train_bc` in `reinforce.py`,
   `train_ppo` in `ppo.py`); `train.py` is the standardizer + dispatch + checkpoint layer.
-- **Next = A6.2g** (`rag/rl/rleval.py` + `rag rl-eval`): held-out group-split eval of the frozen
-  policy (`load_checkpoint` → `StandardizedPolicy` on the **raw** env) **vs 4 baselines** — best
-  fixed `FixedPolicy`, A6.1 LinUCB, the A4 ReAct loop, random-action — with mean return / coverage /
-  cost, train-vs-held-out gap, seed-averaged, reward-hacking sentinel, group-bootstrap CI (reuse
-  `bootstrap_delta_stats`). Then the **paid** sim-to-real gap run (~`$2–3`, single seed, ~12–24
-  HARD/MED held-out Q) as a measured number, the **verdict** → `validations_results.md`, and the A-N
-  closeout: mark **A6.2 ✅** in `ADVANCED_RAG_TODO.md §A6.2`, consolidated build journal →
-  `rag_implementation_notes.md §A6.2`, and any remaining concepts.
+- **On A6.2g** (landed, then verdict RETRACTED → A6.2-E; **the next real step is E5**):
+  `rag/rl/rleval.py` + `rag rl-eval` — held-out group-split eval of the frozen policy
+  (`load_checkpoint` → `StandardizedPolicy` on the **raw** env) **vs 4 baselines** — best fixed
+  `FixedPolicy`, A6.1 LinUCB, the A4 ReAct loop, random-action — with mean return / coverage / cost,
+  train-vs-held-out gap, seed-averaged, reward-hacking sentinel, group-bootstrap CI (reuse
+  `bootstrap_delta_stats`), plus the **paid** sim-to-real gap run. This harness is reused as-is by E5;
+  the retract taught that the *env* (coverage metric, hop queries, fan-out, seating), not the harness,
+  was the defect — see the A6.2-E subsection above and `ADVANCED_RAG_TODO.md §A6.2-E`.
 - **Invariants to keep:** state stays label-free; group-wise `split_multihop` only; `TransitionCache`
   in the env (§3a) so PPO rollouts don't re-hit the corpus; CI torch-free (numpy REINFORCE is the
   floor; PPO in the `[rl]` extra, lazy import, day-1 segfault smoke test).

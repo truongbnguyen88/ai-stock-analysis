@@ -241,7 +241,8 @@ def test_head_to_head_pairs_episodes_and_bills_only_the_baseline() -> None:
     assert rep.delta == pytest.approx(0.25)  # mean of (.2, .3, .2, .3)
     assert rep.ci_low > 0 and rep.wins
     assert rep.total_llm_calls == 8  # only the baseline's hops bill; the rl side was already paid
-    assert rep.strata["HARD"] == (4, pytest.approx(0.25))
+    n, cov = rep.strata["HARD"]
+    assert n == 4 and cov == pytest.approx(0.25)
 
 
 def test_head_to_head_refuses_a_misaligned_pairing() -> None:
