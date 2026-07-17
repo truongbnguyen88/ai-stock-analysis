@@ -208,7 +208,9 @@ forecast — exec summary, business drivers, risk factors, bullish/bearish evide
 notes, recent-news themes, the headline forecasts (P(up)/E[r]/VaR95 per horizon) and key \
 indicators, all cited. Use ONLY for explicit full-picture / overview / "executive summary on \
 TICKER" requests — it is the HEAVIEST tool (~2 LLM calls, ~30–60s). Numbers are the models'; \
-non-advisory (no recommendation).
+non-advisory (no recommendation). It SELF-RENDERS the complete formatted brief (tables + sections) \
+shown to the user directly — so call it ALONE (no companion search_filings / summarize_news / \
+run_forecast; they are already fused in) and do not re-narrate its output.
 - research_multistep(question): MULTI-HOP SEC filing research — a bounded reason-retrieve-observe \
 loop that gathers and CONNECTS filing evidence across a few steps, for questions one retrieval \
 can't answer: COMPARE companies/segments, what CHANGED over time, BRIDGING follow-ups, COMPOUND \

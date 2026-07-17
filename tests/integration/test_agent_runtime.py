@@ -227,6 +227,23 @@ def test_research_summary_grounding_falls_back_to_brief(monkeypatch: pytest.Monk
     assert "- Customer concentration [2]" in result.text  # a narrative section rendered
 
 
+def test_brief_markdown_short_circuits_the_answer_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    # research_summary returns a ready-to-present `brief_markdown`; the runtime presents it verbatim
+    # and ends the turn — no answer-turn LLM call, no re-narration (so no grounding risk on the
+    # brief). tiles/charts/sources still flow because Final carries tool_results.
+    ex = _executor()
+    brief = "# MRVL Executive Brief\n\n## Technicals\n\n| A | B |\n|---|---|\n| x | 7% |"
+    result_dict = {**_RESEARCH_RESULT, "brief_markdown": brief}
+    monkeypatch.setattr(ex, "execute", lambda name, args: result_dict)
+    llm = FakeToolLLM([_research_tool_use()])  # ONLY a tool_use; no answer turn is scripted
+    result = run_agent("full brief on MRVL", llm=llm, executor=ex)
+
+    assert llm.calls == 1  # tool turn only — the answer-turn re-narration is skipped
+    assert result.text == brief  # presented verbatim (tables intact)
+    assert result.tool_results and result.tool_results[0].name == "research_summary"  # tiles/charts
+    assert any(m["role"] == "assistant" and m["content"] == brief for m in result.messages)
+
+
 def test_errored_research_summary_still_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     # An errored (e.g. timed-out) research_summary has no grounded brief to fall back to, so a
     # persistent ungrounded answer must still fail closed — we never fabricate a fallback from a

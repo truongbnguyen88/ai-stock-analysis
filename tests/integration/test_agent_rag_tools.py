@@ -379,8 +379,14 @@ def test_research_summary_compact_shape(monkeypatch: pytest.MonkeyPatch) -> None
     assert out["large_move"]["prob_large_move"] == 0.9 and out["large_move"]["lean"] == "up"
     assert out["earnings"]["next_earnings_date"] == "2026-05-20"  # JSON-mode date string
     assert out["earnings"]["earnings_in_horizon"] is False
-    # The full Markdown is NOT returned (too long for a tool result).
-    assert "##" not in json.dumps(out)
+    # The ready-to-present rich brief IS returned (the runtime presents it verbatim, tables + all).
+    brief = out["brief_markdown"]
+    assert brief.startswith("# 🔬 NVDA — Executive Research Brief")
+    assert "## 📊 1. Price Snapshot" in brief and "## 🔮 3. Model Forecasts (Ensemble)" in brief
+    assert "NVDA shows strong Data Center momentum." in brief  # the memo's grounded exec summary
+    # The compact scalar/list fields stay plain — only `brief_markdown` carries Markdown headers.
+    compact = {k: v for k, v in out.items() if k != "brief_markdown"}
+    assert "##" not in json.dumps(compact)
 
 
 def test_research_summary_defaults_to_21_day_news_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -449,12 +455,18 @@ def test_agent_routes_overview_to_research_summary(monkeypatch: pytest.MonkeyPat
             stop_reason="tool_use",
             assistant_content=[],
         ),
-        # Relays a model number from the memo (P(up) 76%) — accepted by the grounding guard.
-        _final("The 20-day model puts P(up) at 76%. NVDA shows strong Data Center momentum."),
+        # No answer turn is needed: research_summary self-renders a `brief_markdown`, so the runtime
+        # short-circuits and presents that brief verbatim (this scripted _final is never consumed).
+        _final("(unused) the agent should not re-narrate the brief."),
     ]
-    result = run_agent("Give me the full picture on NVDA.", llm=_Scripted(script), executor=ex)
+    llm_router = _Scripted(script)
+    result = run_agent("Give me the full picture on NVDA.", llm=llm_router, executor=ex)
     assert "research_summary" in result.tool_calls
-    assert "76%" in result.text
+    assert llm_router.calls == 1  # tool turn only — the answer-turn re-narration is skipped
+    # The deterministic rich brief is what the user sees (tables + the memo's grounded prose).
+    assert result.text.startswith("# 🔬 NVDA — Executive Research Brief")
+    assert "## 🔮 3. Model Forecasts (Ensemble)" in result.text
+    assert "NVDA shows strong Data Center momentum." in result.text
 
 
 def test_agent_routes_comparative_to_research_multistep() -> None:
