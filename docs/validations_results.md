@@ -1250,3 +1250,47 @@ not a resolved magnitude. Measured under **Voyage** (the higher-ceiling substrat
 0.595 Voyage number, not the 0.607 local one. The optional `sweep`-vs-RL real-query head-to-head
 (`rag rl-h2h`, ~$3.2) — which would say whether the RL *advantage* survives real queries, not just
 whether the policy degrades — is built and gated but **not yet run** (held).
+
+## 2026-07-18 — A6.0 EXPANSION: grow the graph 20→48 seeds → benchmark 212→680 Q (power gate only) 📈
+
+**What & why.** One-time expansion of the extraction graph and the multi-hop benchmark to attack the
+**first** of E5's two promote obstructions — the group-count/CI-width limit (§17.5) — *not* the
+sim-to-real bias (that stays untouched; see the 2026-07-18 A6.2g entry above). 28 already-ingested
+semis/hyperscaler/software names were added to the graph via an **additions-only** universe file
+(`configs/graph_universe_additions.txt`) so the original 20 seeds were never re-billed; then
+`make rag-gen-multistep` regenerated over the merged 48-seed universe (`rng_seed=0`, `frac=0.3`
+unchanged — only the universe varies).
+
+**Cost.** Graph extraction is the only paid step: **83 LLM calls** (offline pre-count predicted exactly
+83), **≈ \$10.80**, ceiling `GRAPH_MAX_EXTRACT_CALLS=100` never touched. Generation is \$0. Graph grew
+634→1,832 nodes / 1,352→4,024 edges (+2,370). All 48 seeds have edges; original 20 unchanged.
+
+**Before → after (v1 20-seed → v2 48-seed).**
+
+| Metric | v1 (20 seeds) | v2 (48 seeds) | Δ |
+|---|---|---|---|
+| Full benchmark Q | 212 | **680** | 3.2× |
+| Full HARD / MED / CTRL | 120 / 30 / 62 | 445 / 79 / 156 | — |
+| Test Q (HARD / MED / CTRL) | 63 (35/7/21) | 199 (130/24/45) | — |
+| **Test distinct HARD∪MED groups** (RL power denominator) | **13** | **38** | **2.9×** |
+| Projected bootstrap CI half-width ($k/\sqrt{G}$) | ±0.077 | **±0.045** | 1.7× tighter |
+| Supply: `distinct == emitted` (no cap hit) | ✓ | ✓ | — |
+
+The realized ±0.045 **beats the pre-run projection** (~±0.056); the extra hubs (HPE, MSFT, ORCL, IBM,
+TER — each 100+ edges) supplied far more bridge pairs than the conservative +10/+18-group estimate.
+
+**Independent span audit (test HARD/MED, n=154, $0).** Target-aspect (bridge-answer) misses **0/154** —
+the generator's probe is airtight. Seed-aspect misses **4/154 (2.6%), all one group** (`INTC|META`):
+the `INTC competes_with META` edge is real (Intel's 10-K names "…Amazon, Google, Meta and Microsoft…")
+but the gold spans are the formal aliases `meta platforms`/`facebook inc`, and Intel writes bare "Meta".
+**Documented, not fixed** — the alias policy excludes bare "Meta" on purpose (it false-matches
+`metal`/`metadata` across chip filings); the item stays valid (real edge + clean target hop). Known
+limitation: 1/38 test HARD∪MED groups has a seed-hop surface-form gap.
+
+**Verdict — this clears ONE of two gates.** The expansion tightens the CI for every *future* E5 run
+(±0.077 → ±0.045) but does **nothing** for the sim-to-real bias (~0.18, 4–9× the ~0.02–0.05 effect),
+which is orthogonal to $G$ (§17.5 two-obstruction table). So the standing read is unchanged: **E5 stays
+descriptive, not promote-able**, now bottlenecked purely on validity (needs a real-query eval), no longer
+on power. **All A6.1/A6.2 point estimates were computed on the v1 20-seed benchmark and remain valid in
+git history; the v2 set is not backward-compatible with them** — a future E5 must be re-run on v2 to use
+the tighter CI.

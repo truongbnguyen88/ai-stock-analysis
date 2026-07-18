@@ -2071,3 +2071,61 @@ it does **not** say whether the RL *advantage* over `sweep(hybrid)` survives —
 real-query head-to-head (`rag rl-h2h` + `SweepBridgePolicy`, built here, ~$3.2, currently held). E5
 (retrain) remains the open promote item and is now blocked for **two** independent reasons: sample size
 (18 groups) *and* sim-to-real bias exceeding the effect.
+
+## A6.0-EXPANSION — grow the graph 20→48 seeds → benchmark 212→680 Q (`configs/graph_universe*.txt`, `data/graph/voyage-voyage-4.db`)
+
+**Role.** Attack the *first* of the two E5-promote obstructions — the **power/CI-width** limit (§17.5),
+not the sim-to-real bias. The pre-expansion held-out fold had only 13 distinct HARD∪MED bridge groups,
+so the group-wise bootstrap CI was $\pm 0.077$ — far wider than the 0.02–0.05 effect being tested. More
+episodes require more bridge groups, and bridge groups require more *mutually-referencing* extracted
+graph seeds. This phase adds 28 already-ingested semis/hyperscaler/software names to the graph, then
+regenerates the benchmark over the merged 48-seed universe. **\$0 at generation; ~\$10.80 one-time for
+graph extraction** (the only paid step).
+
+**The re-billing trap and the additions-only file.** `documents extract-graph` has **no skip-existing
+check** — it re-extracts (and re-pays for) every ticker in the file it is given. Re-running `--all` over
+the 48-seed `graph_universe.txt` would have re-billed the original 20 seeds. Fix: a **separate
+extraction-only delta**, `configs/graph_universe_additions.txt` (the 28 new tickers only). The paid run
+targets that file; the shared graph DB is *upserted* with the new seeds' edges while the existing 20 are
+untouched. The **generator** still reads the merged 48-seed `graph_universe.txt`. This file-level split
+is the whole mechanism that guarantees "spend once, never re-bill".
+
+**Pre-spend cost control (two independent guards).**
+1. *Offline call pre-count* (`scratchpad/precount_calls.py`, $0) replicates `extract_edges`' per-filing
+   call logic — `build_chunks` → `select_extraction_chunks` → `_group_by_document` → count groups
+   passing `_has_candidate` — **without** calling the LLM. Predicted **83 calls** for the 28 seeds.
+2. *Run-wide ceiling* `settings.graph_max_extract_calls` (env `GRAPH_MAX_EXTRACT_CALLS=100`), threaded
+   as `remaining = ceiling - used` across tickers; raises `GraphExtractBudgetExceeded` on breach. Hard
+   stop well under $20.
+   The realized run hit **exactly 83 calls** (pre-count was exact), +2,370 edges, ceiling never touched;
+   graph grew 634→1,832 nodes / 1,352→4,024 edges. All 48 seeds have edges; the original 20 unchanged.
+
+**Regeneration + split.** `make rag-gen-multistep` (universe = 48-seed file, `rng_seed=0`,
+`split_test_frac=0.3`) → **680 Q** (HARD 445 / MED 79 / CTRL 156), 169 groups; group-wise split (D2) =
+481 train / 199 test. The held-out fold now has **38 distinct HARD∪MED groups** (was 13) — the RL power
+denominator up **2.9×**, driving the projected bootstrap half-width $\pm 0.077 \to \approx\pm 0.045$
+(§17.5 worked example). Supply report (`outputs/rag_eval/multistep_supply.json`): `distinct == emitted`
+for all strata (no per-seed cap hit), `discarded_absent_in_target=8405` (the target-hop probe doing its
+job), `discarded_duplicate=16697` (dedup working).
+
+**Independent span audit (beyond the generator's own probe).**
+- **Target-aspect (bridge answer) misses: 0/154** across all test HARD/MED items — every answer is
+  verbatim in the target doc. This is the load-bearing correctness property; it holds perfectly.
+- **Seed-aspect misses: 4/154 (2.6%), all one group** (`INTC|META`). The `INTC competes_with META` edge
+  is **real** — Intel's 10-K says *"…hyperscalers such as Amazon, Google, Meta and Microsoft…"* — but
+  the seed-aspect gold spans are the formal aliases `['meta platforms','facebook inc']`, and Intel uses
+  the colloquial "Meta". **Disposition: documented, not fixed.** The alias policy deliberately excludes
+  bare "Meta" because it false-matches `metal`/`metadata`/`metaverse` across semiconductor filings;
+  adding it would trade one clean miss for many false positives. The item stays valid (real edge + clean
+  target hop). Known limitation: 1/38 test HARD∪MED groups has a seed-hop surface-form gap.
+
+**Key decisions.** (a) additions-only extraction file (never re-bill); (b) offline pre-count + hard
+ceiling before any spend; (c) formal-alias gold spans kept conservative (precision over the INTC|META
+recall miss); (d) `rng_seed=0`/`frac=0.3` unchanged so *only the universe* varies (clean isolation vs
+the v1 benchmark).
+
+**How the next phase uses it.** The E5 retrain, when run, now draws episodes from the 48-seed fold, so
+its CI is $\approx\pm 0.045$ not $\pm 0.077$ — but the **sim-to-real bias (~0.18) is untouched** (§20.7
+/ A6.2g); it is orthogonal to $G$. So E5 stays *descriptive, not promote-able* until a real-query eval
+clears the *second* gate. The v1 (20-seed) benchmark and every A6.1/A6.2 number computed on it remain in
+git history; the expanded set is **v2** and is not backward-compatible with those point estimates.

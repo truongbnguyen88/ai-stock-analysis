@@ -1,0 +1,50 @@
+# GraphRAG (A5) extraction — ADDITIONS-ONLY delta (A6.0 expansion, 2026-07-18).
+#
+# WHY A SEPARATE FILE: `documents extract-graph` has NO skip-existing check — it re-extracts
+# (and re-bills) every ticker in the file it is given. The 20 seeds already in the graph
+# (configs/graph_universe.txt, built 2026-06-27/28) must NOT be re-paid. So the ONE paid
+# expansion run targets THIS file only:
+#   python -m stock_agent documents extract-graph --all --universe configs/graph_universe_additions.txt
+# The shared graph DB (data/graph/voyage-voyage-4.db) is upserted with the new seeds' edges;
+# the existing 20 are untouched. The GENERATOR then reads the merged 48-seed graph_universe.txt.
+#
+# Cost pre-count (offline, replicating extract_edges' per-filing call logic): 28 seeds -> 83 calls
+# -> ~$8-14 @ ~$0.13/call (build-log rate). Run guarded by `graph_max_extract_calls=100` (hard <$20).
+#
+# Selection: only ALREADY-INGESTED names (=> $0 embed) that can BRIDGE into the existing semis hub
+# (mutually-referencing => HARD/MED 2-hop pairs, the RL power denominator). All 28 are in the alias
+# map and have raw filings in data/raw/sec. Utilities/staples/financials excluded (no bridges).
+#
+# --- Core semis / hardware / data-center infra (12) — highest HARD/MED yield ---
+QRVO   # RF (Qorvo) — mobile/RF peer; already a graph target
+SWKS   # RF (Skyworks) — mobile/RF peer; already a graph target
+ON     # power / analog (onsemi) — automotive/industrial; already a graph target
+MPWR   # power management (Monolithic Power) — data-center power ICs
+TER    # semiconductor test equipment (Teradyne)
+WDC    # storage / HDD-NAND (Western Digital) — hyperscaler supply; already a target
+STX    # storage / HDD (Seagate) — hyperscaler supply
+NTAP   # storage systems (NetApp)
+SMCI   # AI servers (Supermicro) — direct NVDA accelerator customer
+HPE    # AI servers / networking (Hewlett Packard Enterprise) — already a graph target
+CIEN   # optical networking (Ciena) — data-center interconnect
+VRT    # data-center power / thermal (Vertiv) — AI-datacenter infra
+#
+# --- Hyperscalers (6) — buy accelerators, name TSMC/NVDA/suppliers; appear as targets ---
+MSFT   # Azure — largest AI capex; already the top non-seed graph target (9 in-edges)
+GOOGL  # Google Cloud / TPU — already a graph target
+AMZN   # AWS — hyperscaler
+META   # AI infrastructure buildout — already a graph target
+AAPL   # names TSMC / supply chain heavily
+ORCL   # OCI — GPU cloud
+#
+# --- AI software (10) — cheaper, lower expected HARD/MED yield (more CTRL); one-shot insurance ---
+IBM    # enterprise AI / hybrid cloud
+CRM    # Salesforce — enterprise AI
+NOW    # ServiceNow — enterprise AI
+PLTR   # Palantir — AI platforms
+SNOW   # Snowflake — data / AI
+PANW   # Palo Alto — security (names infra/cloud)
+CRWD   # CrowdStrike — security
+DDOG   # Datadog — observability (names cloud providers)
+NET    # Cloudflare — edge / networking
+INTU   # Intuit — applied AI

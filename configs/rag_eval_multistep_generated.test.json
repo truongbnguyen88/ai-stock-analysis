@@ -1,229 +1,369 @@
 [
   {
-    "question": "What does Analog Devices Inc. disclose about customer concentration in its SEC filings?",
+    "question": "What does Arista Networks Inc disclose about AI regulatory requirements in its SEC filings?",
     "aspects": [
       {
-        "name": "Analog Devices Inc.'s customer concentration disclosure",
+        "name": "Arista Networks Inc's AI regulatory requirements disclosure",
         "spans": [
-          "customer concentration"
+          "AI regulatory requirements"
         ],
-        "ticker": "ADI"
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "ADI",
+    "seed": "ANET",
     "target": null,
-    "group_id": "ADI",
+    "group_id": "ANET",
     "generated": true
   },
   {
-    "question": "What does Analog Devices Inc. disclose about substantial existing indebtedness in its SEC filings?",
+    "question": "What does Arista Networks Inc disclose about Mexico tariffs in its SEC filings?",
     "aspects": [
       {
-        "name": "Analog Devices Inc.'s substantial existing indebtedness disclosure",
+        "name": "Arista Networks Inc's Mexico tariffs disclosure",
         "spans": [
-          "substantial existing indebtedness"
+          "Mexico tariffs"
         ],
-        "ticker": "ADI"
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "ADI",
+    "seed": "ANET",
     "target": null,
-    "group_id": "ADI",
+    "group_id": "ANET",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about customer concentration in its SEC filings?",
+    "question": "What does Arista Networks Inc disclose about US export controls in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s customer concentration disclosure",
+        "name": "Arista Networks Inc's US export controls disclosure",
         "spans": [
-          "customer concentration"
+          "US export controls"
         ],
-        "ticker": "AMAT"
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "ANET",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "ANET",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about cybersecurity threats and incidents in its SEC filings?",
+    "question": "What does Arista Networks Inc disclose about currency exchange rate fluctuations in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s cybersecurity threats and incidents disclosure",
+        "name": "Arista Networks Inc's currency exchange rate fluctuations disclosure",
         "spans": [
-          "cybersecurity threats and incidents"
+          "currency exchange rate fluctuations"
         ],
-        "ticker": "AMAT"
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "ANET",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "ANET",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about global minimum tax regime in its SEC filings?",
+    "question": "What does ciena disclose about China tariffs in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s global minimum tax regime disclosure",
+        "name": "ciena's China tariffs disclosure",
         "spans": [
-          "global minimum tax regime"
+          "China tariffs"
         ],
-        "ticker": "AMAT"
+        "ticker": "CIEN"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "CIEN",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "CIEN",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about global minimum tax regimes in its SEC filings?",
+    "question": "What does ciena disclose about global minimum tax regimes in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s global minimum tax regimes disclosure",
+        "name": "ciena's global minimum tax regimes disclosure",
         "spans": [
           "global minimum tax regimes"
         ],
-        "ticker": "AMAT"
+        "ticker": "CIEN"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "CIEN",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "CIEN",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about global regulatory environment in its SEC filings?",
+    "question": "What does ciena disclose about supply chain capacity shortage in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s global regulatory environment disclosure",
+        "name": "ciena's supply chain capacity shortage disclosure",
         "spans": [
-          "global regulatory environment"
+          "supply chain capacity shortage"
         ],
-        "ticker": "AMAT"
+        "ticker": "CIEN"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "CIEN",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "CIEN",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about goodwill impairment charges in its SEC filings?",
+    "question": "What does crowdstrike disclose about California Consumer Privacy Act in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s goodwill impairment charges disclosure",
+        "name": "crowdstrike's California Consumer Privacy Act disclosure",
         "spans": [
-          "goodwill impairment charges"
+          "California Consumer Privacy Act"
         ],
-        "ticker": "AMAT"
+        "ticker": "CRWD"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "CRWD",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "CRWD",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about intellectual property infringement claims in its SEC filings?",
+    "question": "What does crowdstrike disclose about intellectual property infringement claims in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s intellectual property infringement claims disclosure",
+        "name": "crowdstrike's intellectual property infringement claims disclosure",
         "spans": [
           "intellectual property infringement claims"
         ],
-        "ticker": "AMAT"
+        "ticker": "CRWD"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "CRWD",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "CRWD",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about supply chain disruption in its SEC filings?",
+    "question": "What does datadog disclose about cross-border data transfer restrictions in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s supply chain disruption disclosure",
+        "name": "datadog's cross-border data transfer restrictions disclosure",
         "spans": [
-          "supply chain disruption"
+          "cross-border data transfer restrictions"
         ],
-        "ticker": "AMAT"
+        "ticker": "DDOG"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "DDOG",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "DDOG",
     "generated": true
   },
   {
-    "question": "What does Applied Materials, Inc. disclose about supply chain disruptions in its SEC filings?",
+    "question": "What does datadog disclose about foreign currency exchange rate fluctuations in its SEC filings?",
     "aspects": [
       {
-        "name": "Applied Materials, Inc.'s supply chain disruptions disclosure",
+        "name": "datadog's foreign currency exchange rate fluctuations disclosure",
         "spans": [
-          "supply chain disruptions"
+          "foreign currency exchange rate fluctuations"
         ],
-        "ticker": "AMAT"
+        "ticker": "DDOG"
       }
     ],
     "max_steps": null,
     "stratum": "CTRL",
     "relation": "single-entity",
     "qtype": "risk",
-    "seed": "AMAT",
+    "seed": "DDOG",
     "target": null,
-    "group_id": "AMAT",
+    "group_id": "DDOG",
     "generated": true
   },
   {
-    "question": "What does intel corp disclose about US export controls in its SEC filings?",
+    "question": "What does Dell Technologies disclose about EU Artificial Intelligence Act in its SEC filings?",
     "aspects": [
       {
-        "name": "intel corp's US export controls disclosure",
+        "name": "Dell Technologies's EU Artificial Intelligence Act disclosure",
+        "spans": [
+          "EU Artificial Intelligence Act"
+        ],
+        "ticker": "DELL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "DELL",
+    "target": null,
+    "group_id": "DELL",
+    "generated": true
+  },
+  {
+    "question": "What does Dell Technologies disclose about adverse global economic conditions in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Dell Technologies's adverse global economic conditions disclosure",
+        "spans": [
+          "adverse global economic conditions"
+        ],
+        "ticker": "DELL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "DELL",
+    "target": null,
+    "group_id": "DELL",
+    "generated": true
+  },
+  {
+    "question": "What does Dell Technologies disclose about climate change laws and regulations in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Dell Technologies's climate change laws and regulations disclosure",
+        "spans": [
+          "climate change laws and regulations"
+        ],
+        "ticker": "DELL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "DELL",
+    "target": null,
+    "group_id": "DELL",
+    "generated": true
+  },
+  {
+    "question": "What does Dell Technologies disclose about competitive pricing pressure in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Dell Technologies's competitive pricing pressure disclosure",
+        "spans": [
+          "competitive pricing pressure"
+        ],
+        "ticker": "DELL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "DELL",
+    "target": null,
+    "group_id": "DELL",
+    "generated": true
+  },
+  {
+    "question": "What does Dell Technologies disclose about economic sanctions laws in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Dell Technologies's economic sanctions laws disclosure",
+        "spans": [
+          "economic sanctions laws"
+        ],
+        "ticker": "DELL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "DELL",
+    "target": null,
+    "group_id": "DELL",
+    "generated": true
+  },
+  {
+    "question": "What does Dell Technologies disclose about foreign currency exchange rate fluctuations in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Dell Technologies's foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "DELL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "DELL",
+    "target": null,
+    "group_id": "DELL",
+    "generated": true
+  },
+  {
+    "question": "What does Dell Technologies disclose about single-source or limited-source suppliers in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Dell Technologies's single-source or limited-source suppliers disclosure",
+        "spans": [
+          "single-source or limited-source suppliers"
+        ],
+        "ticker": "DELL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "DELL",
+    "target": null,
+    "group_id": "DELL",
+    "generated": true
+  },
+  {
+    "question": "What does Intel Corporation disclose about US export controls in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation's US export controls disclosure",
         "spans": [
           "US export controls"
         ],
@@ -240,10 +380,10 @@
     "generated": true
   },
   {
-    "question": "What does intel corp disclose about currency exchange rate risk in its SEC filings?",
+    "question": "What does Intel Corporation disclose about currency exchange rate risk in its SEC filings?",
     "aspects": [
       {
-        "name": "intel corp's currency exchange rate risk disclosure",
+        "name": "Intel Corporation's currency exchange rate risk disclosure",
         "spans": [
           "currency exchange rate risk"
         ],
@@ -260,10 +400,10 @@
     "generated": true
   },
   {
-    "question": "What does intel corp disclose about customer concentration in its SEC filings?",
+    "question": "What does Intel Corporation disclose about customer concentration in its SEC filings?",
     "aspects": [
       {
-        "name": "intel corp's customer concentration disclosure",
+        "name": "Intel Corporation's customer concentration disclosure",
         "spans": [
           "customer concentration"
         ],
@@ -280,10 +420,10 @@
     "generated": true
   },
   {
-    "question": "What does intel corp disclose about cybersecurity threats and privacy risks in its SEC filings?",
+    "question": "What does Intel Corporation disclose about cybersecurity threats and privacy risks in its SEC filings?",
     "aspects": [
       {
-        "name": "intel corp's cybersecurity threats and privacy risks disclosure",
+        "name": "Intel Corporation's cybersecurity threats and privacy risks disclosure",
         "spans": [
           "cybersecurity threats and privacy risks"
         ],
@@ -300,10 +440,10 @@
     "generated": true
   },
   {
-    "question": "What does intel corp disclose about high level of competition in its SEC filings?",
+    "question": "What does Intel Corporation disclose about high level of competition in its SEC filings?",
     "aspects": [
       {
-        "name": "intel corp's high level of competition disclosure",
+        "name": "Intel Corporation's high level of competition disclosure",
         "spans": [
           "high level of competition"
         ],
@@ -320,10 +460,10 @@
     "generated": true
   },
   {
-    "question": "What does intel corp disclose about product defects and errata in its SEC filings?",
+    "question": "What does Intel Corporation disclose about product defects and errata in its SEC filings?",
     "aspects": [
       {
-        "name": "intel corp's product defects and errata disclosure",
+        "name": "Intel Corporation's product defects and errata disclosure",
         "spans": [
           "product defects and errata"
         ],
@@ -340,10 +480,10 @@
     "generated": true
   },
   {
-    "question": "What does intel corp disclose about wafer fabrication supply constraints in its SEC filings?",
+    "question": "What does Intel Corporation disclose about wafer fabrication supply constraints in its SEC filings?",
     "aspects": [
       {
-        "name": "intel corp's wafer fabrication supply constraints disclosure",
+        "name": "Intel Corporation's wafer fabrication supply constraints disclosure",
         "spans": [
           "wafer fabrication supply constraints"
         ],
@@ -360,10 +500,598 @@
     "generated": true
   },
   {
-    "question": "What does taiwan semiconductor disclose about climate change regulations in its SEC filings?",
+    "question": "What does lam research disclose about foreign currency exchange rate fluctuations in its SEC filings?",
     "aspects": [
       {
-        "name": "taiwan semiconductor's climate change regulations disclosure",
+        "name": "lam research's foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "LRCX"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "LRCX",
+    "target": null,
+    "group_id": "LRCX",
+    "generated": true
+  },
+  {
+    "question": "What does microchip technology disclose about dependence on wafer foundries in its SEC filings?",
+    "aspects": [
+      {
+        "name": "microchip technology's dependence on wafer foundries disclosure",
+        "spans": [
+          "dependence on wafer foundries"
+        ],
+        "ticker": "MCHP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "MCHP",
+    "target": null,
+    "group_id": "MCHP",
+    "generated": true
+  },
+  {
+    "question": "What does microchip technology disclose about foreign currency exchange rate fluctuations in its SEC filings?",
+    "aspects": [
+      {
+        "name": "microchip technology's foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "MCHP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "MCHP",
+    "target": null,
+    "group_id": "MCHP",
+    "generated": true
+  },
+  {
+    "question": "What does microchip technology disclose about single or limited number of suppliers in its SEC filings?",
+    "aspects": [
+      {
+        "name": "microchip technology's single or limited number of suppliers disclosure",
+        "spans": [
+          "single or limited number of suppliers"
+        ],
+        "ticker": "MCHP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "MCHP",
+    "target": null,
+    "group_id": "MCHP",
+    "generated": true
+  },
+  {
+    "question": "What does cloudflare disclose about adverse economic conditions in its SEC filings?",
+    "aspects": [
+      {
+        "name": "cloudflare's adverse economic conditions disclosure",
+        "spans": [
+          "adverse economic conditions"
+        ],
+        "ticker": "NET"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "NET",
+    "target": null,
+    "group_id": "NET",
+    "generated": true
+  },
+  {
+    "question": "What does cloudflare disclose about history of net losses in its SEC filings?",
+    "aspects": [
+      {
+        "name": "cloudflare's history of net losses disclosure",
+        "spans": [
+          "history of net losses"
+        ],
+        "ticker": "NET"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "NET",
+    "target": null,
+    "group_id": "NET",
+    "generated": true
+  },
+  {
+    "question": "What does palo alto networks disclose about California Consumer Privacy Act in its SEC filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks's California Consumer Privacy Act disclosure",
+        "spans": [
+          "California Consumer Privacy Act"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "PANW",
+    "target": null,
+    "group_id": "PANW",
+    "generated": true
+  },
+  {
+    "question": "What does palo alto networks disclose about Sanctions on Russia in its SEC filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks's Sanctions on Russia disclosure",
+        "spans": [
+          "Sanctions on Russia"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "PANW",
+    "target": null,
+    "group_id": "PANW",
+    "generated": true
+  },
+  {
+    "question": "What does palo alto networks disclose about intellectual property infringement claims in its SEC filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks's intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "PANW",
+    "target": null,
+    "group_id": "PANW",
+    "generated": true
+  },
+  {
+    "question": "What does Super Micro Computer, Inc. disclose about delinquent SEC reporting obligations in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Super Micro Computer, Inc.'s delinquent SEC reporting obligations disclosure",
+        "spans": [
+          "delinquent SEC reporting obligations"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "SMCI",
+    "target": null,
+    "group_id": "SMCI",
+    "generated": true
+  },
+  {
+    "question": "What does Super Micro Computer, Inc. disclose about excess or obsolete inventory in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Super Micro Computer, Inc.'s excess or obsolete inventory disclosure",
+        "spans": [
+          "excess or obsolete inventory"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "SMCI",
+    "target": null,
+    "group_id": "SMCI",
+    "generated": true
+  },
+  {
+    "question": "What does Super Micro Computer, Inc. disclose about global supply chain shortages in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Super Micro Computer, Inc.'s global supply chain shortages disclosure",
+        "spans": [
+          "global supply chain shortages"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "SMCI",
+    "target": null,
+    "group_id": "SMCI",
+    "generated": true
+  },
+  {
+    "question": "What does Super Micro Computer, Inc. disclose about reliance on Ablecom and Compuware in its SEC filings?",
+    "aspects": [
+      {
+        "name": "Super Micro Computer, Inc.'s reliance on Ablecom and Compuware disclosure",
+        "spans": [
+          "reliance on Ablecom and Compuware"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "SMCI",
+    "target": null,
+    "group_id": "SMCI",
+    "generated": true
+  },
+  {
+    "question": "What does STMicroelectronics disclose about changes in global trade policies in its SEC filings?",
+    "aspects": [
+      {
+        "name": "STMicroelectronics's changes in global trade policies disclosure",
+        "spans": [
+          "changes in global trade policies"
+        ],
+        "ticker": "STM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "STM",
+    "target": null,
+    "group_id": "STM",
+    "generated": true
+  },
+  {
+    "question": "What does STMicroelectronics disclose about limited number of suppliers in its SEC filings?",
+    "aspects": [
+      {
+        "name": "STMicroelectronics's limited number of suppliers disclosure",
+        "spans": [
+          "limited number of suppliers"
+        ],
+        "ticker": "STM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "STM",
+    "target": null,
+    "group_id": "STM",
+    "generated": true
+  },
+  {
+    "question": "What does STMicroelectronics disclose about loss of key employees in its SEC filings?",
+    "aspects": [
+      {
+        "name": "STMicroelectronics's loss of key employees disclosure",
+        "spans": [
+          "loss of key employees"
+        ],
+        "ticker": "STM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "STM",
+    "target": null,
+    "group_id": "STM",
+    "generated": true
+  },
+  {
+    "question": "What does vertiv disclose about foreign currency exchange rate fluctuation in its SEC filings?",
+    "aspects": [
+      {
+        "name": "vertiv's foreign currency exchange rate fluctuation disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuation"
+        ],
+        "ticker": "VRT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "VRT",
+    "target": null,
+    "group_id": "VRT",
+    "generated": true
+  },
+  {
+    "question": "What does vertiv disclose about foreign currency exchange rate fluctuations in its SEC filings?",
+    "aspects": [
+      {
+        "name": "vertiv's foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "VRT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "VRT",
+    "target": null,
+    "group_id": "VRT",
+    "generated": true
+  },
+  {
+    "question": "What does vertiv disclose about global supply chain constraints in its SEC filings?",
+    "aspects": [
+      {
+        "name": "vertiv's global supply chain constraints disclosure",
+        "spans": [
+          "global supply chain constraints"
+        ],
+        "ticker": "VRT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "VRT",
+    "target": null,
+    "group_id": "VRT",
+    "generated": true
+  },
+  {
+    "question": "What does vertiv disclose about supply chain constraints in its SEC filings?",
+    "aspects": [
+      {
+        "name": "vertiv's supply chain constraints disclosure",
+        "spans": [
+          "supply chain constraints"
+        ],
+        "ticker": "VRT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "CTRL",
+    "relation": "single-entity",
+    "qtype": "risk",
+    "seed": "VRT",
+    "target": null,
+    "group_id": "VRT",
+    "generated": true
+  },
+  {
+    "question": "Among the companies apple inc names as key dependencies in its SEC filings, which one warns about EU General Data Protection Regulation in its own filings?",
+    "aspects": [
+      {
+        "name": "apple inc names the dependency",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "AAPL"
+      },
+      {
+        "name": "that dependency's own EU General Data Protection Regulation disclosure",
+        "spans": [
+          "EU General Data Protection Regulation"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AAPL",
+    "target": "GOOGL",
+    "group_id": "AAPL|GOOGL",
+    "generated": true
+  },
+  {
+    "question": "Among the companies apple inc names as key dependencies in its SEC filings, which one warns about digital services taxes in its own filings?",
+    "aspects": [
+      {
+        "name": "apple inc names the dependency",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "AAPL"
+      },
+      {
+        "name": "that dependency's own digital services taxes disclosure",
+        "spans": [
+          "digital services taxes"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AAPL",
+    "target": "GOOGL",
+    "group_id": "AAPL|GOOGL",
+    "generated": true
+  },
+  {
+    "question": "Among the companies apple inc names as key dependencies in its SEC filings, which one warns about foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "apple inc names the dependency",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "AAPL"
+      },
+      {
+        "name": "that dependency's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AAPL",
+    "target": "GOOGL",
+    "group_id": "AAPL|GOOGL",
+    "generated": true
+  },
+  {
+    "question": "Among the companies apple inc names as key dependencies in its SEC filings, which one warns about global minimum tax rules in its own filings?",
+    "aspects": [
+      {
+        "name": "apple inc names the dependency",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "AAPL"
+      },
+      {
+        "name": "that dependency's own global minimum tax rules disclosure",
+        "spans": [
+          "global minimum tax rules"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AAPL",
+    "target": "GOOGL",
+    "group_id": "AAPL|GOOGL",
+    "generated": true
+  },
+  {
+    "question": "Among the companies apple inc names as key dependencies in its SEC filings, which one warns about intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "apple inc names the dependency",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "AAPL"
+      },
+      {
+        "name": "that dependency's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AAPL",
+    "target": "GOOGL",
+    "group_id": "AAPL|GOOGL",
+    "generated": true
+  },
+  {
+    "question": "Among the companies apple inc names as key dependencies in its SEC filings, which one warns about supply chain disruption in its own filings?",
+    "aspects": [
+      {
+        "name": "apple inc names the dependency",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "AAPL"
+      },
+      {
+        "name": "that dependency's own supply chain disruption disclosure",
+        "spans": [
+          "supply chain disruption"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AAPL",
+    "target": "GOOGL",
+    "group_id": "AAPL|GOOGL",
+    "generated": true
+  },
+  {
+    "question": "Among the companies Analog Devices names as key dependencies in its SEC filings, which one warns about climate change regulations in its own filings?",
+    "aspects": [
+      {
+        "name": "Analog Devices names the dependency",
+        "spans": [
+          "taiwan semiconductor",
+          "tsmc"
+        ],
+        "ticker": "ADI"
+      },
+      {
+        "name": "that dependency's own climate change regulations disclosure",
         "spans": [
           "climate change regulations"
         ],
@@ -371,19 +1099,27 @@
       }
     ],
     "max_steps": null,
-    "stratum": "CTRL",
-    "relation": "single-entity",
-    "qtype": "risk",
-    "seed": "TSM",
-    "target": null,
-    "group_id": "TSM",
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "ADI",
+    "target": "TSM",
+    "group_id": "ADI|TSM",
     "generated": true
   },
   {
-    "question": "What does taiwan semiconductor disclose about intellectual property misappropriation in its SEC filings?",
+    "question": "Among the companies Analog Devices names as key dependencies in its SEC filings, which one warns about intellectual property misappropriation in its own filings?",
     "aspects": [
       {
-        "name": "taiwan semiconductor's intellectual property misappropriation disclosure",
+        "name": "Analog Devices names the dependency",
+        "spans": [
+          "taiwan semiconductor",
+          "tsmc"
+        ],
+        "ticker": "ADI"
+      },
+      {
+        "name": "that dependency's own intellectual property misappropriation disclosure",
         "spans": [
           "intellectual property misappropriation"
         ],
@@ -391,72 +1127,276 @@
       }
     ],
     "max_steps": null,
-    "stratum": "CTRL",
-    "relation": "single-entity",
-    "qtype": "risk",
-    "seed": "TSM",
-    "target": null,
-    "group_id": "TSM",
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "ADI",
+    "target": "TSM",
+    "group_id": "ADI|TSM",
     "generated": true
   },
   {
-    "question": "What does Texas Instruments Inc. disclose about conflict minerals reporting requirements in its SEC filings?",
+    "question": "Among the companies AMD names as key dependencies in its SEC filings, which one warns about EU Digital Markets Act in its own filings?",
     "aspects": [
       {
-        "name": "Texas Instruments Inc.'s conflict minerals reporting requirements disclosure",
+        "name": "AMD names the dependency",
         "spans": [
-          "conflict minerals reporting requirements"
-        ],
-        "ticker": "TXN"
-      }
-    ],
-    "max_steps": null,
-    "stratum": "CTRL",
-    "relation": "single-entity",
-    "qtype": "risk",
-    "seed": "TXN",
-    "target": null,
-    "group_id": "TXN",
-    "generated": true
-  },
-  {
-    "question": "Among the competitors AMD names in its SEC filings, which one discloses customer concentration in its own filings?",
-    "aspects": [
-      {
-        "name": "AMD names the competitor",
-        "spans": [
-          "Analog Devices Inc.",
-          "analog devices"
+          "Microsoft Azure",
+          "microsoft"
         ],
         "ticker": "AMD"
       },
       {
-        "name": "that competitor's own customer concentration disclosure",
+        "name": "that dependency's own EU Digital Markets Act disclosure",
         "spans": [
-          "customer concentration"
+          "EU Digital Markets Act"
         ],
-        "ticker": "ADI"
+        "ticker": "MSFT"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
-    "relation": "competes_with",
+    "relation": "depends_on",
     "qtype": "bridging",
     "seed": "AMD",
-    "target": "ADI",
-    "group_id": "ADI|AMD",
+    "target": "MSFT",
+    "group_id": "AMD|MSFT",
     "generated": true
   },
   {
-    "question": "Among the competitors AMD names in its SEC filings, which one discloses substantial existing indebtedness in its own filings?",
+    "question": "Among the companies AMD names as key dependencies in its SEC filings, which one warns about EU General Data Protection Regulation in its own filings?",
     "aspects": [
       {
-        "name": "AMD names the competitor",
+        "name": "AMD names the dependency",
         "spans": [
-          "Analog Devices Inc.",
-          "analog devices"
+          "Microsoft Azure",
+          "microsoft"
         ],
         "ticker": "AMD"
+      },
+      {
+        "name": "that dependency's own EU General Data Protection Regulation disclosure",
+        "spans": [
+          "EU General Data Protection Regulation"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AMD",
+    "target": "MSFT",
+    "group_id": "AMD|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the companies AMD names as key dependencies in its SEC filings, which one warns about additional tax liabilities in its own filings?",
+    "aspects": [
+      {
+        "name": "AMD names the dependency",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AMD"
+      },
+      {
+        "name": "that dependency's own additional tax liabilities disclosure",
+        "spans": [
+          "additional tax liabilities"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AMD",
+    "target": "MSFT",
+    "group_id": "AMD|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the companies AMD names as key dependencies in its SEC filings, which one warns about adverse economic or market conditions in its own filings?",
+    "aspects": [
+      {
+        "name": "AMD names the dependency",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AMD"
+      },
+      {
+        "name": "that dependency's own adverse economic or market conditions disclosure",
+        "spans": [
+          "adverse economic or market conditions"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AMD",
+    "target": "MSFT",
+    "group_id": "AMD|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the companies AMD names as key dependencies in its SEC filings, which one warns about cyberattacks and security vulnerabilities in its own filings?",
+    "aspects": [
+      {
+        "name": "AMD names the dependency",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AMD"
+      },
+      {
+        "name": "that dependency's own cyberattacks and security vulnerabilities disclosure",
+        "spans": [
+          "cyberattacks and security vulnerabilities"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AMD",
+    "target": "MSFT",
+    "group_id": "AMD|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the companies Arista Networks Inc names as key dependencies in its SEC filings, which one warns about Digital Markets Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Arista Networks Inc names the dependency",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "ANET"
+      },
+      {
+        "name": "that dependency's own Digital Markets Act disclosure",
+        "spans": [
+          "Digital Markets Act"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "ANET",
+    "target": "META",
+    "group_id": "ANET|META",
+    "generated": true
+  },
+  {
+    "question": "Among the companies Arista Networks Inc names as key dependencies in its SEC filings, which one warns about Digital Services Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Arista Networks Inc names the dependency",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "ANET"
+      },
+      {
+        "name": "that dependency's own Digital Services Act disclosure",
+        "spans": [
+          "Digital Services Act"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "ANET",
+    "target": "META",
+    "group_id": "ANET|META",
+    "generated": true
+  },
+  {
+    "question": "Among the companies Arista Networks Inc names as key dependencies in its SEC filings, which one warns about Reality Labs operating losses in its own filings?",
+    "aspects": [
+      {
+        "name": "Arista Networks Inc names the dependency",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "ANET"
+      },
+      {
+        "name": "that dependency's own Reality Labs operating losses disclosure",
+        "spans": [
+          "Reality Labs operating losses"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "ANET",
+    "target": "META",
+    "group_id": "ANET|META",
+    "generated": true
+  },
+  {
+    "question": "Among the companies Arista Networks Inc names as key dependencies in its SEC filings, which one warns about UK Online Safety Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Arista Networks Inc names the dependency",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "ANET"
+      },
+      {
+        "name": "that dependency's own UK Online Safety Act disclosure",
+        "spans": [
+          "UK Online Safety Act"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "ANET",
+    "target": "META",
+    "group_id": "ANET|META",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses substantial existing indebtedness in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "Analog Devices",
+          "analog devices"
+        ],
+        "ticker": "AVGO"
       },
       {
         "name": "that competitor's own substantial existing indebtedness disclosure",
@@ -470,28 +1410,28 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "AMD",
+    "seed": "AVGO",
     "target": "ADI",
-    "group_id": "ADI|AMD",
+    "group_id": "ADI|AVGO",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses US export controls in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses AI and cloud regulations in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "intel corp",
-          "intel corporation"
+          "IBM",
+          "international business machines"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own US export controls disclosure",
+        "name": "that competitor's own AI and cloud regulations disclosure",
         "spans": [
-          "US export controls"
+          "AI and cloud regulations"
         ],
-        "ticker": "INTC"
+        "ticker": "IBM"
       }
     ],
     "max_steps": null,
@@ -499,27 +1439,27 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "INTC",
-    "group_id": "AVGO|INTC",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses currency exchange rate risk in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses AI regulations in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "intel corp",
-          "intel corporation"
+          "IBM",
+          "international business machines"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own currency exchange rate risk disclosure",
+        "name": "that competitor's own AI regulations disclosure",
         "spans": [
-          "currency exchange rate risk"
+          "AI regulations"
         ],
-        "ticker": "INTC"
+        "ticker": "IBM"
       }
     ],
     "max_steps": null,
@@ -527,27 +1467,27 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "INTC",
-    "group_id": "AVGO|INTC",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses cybersecurity threats and privacy risks in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses EU AI Act in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "intel corp",
-          "intel corporation"
+          "IBM",
+          "international business machines"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own cybersecurity threats and privacy risks disclosure",
+        "name": "that competitor's own EU AI Act disclosure",
         "spans": [
-          "cybersecurity threats and privacy risks"
+          "EU AI Act"
         ],
-        "ticker": "INTC"
+        "ticker": "IBM"
       }
     ],
     "max_steps": null,
@@ -555,27 +1495,27 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "INTC",
-    "group_id": "AVGO|INTC",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses high level of competition in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses currency and financing risks in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "intel corp",
-          "intel corporation"
+          "IBM",
+          "international business machines"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own high level of competition disclosure",
+        "name": "that competitor's own currency and financing risks disclosure",
         "spans": [
-          "high level of competition"
+          "currency and financing risks"
         ],
-        "ticker": "INTC"
+        "ticker": "IBM"
       }
     ],
     "max_steps": null,
@@ -583,27 +1523,27 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "INTC",
-    "group_id": "AVGO|INTC",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses product defects and errata in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses cybersecurity and data protection in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "intel corp",
-          "intel corporation"
+          "IBM",
+          "international business machines"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own product defects and errata disclosure",
+        "name": "that competitor's own cybersecurity and data protection disclosure",
         "spans": [
-          "product defects and errata"
+          "cybersecurity and data protection"
         ],
-        "ticker": "INTC"
+        "ticker": "IBM"
       }
     ],
     "max_steps": null,
@@ -611,27 +1551,27 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "INTC",
-    "group_id": "AVGO|INTC",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses wafer fabrication supply constraints in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses failure of innovation initiatives in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "intel corp",
-          "intel corporation"
+          "IBM",
+          "international business machines"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own wafer fabrication supply constraints disclosure",
+        "name": "that competitor's own failure of innovation initiatives disclosure",
         "spans": [
-          "wafer fabrication supply constraints"
+          "failure of innovation initiatives"
         ],
-        "ticker": "INTC"
+        "ticker": "IBM"
       }
     ],
     "max_steps": null,
@@ -639,26 +1579,27 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "INTC",
-    "group_id": "AVGO|INTC",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses Dutch foreign investment control regime in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses shortage of critical skills in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "nxp semiconductors"
+          "IBM",
+          "international business machines"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own Dutch foreign investment control regime disclosure",
+        "name": "that competitor's own shortage of critical skills disclosure",
         "spans": [
-          "Dutch foreign investment control regime"
+          "shortage of critical skills"
         ],
-        "ticker": "NXPI"
+        "ticker": "IBM"
       }
     ],
     "max_steps": null,
@@ -666,26 +1607,26 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "NXPI",
-    "group_id": "AVGO|NXPI",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses environmental laws and regulations in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses dependence on wafer foundries in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "nxp semiconductors"
+          "microchip technology"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own environmental laws and regulations disclosure",
+        "name": "that competitor's own dependence on wafer foundries disclosure",
         "spans": [
-          "environmental laws and regulations"
+          "dependence on wafer foundries"
         ],
-        "ticker": "NXPI"
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -693,26 +1634,26 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "NXPI",
-    "group_id": "AVGO|NXPI",
+    "target": "MCHP",
+    "group_id": "AVGO|MCHP",
     "generated": true
   },
   {
-    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses intellectual property misappropriation in its own filings?",
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
     "aspects": [
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "nxp semiconductors"
+          "microchip technology"
         ],
         "ticker": "AVGO"
       },
       {
-        "name": "that competitor's own intellectual property misappropriation disclosure",
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
         "spans": [
-          "intellectual property misappropriation"
+          "foreign currency exchange rate fluctuations"
         ],
-        "ticker": "NXPI"
+        "ticker": "MCHP"
       }
     ],
     "max_steps": null,
@@ -720,8 +1661,287 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "NXPI",
-    "group_id": "AVGO|NXPI",
+    "target": "MCHP",
+    "group_id": "AVGO|MCHP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses single or limited number of suppliers in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "microchip technology"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own single or limited number of suppliers disclosure",
+        "spans": [
+          "single or limited number of suppliers"
+        ],
+        "ticker": "MCHP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "MCHP",
+    "group_id": "AVGO|MCHP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses goodwill impairment charges in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "Marvell Technology Group",
+          "marvell technology",
+          "marvell"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own goodwill impairment charges disclosure",
+        "spans": [
+          "goodwill impairment charges"
+        ],
+        "ticker": "MRVL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "MRVL",
+    "group_id": "AVGO|MRVL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses EU Digital Markets Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own EU Digital Markets Act disclosure",
+        "spans": [
+          "EU Digital Markets Act"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "MSFT",
+    "group_id": "AVGO|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses EU General Data Protection Regulation in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own EU General Data Protection Regulation disclosure",
+        "spans": [
+          "EU General Data Protection Regulation"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "MSFT",
+    "group_id": "AVGO|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses additional tax liabilities in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own additional tax liabilities disclosure",
+        "spans": [
+          "additional tax liabilities"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "MSFT",
+    "group_id": "AVGO|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses adverse economic or market conditions in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own adverse economic or market conditions disclosure",
+        "spans": [
+          "adverse economic or market conditions"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "MSFT",
+    "group_id": "AVGO|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses cyberattacks and security vulnerabilities in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own cyberattacks and security vulnerabilities disclosure",
+        "spans": [
+          "cyberattacks and security vulnerabilities"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "MSFT",
+    "group_id": "AVGO|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses Trans-Atlantic Data Privacy Framework in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "servicenow"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own Trans-Atlantic Data Privacy Framework disclosure",
+        "spans": [
+          "Trans-Atlantic Data Privacy Framework"
+        ],
+        "ticker": "NOW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "NOW",
+    "group_id": "AVGO|NOW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "servicenow"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "NOW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "NOW",
+    "group_id": "AVGO|NOW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses excess or obsolete inventory charges in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "ON Semiconductor",
+          "onsemi",
+          "on semiconductor"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own excess or obsolete inventory charges disclosure",
+        "spans": [
+          "excess or obsolete inventory charges"
+        ],
+        "ticker": "ON"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "ON",
+    "group_id": "AVGO|ON",
     "generated": true
   },
   {
@@ -730,6 +1950,7 @@
       {
         "name": "Broadcom names the competitor",
         "spans": [
+          "STMicroelectronics",
           "stmicroelectronics"
         ],
         "ticker": "AVGO"
@@ -757,6 +1978,7 @@
       {
         "name": "Broadcom names the competitor",
         "spans": [
+          "STMicroelectronics",
           "stmicroelectronics"
         ],
         "ticker": "AVGO"
@@ -779,15 +2001,431 @@
     "generated": true
   },
   {
-    "question": "Among the competitors intel corp names in its SEC filings, which one discloses privacy and data security laws in its own filings?",
+    "question": "Among the competitors ciena names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
     "aspects": [
       {
-        "name": "intel corp names the competitor",
+        "name": "ciena names the competitor",
+        "spans": [
+          "Hewlett Packard Enterprise",
+          "hewlett packard enterprise"
+        ],
+        "ticker": "CIEN"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "HPE"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "CIEN",
+    "target": "HPE",
+    "group_id": "CIEN|HPE",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors ciena names in its SEC filings, which one discloses goodwill impairment charges in its own filings?",
+    "aspects": [
+      {
+        "name": "ciena names the competitor",
+        "spans": [
+          "Hewlett Packard Enterprise",
+          "hewlett packard enterprise"
+        ],
+        "ticker": "CIEN"
+      },
+      {
+        "name": "that competitor's own goodwill impairment charges disclosure",
+        "spans": [
+          "goodwill impairment charges"
+        ],
+        "ticker": "HPE"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "CIEN",
+    "target": "HPE",
+    "group_id": "CIEN|HPE",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors ciena names in its SEC filings, which one discloses Trans-Atlantic Data Privacy Framework in its own filings?",
+    "aspects": [
+      {
+        "name": "ciena names the competitor",
+        "spans": [
+          "servicenow"
+        ],
+        "ticker": "CIEN"
+      },
+      {
+        "name": "that competitor's own Trans-Atlantic Data Privacy Framework disclosure",
+        "spans": [
+          "Trans-Atlantic Data Privacy Framework"
+        ],
+        "ticker": "NOW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "CIEN",
+    "target": "NOW",
+    "group_id": "CIEN|NOW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors ciena names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "ciena names the competitor",
+        "spans": [
+          "servicenow"
+        ],
+        "ticker": "CIEN"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "NOW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "CIEN",
+    "target": "NOW",
+    "group_id": "CIEN|NOW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses China tariffs in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "ciena"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own China tariffs disclosure",
+        "spans": [
+          "China tariffs"
+        ],
+        "ticker": "CIEN"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "CIEN",
+    "group_id": "CIEN|HPE",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses global minimum tax regimes in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "ciena"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own global minimum tax regimes disclosure",
+        "spans": [
+          "global minimum tax regimes"
+        ],
+        "ticker": "CIEN"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "CIEN",
+    "group_id": "CIEN|HPE",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses supply chain capacity shortage in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "ciena"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own supply chain capacity shortage disclosure",
+        "spans": [
+          "supply chain capacity shortage"
+        ],
+        "ticker": "CIEN"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "CIEN",
+    "group_id": "CIEN|HPE",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses EU AI Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "NetApp",
+          "netapp"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own EU AI Act disclosure",
+        "spans": [
+          "EU AI Act"
+        ],
+        "ticker": "NTAP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "NTAP",
+    "group_id": "HPE|NTAP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "NetApp",
+          "netapp"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "NTAP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "NTAP",
+    "group_id": "HPE|NTAP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses limited number of suppliers in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "NetApp",
+          "netapp"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own limited number of suppliers disclosure",
+        "spans": [
+          "limited number of suppliers"
+        ],
+        "ticker": "NTAP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "NTAP",
+    "group_id": "HPE|NTAP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses Sanctions on Russia in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "palo alto networks"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own Sanctions on Russia disclosure",
+        "spans": [
+          "Sanctions on Russia"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "PANW",
+    "group_id": "HPE|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "palo alto networks"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "PANW",
+    "group_id": "HPE|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses delinquent SEC reporting obligations in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "Super Micro Computer, Inc.",
+          "super micro computer",
+          "supermicro"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own delinquent SEC reporting obligations disclosure",
+        "spans": [
+          "delinquent SEC reporting obligations"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "SMCI",
+    "group_id": "HPE|SMCI",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses global supply chain shortages in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "Super Micro Computer, Inc.",
+          "super micro computer",
+          "supermicro"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own global supply chain shortages disclosure",
+        "spans": [
+          "global supply chain shortages"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "SMCI",
+    "group_id": "HPE|SMCI",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses reliance on Ablecom and Compuware in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "Super Micro Computer, Inc.",
+          "super micro computer",
+          "supermicro"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own reliance on Ablecom and Compuware disclosure",
+        "spans": [
+          "reliance on Ablecom and Compuware"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "SMCI",
+    "group_id": "HPE|SMCI",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses privacy and data security laws in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
         "spans": [
           "Broadcom",
           "broadcom"
         ],
-        "ticker": "INTC"
+        "ticker": "IBM"
       },
       {
         "name": "that competitor's own privacy and data security laws disclosure",
@@ -801,28 +2439,364 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "INTC",
+    "seed": "IBM",
     "target": "AVGO",
-    "group_id": "AVGO|INTC",
+    "group_id": "AVGO|IBM",
     "generated": true
   },
   {
-    "question": "Among the competitors intel corp names in its SEC filings, which one discloses intellectual property misappropriation in its own filings?",
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses currency exchange rate fluctuation in its own filings?",
     "aspects": [
       {
-        "name": "intel corp names the competitor",
+        "name": "IBM names the competitor",
         "spans": [
-          "taiwan semiconductor",
-          "tsmc"
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own currency exchange rate fluctuation disclosure",
+        "spans": [
+          "currency exchange rate fluctuation"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own currency exchange rate fluctuations disclosure",
+        "spans": [
+          "currency exchange rate fluctuations"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses strategic investment portfolio loss in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own strategic investment portfolio loss disclosure",
+        "spans": [
+          "strategic investment portfolio loss"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "NetApp",
+          "netapp"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "NTAP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "NTAP",
+    "group_id": "IBM|NTAP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "NetApp",
+          "netapp"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "NTAP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "NTAP",
+    "group_id": "IBM|NTAP",
+    "generated": true
+  },
+  {
+    "question": "Among the companies IBM names as key dependencies in its SEC filings, which one warns about currency exchange rate fluctuation in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the dependency",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that dependency's own currency exchange rate fluctuation disclosure",
+        "spans": [
+          "currency exchange rate fluctuation"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the companies IBM names as key dependencies in its SEC filings, which one warns about currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the dependency",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that dependency's own currency exchange rate fluctuations disclosure",
+        "spans": [
+          "currency exchange rate fluctuations"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the companies IBM names as key dependencies in its SEC filings, which one warns about foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the dependency",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that dependency's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the companies IBM names as key dependencies in its SEC filings, which one warns about intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the dependency",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that dependency's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the companies IBM names as key dependencies in its SEC filings, which one warns about strategic investment portfolio loss in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the dependency",
+        "spans": [
+          "Salesforce",
+          "salesforce"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that dependency's own strategic investment portfolio loss disclosure",
+        "spans": [
+          "strategic investment portfolio loss"
+        ],
+        "ticker": "CRM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "CRM",
+    "group_id": "CRM|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses EU Digital Markets Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "apple inc",
+          "apple computer"
         ],
         "ticker": "INTC"
       },
       {
-        "name": "that competitor's own intellectual property misappropriation disclosure",
+        "name": "that competitor's own EU Digital Markets Act disclosure",
         "spans": [
-          "intellectual property misappropriation"
+          "EU Digital Markets Act"
         ],
-        "ticker": "TSM"
+        "ticker": "AAPL"
       }
     ],
     "max_steps": null,
@@ -830,48 +2804,272 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "INTC",
-    "target": "TSM",
-    "group_id": "INTC|TSM",
+    "target": "AAPL",
+    "group_id": "AAPL|INTC",
     "generated": true
   },
   {
-    "question": "Among the companies intel corp names as key dependencies in its SEC filings, which one warns about intellectual property misappropriation in its own filings?",
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses adverse macroeconomic conditions in its own filings?",
     "aspects": [
       {
-        "name": "intel corp names the dependency",
+        "name": "Intel Corporation names the competitor",
         "spans": [
-          "taiwan semiconductor",
-          "tsmc"
+          "apple inc",
+          "apple computer"
         ],
         "ticker": "INTC"
       },
       {
-        "name": "that dependency's own intellectual property misappropriation disclosure",
+        "name": "that competitor's own adverse macroeconomic conditions disclosure",
         "spans": [
-          "intellectual property misappropriation"
+          "adverse macroeconomic conditions"
         ],
-        "ticker": "TSM"
+        "ticker": "AAPL"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
-    "relation": "depends_on",
+    "relation": "competes_with",
     "qtype": "bridging",
     "seed": "INTC",
-    "target": "TSM",
-    "group_id": "INTC|TSM",
+    "target": "AAPL",
+    "group_id": "AAPL|INTC",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses cybersecurity threats and incidents in its own filings?",
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses foreign exchange rate fluctuations in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "apple inc",
+          "apple computer"
+        ],
+        "ticker": "INTC"
+      },
+      {
+        "name": "that competitor's own foreign exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign exchange rate fluctuations"
+        ],
+        "ticker": "AAPL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "INTC",
+    "target": "AAPL",
+    "group_id": "AAPL|INTC",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses information technology system failures in its own filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "apple inc",
+          "apple computer"
+        ],
+        "ticker": "INTC"
+      },
+      {
+        "name": "that competitor's own information technology system failures disclosure",
+        "spans": [
+          "information technology system failures"
+        ],
+        "ticker": "AAPL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "INTC",
+    "target": "AAPL",
+    "group_id": "AAPL|INTC",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses legal proceedings and government investigations in its own filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "apple inc",
+          "apple computer"
+        ],
+        "ticker": "INTC"
+      },
+      {
+        "name": "that competitor's own legal proceedings and government investigations disclosure",
+        "spans": [
+          "legal proceedings and government investigations"
+        ],
+        "ticker": "AAPL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "INTC",
+    "target": "AAPL",
+    "group_id": "AAPL|INTC",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses Digital Markets Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "INTC"
+      },
+      {
+        "name": "that competitor's own Digital Markets Act disclosure",
+        "spans": [
+          "Digital Markets Act"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "INTC",
+    "target": "META",
+    "group_id": "INTC|META",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses Digital Services Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "INTC"
+      },
+      {
+        "name": "that competitor's own Digital Services Act disclosure",
+        "spans": [
+          "Digital Services Act"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "INTC",
+    "target": "META",
+    "group_id": "INTC|META",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses Reality Labs operating losses in its own filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "INTC"
+      },
+      {
+        "name": "that competitor's own Reality Labs operating losses disclosure",
+        "spans": [
+          "Reality Labs operating losses"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "INTC",
+    "target": "META",
+    "group_id": "INTC|META",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Intel Corporation names in its SEC filings, which one discloses UK Online Safety Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Intel Corporation names the competitor",
+        "spans": [
+          "meta platforms",
+          "facebook inc"
+        ],
+        "ticker": "INTC"
+      },
+      {
+        "name": "that competitor's own UK Online Safety Act disclosure",
+        "spans": [
+          "UK Online Safety Act"
+        ],
+        "ticker": "META"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "INTC",
+    "target": "META",
+    "group_id": "INTC|META",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses customer concentration in its own filings?",
+    "aspects": [
+      {
+        "name": "kla corp names the competitor",
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
         ],
-        "ticker": "LRCX"
+        "ticker": "KLAC"
+      },
+      {
+        "name": "that competitor's own customer concentration disclosure",
+        "spans": [
+          "customer concentration"
+        ],
+        "ticker": "AMAT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "KLAC",
+    "target": "AMAT",
+    "group_id": "AMAT|KLAC",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses cybersecurity threats and incidents in its own filings?",
+    "aspects": [
+      {
+        "name": "kla corp names the competitor",
+        "spans": [
+          "Applied Materials, Inc.",
+          "applied materials"
+        ],
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own cybersecurity threats and incidents disclosure",
@@ -885,21 +3083,21 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
+    "seed": "KLAC",
     "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "group_id": "AMAT|KLAC",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses global minimum tax regime in its own filings?",
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses global minimum tax regime in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "kla corp names the competitor",
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
         ],
-        "ticker": "LRCX"
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own global minimum tax regime disclosure",
@@ -913,21 +3111,21 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
+    "seed": "KLAC",
     "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "group_id": "AMAT|KLAC",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses global minimum tax regimes in its own filings?",
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses global minimum tax regimes in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "kla corp names the competitor",
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
         ],
-        "ticker": "LRCX"
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own global minimum tax regimes disclosure",
@@ -941,21 +3139,21 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
+    "seed": "KLAC",
     "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "group_id": "AMAT|KLAC",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses global regulatory environment in its own filings?",
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses global regulatory environment in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "kla corp names the competitor",
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
         ],
-        "ticker": "LRCX"
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own global regulatory environment disclosure",
@@ -969,21 +3167,21 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
+    "seed": "KLAC",
     "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "group_id": "AMAT|KLAC",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "kla corp names the competitor",
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
         ],
-        "ticker": "LRCX"
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own intellectual property infringement claims disclosure",
@@ -997,84 +3195,277 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
+    "seed": "KLAC",
     "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "group_id": "AMAT|KLAC",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses supply chain disruption in its own filings?",
+    "question": "Among the companies kla corp names as key dependencies in its SEC filings, which one warns about climate change regulations in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "kla corp names the dependency",
         "spans": [
-          "Applied Materials, Inc.",
-          "applied materials"
+          "taiwan semiconductor",
+          "tsmc"
         ],
-        "ticker": "LRCX"
+        "ticker": "KLAC"
       },
       {
-        "name": "that competitor's own supply chain disruption disclosure",
+        "name": "that dependency's own climate change regulations disclosure",
         "spans": [
-          "supply chain disruption"
+          "climate change regulations"
         ],
-        "ticker": "AMAT"
+        "ticker": "TSM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "KLAC",
+    "target": "TSM",
+    "group_id": "KLAC|TSM",
+    "generated": true
+  },
+  {
+    "question": "Among the companies kla corp names as key dependencies in its SEC filings, which one warns about intellectual property misappropriation in its own filings?",
+    "aspects": [
+      {
+        "name": "kla corp names the dependency",
+        "spans": [
+          "taiwan semiconductor",
+          "tsmc"
+        ],
+        "ticker": "KLAC"
+      },
+      {
+        "name": "that dependency's own intellectual property misappropriation disclosure",
+        "spans": [
+          "intellectual property misappropriation"
+        ],
+        "ticker": "TSM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "KLAC",
+    "target": "TSM",
+    "group_id": "KLAC|TSM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors monolithic power systems names in its SEC filings, which one discloses customer concentration in its own filings?",
+    "aspects": [
+      {
+        "name": "monolithic power systems names the competitor",
+        "spans": [
+          "Analog Devices",
+          "analog devices"
+        ],
+        "ticker": "MPWR"
+      },
+      {
+        "name": "that competitor's own customer concentration disclosure",
+        "spans": [
+          "customer concentration"
+        ],
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
-    "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "seed": "MPWR",
+    "target": "ADI",
+    "group_id": "ADI|MPWR",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses supply chain disruptions in its own filings?",
+    "question": "Among the competitors monolithic power systems names in its SEC filings, which one discloses substantial existing indebtedness in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "monolithic power systems names the competitor",
         "spans": [
-          "Applied Materials, Inc.",
-          "applied materials"
+          "Analog Devices",
+          "analog devices"
         ],
-        "ticker": "LRCX"
+        "ticker": "MPWR"
       },
       {
-        "name": "that competitor's own supply chain disruptions disclosure",
+        "name": "that competitor's own substantial existing indebtedness disclosure",
         "spans": [
-          "supply chain disruptions"
+          "substantial existing indebtedness"
         ],
-        "ticker": "AMAT"
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
-    "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "seed": "MPWR",
+    "target": "ADI",
+    "group_id": "ADI|MPWR",
     "generated": true
   },
   {
-    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses climate-related disclosure requirements in its own filings?",
+    "question": "Among the competitors Marvell Technology Group names in its SEC filings, which one discloses privacy and data security laws in its own filings?",
+    "aspects": [
+      {
+        "name": "Marvell Technology Group names the competitor",
+        "spans": [
+          "Broadcom",
+          "broadcom"
+        ],
+        "ticker": "MRVL"
+      },
+      {
+        "name": "that competitor's own privacy and data security laws disclosure",
+        "spans": [
+          "privacy and data security laws"
+        ],
+        "ticker": "AVGO"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "MRVL",
+    "target": "AVGO",
+    "group_id": "AVGO|MRVL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Microsoft Azure names in its SEC filings, which one discloses privacy and data security laws in its own filings?",
+    "aspects": [
+      {
+        "name": "Microsoft Azure names the competitor",
+        "spans": [
+          "Broadcom",
+          "broadcom"
+        ],
+        "ticker": "MSFT"
+      },
+      {
+        "name": "that competitor's own privacy and data security laws disclosure",
+        "spans": [
+          "privacy and data security laws"
+        ],
+        "ticker": "AVGO"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "MSFT",
+    "target": "AVGO",
+    "group_id": "AVGO|MSFT",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Microsoft Azure names in its SEC filings, which one discloses California Consumer Privacy Act in its own filings?",
+    "aspects": [
+      {
+        "name": "Microsoft Azure names the competitor",
+        "spans": [
+          "palo alto networks"
+        ],
+        "ticker": "MSFT"
+      },
+      {
+        "name": "that competitor's own California Consumer Privacy Act disclosure",
+        "spans": [
+          "California Consumer Privacy Act"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "MSFT",
+    "target": "PANW",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Microsoft Azure names in its SEC filings, which one discloses Sanctions on Russia in its own filings?",
+    "aspects": [
+      {
+        "name": "Microsoft Azure names the competitor",
+        "spans": [
+          "palo alto networks"
+        ],
+        "ticker": "MSFT"
+      },
+      {
+        "name": "that competitor's own Sanctions on Russia disclosure",
+        "spans": [
+          "Sanctions on Russia"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "MSFT",
+    "target": "PANW",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Microsoft Azure names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "Microsoft Azure names the competitor",
+        "spans": [
+          "palo alto networks"
+        ],
+        "ticker": "MSFT"
+      },
+      {
+        "name": "that competitor's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "MSFT",
+    "target": "PANW",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses AI regulatory requirements in its own filings?",
     "aspects": [
       {
         "name": "NVIDIA names the competitor",
         "spans": [
-          "AMD",
-          "advanced micro devices"
+          "Arista Networks Inc",
+          "arista networks"
         ],
         "ticker": "NVDA"
       },
       {
-        "name": "that competitor's own climate-related disclosure requirements disclosure",
+        "name": "that competitor's own AI regulatory requirements disclosure",
         "spans": [
-          "climate-related disclosure requirements"
+          "AI regulatory requirements"
         ],
-        "ticker": "AMD"
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -1082,27 +3473,27 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "NVDA",
-    "target": "AMD",
-    "group_id": "AMD|NVDA",
+    "target": "ANET",
+    "group_id": "ANET|NVDA",
     "generated": true
   },
   {
-    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses conflict minerals regulations in its own filings?",
+    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses Mexico tariffs in its own filings?",
     "aspects": [
       {
         "name": "NVIDIA names the competitor",
         "spans": [
-          "AMD",
-          "advanced micro devices"
+          "Arista Networks Inc",
+          "arista networks"
         ],
         "ticker": "NVDA"
       },
       {
-        "name": "that competitor's own conflict minerals regulations disclosure",
+        "name": "that competitor's own Mexico tariffs disclosure",
         "spans": [
-          "conflict minerals regulations"
+          "Mexico tariffs"
         ],
-        "ticker": "AMD"
+        "ticker": "ANET"
       }
     ],
     "max_steps": null,
@@ -1110,8 +3501,92 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "NVDA",
-    "target": "AMD",
-    "group_id": "AMD|NVDA",
+    "target": "ANET",
+    "group_id": "ANET|NVDA",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses US export controls in its own filings?",
+    "aspects": [
+      {
+        "name": "NVIDIA names the competitor",
+        "spans": [
+          "Arista Networks Inc",
+          "arista networks"
+        ],
+        "ticker": "NVDA"
+      },
+      {
+        "name": "that competitor's own US export controls disclosure",
+        "spans": [
+          "US export controls"
+        ],
+        "ticker": "ANET"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "NVDA",
+    "target": "ANET",
+    "group_id": "ANET|NVDA",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "NVIDIA names the competitor",
+        "spans": [
+          "Arista Networks Inc",
+          "arista networks"
+        ],
+        "ticker": "NVDA"
+      },
+      {
+        "name": "that competitor's own currency exchange rate fluctuations disclosure",
+        "spans": [
+          "currency exchange rate fluctuations"
+        ],
+        "ticker": "ANET"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "NVDA",
+    "target": "ANET",
+    "group_id": "ANET|NVDA",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "NVIDIA names the competitor",
+        "spans": [
+          "Hewlett Packard Enterprise",
+          "hewlett packard enterprise"
+        ],
+        "ticker": "NVDA"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "HPE"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "NVDA",
+    "target": "HPE",
+    "group_id": "HPE|NVDA",
     "generated": true
   },
   {
@@ -1120,6 +3595,35 @@
       {
         "name": "NVIDIA names the competitor",
         "spans": [
+          "Hewlett Packard Enterprise",
+          "hewlett packard enterprise"
+        ],
+        "ticker": "NVDA"
+      },
+      {
+        "name": "that competitor's own goodwill impairment charges disclosure",
+        "spans": [
+          "goodwill impairment charges"
+        ],
+        "ticker": "HPE"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "NVDA",
+    "target": "HPE",
+    "group_id": "HPE|NVDA",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses goodwill impairment charges in its own filings?",
+    "aspects": [
+      {
+        "name": "NVIDIA names the competitor",
+        "spans": [
+          "Marvell Technology Group",
           "marvell technology",
           "marvell"
         ],
@@ -1143,175 +3647,795 @@
     "generated": true
   },
   {
-    "question": "Among the companies NVIDIA names as key dependencies in its SEC filings, which one warns about foreign currency exchange rate risk in its own filings?",
+    "question": "Among the companies NXP Semiconductors names as key dependencies in its SEC filings, which one warns about climate change regulations in its own filings?",
     "aspects": [
       {
-        "name": "NVIDIA names the dependency",
+        "name": "NXP Semiconductors names the dependency",
         "spans": [
-          "micron"
+          "taiwan semiconductor",
+          "tsmc"
         ],
-        "ticker": "NVDA"
+        "ticker": "NXPI"
       },
       {
-        "name": "that dependency's own foreign currency exchange rate risk disclosure",
+        "name": "that dependency's own climate change regulations disclosure",
         "spans": [
-          "foreign currency exchange rate risk"
+          "climate change regulations"
         ],
-        "ticker": "MU"
+        "ticker": "TSM"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "depends_on",
     "qtype": "bridging",
-    "seed": "NVDA",
-    "target": "MU",
-    "group_id": "MU|NVDA",
+    "seed": "NXPI",
+    "target": "TSM",
+    "group_id": "NXPI|TSM",
     "generated": true
   },
   {
-    "question": "Among the competitors nxp semiconductors names in its SEC filings, which one discloses privacy and data security laws in its own filings?",
+    "question": "Among the competitors ON Semiconductor names in its SEC filings, which one discloses customer concentration in its own filings?",
     "aspects": [
       {
-        "name": "nxp semiconductors names the competitor",
+        "name": "ON Semiconductor names the competitor",
         "spans": [
-          "Broadcom",
-          "broadcom"
+          "Analog Devices",
+          "analog devices"
         ],
-        "ticker": "NXPI"
+        "ticker": "ON"
       },
       {
-        "name": "that competitor's own privacy and data security laws disclosure",
+        "name": "that competitor's own customer concentration disclosure",
         "spans": [
-          "privacy and data security laws"
+          "customer concentration"
         ],
-        "ticker": "AVGO"
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "NXPI",
-    "target": "AVGO",
-    "group_id": "AVGO|NXPI",
+    "seed": "ON",
+    "target": "ADI",
+    "group_id": "ADI|ON",
     "generated": true
   },
   {
-    "question": "Among the competitors nxp semiconductors names in its SEC filings, which one discloses dependence on wafer foundries in its own filings?",
+    "question": "Among the competitors ON Semiconductor names in its SEC filings, which one discloses substantial existing indebtedness in its own filings?",
     "aspects": [
       {
-        "name": "nxp semiconductors names the competitor",
+        "name": "ON Semiconductor names the competitor",
         "spans": [
-          "microchip technology"
+          "Analog Devices",
+          "analog devices"
         ],
-        "ticker": "NXPI"
+        "ticker": "ON"
       },
       {
-        "name": "that competitor's own dependence on wafer foundries disclosure",
+        "name": "that competitor's own substantial existing indebtedness disclosure",
         "spans": [
-          "dependence on wafer foundries"
+          "substantial existing indebtedness"
         ],
-        "ticker": "MCHP"
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "NXPI",
-    "target": "MCHP",
-    "group_id": "MCHP|NXPI",
+    "seed": "ON",
+    "target": "ADI",
+    "group_id": "ADI|ON",
     "generated": true
   },
   {
-    "question": "Among the competitors nxp semiconductors names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "question": "Among the competitors ON Semiconductor names in its SEC filings, which one discloses Dutch foreign investment control regime in its own filings?",
     "aspects": [
       {
-        "name": "nxp semiconductors names the competitor",
+        "name": "ON Semiconductor names the competitor",
         "spans": [
-          "microchip technology"
+          "NXP Semiconductors",
+          "nxp semiconductors"
+        ],
+        "ticker": "ON"
+      },
+      {
+        "name": "that competitor's own Dutch foreign investment control regime disclosure",
+        "spans": [
+          "Dutch foreign investment control regime"
         ],
         "ticker": "NXPI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ON",
+    "target": "NXPI",
+    "group_id": "NXPI|ON",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors ON Semiconductor names in its SEC filings, which one discloses environmental laws and regulations in its own filings?",
+    "aspects": [
+      {
+        "name": "ON Semiconductor names the competitor",
+        "spans": [
+          "NXP Semiconductors",
+          "nxp semiconductors"
+        ],
+        "ticker": "ON"
+      },
+      {
+        "name": "that competitor's own environmental laws and regulations disclosure",
+        "spans": [
+          "environmental laws and regulations"
+        ],
+        "ticker": "NXPI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ON",
+    "target": "NXPI",
+    "group_id": "NXPI|ON",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors ON Semiconductor names in its SEC filings, which one discloses intellectual property misappropriation in its own filings?",
+    "aspects": [
+      {
+        "name": "ON Semiconductor names the competitor",
+        "spans": [
+          "NXP Semiconductors",
+          "nxp semiconductors"
+        ],
+        "ticker": "ON"
+      },
+      {
+        "name": "that competitor's own intellectual property misappropriation disclosure",
+        "spans": [
+          "intellectual property misappropriation"
+        ],
+        "ticker": "NXPI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ON",
+    "target": "NXPI",
+    "group_id": "NXPI|ON",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses EU General Data Protection Regulation in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own EU General Data Protection Regulation disclosure",
+        "spans": [
+          "EU General Data Protection Regulation"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "GOOGL",
+    "group_id": "GOOGL|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses digital services taxes in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own digital services taxes disclosure",
+        "spans": [
+          "digital services taxes"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "GOOGL",
+    "group_id": "GOOGL|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "ORCL"
       },
       {
         "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
         "spans": [
           "foreign currency exchange rate fluctuations"
         ],
-        "ticker": "MCHP"
+        "ticker": "GOOGL"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "NXPI",
-    "target": "MCHP",
-    "group_id": "MCHP|NXPI",
+    "seed": "ORCL",
+    "target": "GOOGL",
+    "group_id": "GOOGL|ORCL",
     "generated": true
   },
   {
-    "question": "Among the competitors nxp semiconductors names in its SEC filings, which one discloses single or limited number of suppliers in its own filings?",
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses global minimum tax rules in its own filings?",
     "aspects": [
       {
-        "name": "nxp semiconductors names the competitor",
+        "name": "oracle corp names the competitor",
         "spans": [
-          "microchip technology"
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
         ],
-        "ticker": "NXPI"
+        "ticker": "ORCL"
       },
       {
-        "name": "that competitor's own single or limited number of suppliers disclosure",
+        "name": "that competitor's own global minimum tax rules disclosure",
         "spans": [
-          "single or limited number of suppliers"
+          "global minimum tax rules"
         ],
-        "ticker": "MCHP"
+        "ticker": "GOOGL"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "NXPI",
-    "target": "MCHP",
-    "group_id": "MCHP|NXPI",
+    "seed": "ORCL",
+    "target": "GOOGL",
+    "group_id": "GOOGL|ORCL",
     "generated": true
   },
   {
-    "question": "Among the competitors Qualcomm Technologies, Inc. names in its SEC filings, which one discloses privacy and data security laws in its own filings?",
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
     "aspects": [
       {
-        "name": "Qualcomm Technologies, Inc. names the competitor",
+        "name": "oracle corp names the competitor",
         "spans": [
-          "Broadcom",
-          "broadcom"
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
         ],
-        "ticker": "QCOM"
+        "ticker": "ORCL"
       },
       {
-        "name": "that competitor's own privacy and data security laws disclosure",
+        "name": "that competitor's own intellectual property infringement claims disclosure",
         "spans": [
-          "privacy and data security laws"
+          "intellectual property infringement claims"
         ],
-        "ticker": "AVGO"
+        "ticker": "GOOGL"
       }
     ],
     "max_steps": null,
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "QCOM",
-    "target": "AVGO",
-    "group_id": "AVGO|QCOM",
+    "seed": "ORCL",
+    "target": "GOOGL",
+    "group_id": "GOOGL|ORCL",
     "generated": true
   },
   {
-    "question": "Among the competitors Qualcomm Technologies, Inc. names in its SEC filings, which one discloses Dutch foreign investment control regime in its own filings?",
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses supply chain disruption in its own filings?",
     "aspects": [
       {
-        "name": "Qualcomm Technologies, Inc. names the competitor",
+        "name": "oracle corp names the competitor",
         "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own supply chain disruption disclosure",
+        "spans": [
+          "supply chain disruption"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "GOOGL",
+    "group_id": "GOOGL|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses US export controls in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Intel Corporation",
+          "intel corp",
+          "intel corporation"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own US export controls disclosure",
+        "spans": [
+          "US export controls"
+        ],
+        "ticker": "INTC"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "INTC",
+    "group_id": "INTC|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses currency exchange rate risk in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Intel Corporation",
+          "intel corp",
+          "intel corporation"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own currency exchange rate risk disclosure",
+        "spans": [
+          "currency exchange rate risk"
+        ],
+        "ticker": "INTC"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "INTC",
+    "group_id": "INTC|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses customer concentration in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Intel Corporation",
+          "intel corp",
+          "intel corporation"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own customer concentration disclosure",
+        "spans": [
+          "customer concentration"
+        ],
+        "ticker": "INTC"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "INTC",
+    "group_id": "INTC|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses cybersecurity threats and privacy risks in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Intel Corporation",
+          "intel corp",
+          "intel corporation"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own cybersecurity threats and privacy risks disclosure",
+        "spans": [
+          "cybersecurity threats and privacy risks"
+        ],
+        "ticker": "INTC"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "INTC",
+    "group_id": "INTC|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses high level of competition in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Intel Corporation",
+          "intel corp",
+          "intel corporation"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own high level of competition disclosure",
+        "spans": [
+          "high level of competition"
+        ],
+        "ticker": "INTC"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "INTC",
+    "group_id": "INTC|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses product defects and errata in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Intel Corporation",
+          "intel corp",
+          "intel corporation"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own product defects and errata disclosure",
+        "spans": [
+          "product defects and errata"
+        ],
+        "ticker": "INTC"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "INTC",
+    "group_id": "INTC|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses wafer fabrication supply constraints in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Intel Corporation",
+          "intel corp",
+          "intel corporation"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own wafer fabrication supply constraints disclosure",
+        "spans": [
+          "wafer fabrication supply constraints"
+        ],
+        "ticker": "INTC"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "INTC",
+    "group_id": "INTC|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses EU General Data Protection Regulation in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own EU General Data Protection Regulation disclosure",
+        "spans": [
+          "EU General Data Protection Regulation"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "GOOGL",
+    "group_id": "GOOGL|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses digital services taxes in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own digital services taxes disclosure",
+        "spans": [
+          "digital services taxes"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "GOOGL",
+    "group_id": "GOOGL|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
+        "spans": [
+          "foreign currency exchange rate fluctuations"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "GOOGL",
+    "group_id": "GOOGL|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses global minimum tax rules in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own global minimum tax rules disclosure",
+        "spans": [
+          "global minimum tax rules"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "GOOGL",
+    "group_id": "GOOGL|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses EU Digital Markets Act in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own EU Digital Markets Act disclosure",
+        "spans": [
+          "EU Digital Markets Act"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "MSFT",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses EU General Data Protection Regulation in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own EU General Data Protection Regulation disclosure",
+        "spans": [
+          "EU General Data Protection Regulation"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "MSFT",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses adverse economic or market conditions in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own adverse economic or market conditions disclosure",
+        "spans": [
+          "adverse economic or market conditions"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "MSFT",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses cyberattacks and security vulnerabilities in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own cyberattacks and security vulnerabilities disclosure",
+        "spans": [
+          "cyberattacks and security vulnerabilities"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "MSFT",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Qualcomm names in its SEC filings, which one discloses Dutch foreign investment control regime in its own filings?",
+    "aspects": [
+      {
+        "name": "Qualcomm names the competitor",
+        "spans": [
+          "NXP Semiconductors",
           "nxp semiconductors"
         ],
         "ticker": "QCOM"
@@ -1334,11 +4458,12 @@
     "generated": true
   },
   {
-    "question": "Among the competitors Qualcomm Technologies, Inc. names in its SEC filings, which one discloses environmental laws and regulations in its own filings?",
+    "question": "Among the competitors Qualcomm names in its SEC filings, which one discloses environmental laws and regulations in its own filings?",
     "aspects": [
       {
-        "name": "Qualcomm Technologies, Inc. names the competitor",
+        "name": "Qualcomm names the competitor",
         "spans": [
+          "NXP Semiconductors",
           "nxp semiconductors"
         ],
         "ticker": "QCOM"
@@ -1361,15 +4486,70 @@
     "generated": true
   },
   {
-    "question": "Among the competitors Qualcomm Technologies, Inc. names in its SEC filings, which one discloses conflict minerals reporting requirements in its own filings?",
+    "question": "Among the companies Qualcomm names as key dependencies in its SEC filings, which one warns about climate change regulations in its own filings?",
     "aspects": [
       {
-        "name": "Qualcomm Technologies, Inc. names the competitor",
+        "name": "Qualcomm names the dependency",
         "spans": [
-          "Texas Instruments Inc.",
-          "texas instruments"
+          "taiwan semiconductor",
+          "tsmc"
         ],
         "ticker": "QCOM"
+      },
+      {
+        "name": "that dependency's own climate change regulations disclosure",
+        "spans": [
+          "climate change regulations"
+        ],
+        "ticker": "TSM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "QCOM",
+    "target": "TSM",
+    "group_id": "QCOM|TSM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Qorvo US, Inc. names in its SEC filings, which one discloses excess or insufficient inventory in its own filings?",
+    "aspects": [
+      {
+        "name": "Qorvo US, Inc. names the competitor",
+        "spans": [
+          "monolithic power systems"
+        ],
+        "ticker": "QRVO"
+      },
+      {
+        "name": "that competitor's own excess or insufficient inventory disclosure",
+        "spans": [
+          "excess or insufficient inventory"
+        ],
+        "ticker": "MPWR"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "HARD",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "QRVO",
+    "target": "MPWR",
+    "group_id": "MPWR|QRVO",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Qorvo US, Inc. names in its SEC filings, which one discloses conflict minerals reporting requirements in its own filings?",
+    "aspects": [
+      {
+        "name": "Qorvo US, Inc. names the competitor",
+        "spans": [
+          "Texas Instruments",
+          "texas instruments"
+        ],
+        "ticker": "QRVO"
       },
       {
         "name": "that competitor's own conflict minerals reporting requirements disclosure",
@@ -1383,9 +4563,39 @@
     "stratum": "HARD",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "QCOM",
+    "seed": "QRVO",
     "target": "TXN",
-    "group_id": "QCOM|TXN",
+    "group_id": "QRVO|TXN",
+    "generated": true
+  },
+  {
+    "question": "Among the companies apple inc names as key dependencies in its SEC filings, which one warns about foreign currency exchange rate in its own filings?",
+    "aspects": [
+      {
+        "name": "apple inc names the dependency",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "AAPL"
+      },
+      {
+        "name": "that dependency's own foreign currency exchange rate disclosure",
+        "spans": [
+          "foreign currency exchange rate"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "AAPL",
+    "target": "GOOGL",
+    "group_id": "AAPL|GOOGL",
     "generated": true
   },
   {
@@ -1394,8 +4604,8 @@
       {
         "name": "Broadcom names the competitor",
         "spans": [
-          "intel corp",
-          "intel corporation"
+          "Analog Devices",
+          "analog devices"
         ],
         "ticker": "AVGO"
       },
@@ -1404,7 +4614,7 @@
         "spans": [
           "customer concentration"
         ],
-        "ticker": "INTC"
+        "ticker": "ADI"
       }
     ],
     "max_steps": null,
@@ -1412,8 +4622,65 @@
     "relation": "competes_with",
     "qtype": "bridging",
     "seed": "AVGO",
-    "target": "INTC",
-    "group_id": "AVGO|INTC",
+    "target": "ADI",
+    "group_id": "ADI|AVGO",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses data localization requirements in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "IBM",
+          "international business machines"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own data localization requirements disclosure",
+        "spans": [
+          "data localization requirements"
+        ],
+        "ticker": "IBM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "IBM",
+    "group_id": "AVGO|IBM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Broadcom names in its SEC filings, which one discloses climate change regulations in its own filings?",
+    "aspects": [
+      {
+        "name": "Broadcom names the competitor",
+        "spans": [
+          "ON Semiconductor",
+          "onsemi",
+          "on semiconductor"
+        ],
+        "ticker": "AVGO"
+      },
+      {
+        "name": "that competitor's own climate change regulations disclosure",
+        "spans": [
+          "climate change regulations"
+        ],
+        "ticker": "ON"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "AVGO",
+    "target": "ON",
+    "group_id": "AVGO|ON",
     "generated": true
   },
   {
@@ -1422,6 +4689,7 @@
       {
         "name": "Broadcom names the competitor",
         "spans": [
+          "STMicroelectronics",
           "stmicroelectronics"
         ],
         "ticker": "AVGO"
@@ -1444,99 +4712,183 @@
     "generated": true
   },
   {
-    "question": "Among the competitors intel corp names in its SEC filings, which one discloses climate change regulations in its own filings?",
+    "question": "Among the competitors ciena names in its SEC filings, which one discloses supply chain disruption in its own filings?",
     "aspects": [
       {
-        "name": "intel corp names the competitor",
+        "name": "ciena names the competitor",
         "spans": [
-          "taiwan semiconductor",
-          "tsmc"
+          "Hewlett Packard Enterprise",
+          "hewlett packard enterprise"
         ],
-        "ticker": "INTC"
+        "ticker": "CIEN"
       },
       {
-        "name": "that competitor's own climate change regulations disclosure",
+        "name": "that competitor's own supply chain disruption disclosure",
         "spans": [
-          "climate change regulations"
+          "supply chain disruption"
         ],
-        "ticker": "TSM"
+        "ticker": "HPE"
       }
     ],
     "max_steps": null,
     "stratum": "MED",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "INTC",
-    "target": "TSM",
-    "group_id": "INTC|TSM",
+    "seed": "CIEN",
+    "target": "HPE",
+    "group_id": "CIEN|HPE",
     "generated": true
   },
   {
-    "question": "Among the companies intel corp names as key dependencies in its SEC filings, which one warns about climate change regulations in its own filings?",
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses foreign currency exchange rate fluctuations in its own filings?",
     "aspects": [
       {
-        "name": "intel corp names the dependency",
+        "name": "Hewlett Packard Enterprise names the competitor",
         "spans": [
-          "taiwan semiconductor",
-          "tsmc"
+          "NetApp",
+          "netapp"
         ],
-        "ticker": "INTC"
+        "ticker": "HPE"
       },
       {
-        "name": "that dependency's own climate change regulations disclosure",
+        "name": "that competitor's own foreign currency exchange rate fluctuations disclosure",
         "spans": [
-          "climate change regulations"
+          "foreign currency exchange rate fluctuations"
         ],
-        "ticker": "TSM"
-      }
-    ],
-    "max_steps": null,
-    "stratum": "MED",
-    "relation": "depends_on",
-    "qtype": "bridging",
-    "seed": "INTC",
-    "target": "TSM",
-    "group_id": "INTC|TSM",
-    "generated": true
-  },
-  {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses customer concentration in its own filings?",
-    "aspects": [
-      {
-        "name": "lam research names the competitor",
-        "spans": [
-          "Applied Materials, Inc.",
-          "applied materials"
-        ],
-        "ticker": "LRCX"
-      },
-      {
-        "name": "that competitor's own customer concentration disclosure",
-        "spans": [
-          "customer concentration"
-        ],
-        "ticker": "AMAT"
+        "ticker": "NTAP"
       }
     ],
     "max_steps": null,
     "stratum": "MED",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
-    "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "seed": "HPE",
+    "target": "NTAP",
+    "group_id": "HPE|NTAP",
     "generated": true
   },
   {
-    "question": "Among the competitors lam research names in its SEC filings, which one discloses goodwill impairment charges in its own filings?",
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses California Consumer Privacy Act in its own filings?",
     "aspects": [
       {
-        "name": "lam research names the competitor",
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "palo alto networks"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own California Consumer Privacy Act disclosure",
+        "spans": [
+          "California Consumer Privacy Act"
+        ],
+        "ticker": "PANW"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "PANW",
+    "group_id": "HPE|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Hewlett Packard Enterprise names in its SEC filings, which one discloses excess or obsolete inventory in its own filings?",
+    "aspects": [
+      {
+        "name": "Hewlett Packard Enterprise names the competitor",
+        "spans": [
+          "Super Micro Computer, Inc.",
+          "super micro computer",
+          "supermicro"
+        ],
+        "ticker": "HPE"
+      },
+      {
+        "name": "that competitor's own excess or obsolete inventory disclosure",
+        "spans": [
+          "excess or obsolete inventory"
+        ],
+        "ticker": "SMCI"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "HPE",
+    "target": "SMCI",
+    "group_id": "HPE|SMCI",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses EU AI Act in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "NetApp",
+          "netapp"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own EU AI Act disclosure",
+        "spans": [
+          "EU AI Act"
+        ],
+        "ticker": "NTAP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "NTAP",
+    "group_id": "IBM|NTAP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors IBM names in its SEC filings, which one discloses limited number of suppliers in its own filings?",
+    "aspects": [
+      {
+        "name": "IBM names the competitor",
+        "spans": [
+          "NetApp",
+          "netapp"
+        ],
+        "ticker": "IBM"
+      },
+      {
+        "name": "that competitor's own limited number of suppliers disclosure",
+        "spans": [
+          "limited number of suppliers"
+        ],
+        "ticker": "NTAP"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "IBM",
+    "target": "NTAP",
+    "group_id": "IBM|NTAP",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses goodwill impairment charges in its own filings?",
+    "aspects": [
+      {
+        "name": "kla corp names the competitor",
         "spans": [
           "Applied Materials, Inc.",
           "applied materials"
         ],
-        "ticker": "LRCX"
+        "ticker": "KLAC"
       },
       {
         "name": "that competitor's own goodwill impairment charges disclosure",
@@ -1550,17 +4902,278 @@
     "stratum": "MED",
     "relation": "competes_with",
     "qtype": "bridging",
-    "seed": "LRCX",
+    "seed": "KLAC",
     "target": "AMAT",
-    "group_id": "AMAT|LRCX",
+    "group_id": "AMAT|KLAC",
     "generated": true
   },
   {
-    "question": "Among the competitors Qualcomm Technologies, Inc. names in its SEC filings, which one discloses intellectual property misappropriation in its own filings?",
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses supply chain disruption in its own filings?",
     "aspects": [
       {
-        "name": "Qualcomm Technologies, Inc. names the competitor",
+        "name": "kla corp names the competitor",
         "spans": [
+          "Applied Materials, Inc.",
+          "applied materials"
+        ],
+        "ticker": "KLAC"
+      },
+      {
+        "name": "that competitor's own supply chain disruption disclosure",
+        "spans": [
+          "supply chain disruption"
+        ],
+        "ticker": "AMAT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "KLAC",
+    "target": "AMAT",
+    "group_id": "AMAT|KLAC",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors kla corp names in its SEC filings, which one discloses supply chain disruptions in its own filings?",
+    "aspects": [
+      {
+        "name": "kla corp names the competitor",
+        "spans": [
+          "Applied Materials, Inc.",
+          "applied materials"
+        ],
+        "ticker": "KLAC"
+      },
+      {
+        "name": "that competitor's own supply chain disruptions disclosure",
+        "spans": [
+          "supply chain disruptions"
+        ],
+        "ticker": "AMAT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "KLAC",
+    "target": "AMAT",
+    "group_id": "AMAT|KLAC",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors NVIDIA names in its SEC filings, which one discloses supply chain disruption in its own filings?",
+    "aspects": [
+      {
+        "name": "NVIDIA names the competitor",
+        "spans": [
+          "Hewlett Packard Enterprise",
+          "hewlett packard enterprise"
+        ],
+        "ticker": "NVDA"
+      },
+      {
+        "name": "that competitor's own supply chain disruption disclosure",
+        "spans": [
+          "supply chain disruption"
+        ],
+        "ticker": "HPE"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "NVDA",
+    "target": "HPE",
+    "group_id": "HPE|NVDA",
+    "generated": true
+  },
+  {
+    "question": "Among the companies NXP Semiconductors names as key dependencies in its SEC filings, which one warns about intellectual property misappropriation in its own filings?",
+    "aspects": [
+      {
+        "name": "NXP Semiconductors names the dependency",
+        "spans": [
+          "taiwan semiconductor",
+          "tsmc"
+        ],
+        "ticker": "NXPI"
+      },
+      {
+        "name": "that dependency's own intellectual property misappropriation disclosure",
+        "spans": [
+          "intellectual property misappropriation"
+        ],
+        "ticker": "TSM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "NXPI",
+    "target": "TSM",
+    "group_id": "NXPI|TSM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors oracle corp names in its SEC filings, which one discloses foreign currency exchange rate in its own filings?",
+    "aspects": [
+      {
+        "name": "oracle corp names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "ORCL"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate disclosure",
+        "spans": [
+          "foreign currency exchange rate"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "ORCL",
+    "target": "GOOGL",
+    "group_id": "GOOGL|ORCL",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses foreign currency exchange rate in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own foreign currency exchange rate disclosure",
+        "spans": [
+          "foreign currency exchange rate"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "GOOGL",
+    "group_id": "GOOGL|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses intellectual property infringement claims in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own intellectual property infringement claims disclosure",
+        "spans": [
+          "intellectual property infringement claims"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "GOOGL",
+    "group_id": "GOOGL|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses supply chain disruption in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Alphabet Inc.",
+          "alphabet inc",
+          "google llc",
+          "google inc"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own supply chain disruption disclosure",
+        "spans": [
+          "supply chain disruption"
+        ],
+        "ticker": "GOOGL"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "GOOGL",
+    "group_id": "GOOGL|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors palo alto networks names in its SEC filings, which one discloses additional tax liabilities in its own filings?",
+    "aspects": [
+      {
+        "name": "palo alto networks names the competitor",
+        "spans": [
+          "Microsoft Azure",
+          "microsoft"
+        ],
+        "ticker": "PANW"
+      },
+      {
+        "name": "that competitor's own additional tax liabilities disclosure",
+        "spans": [
+          "additional tax liabilities"
+        ],
+        "ticker": "MSFT"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "PANW",
+    "target": "MSFT",
+    "group_id": "MSFT|PANW",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Qualcomm names in its SEC filings, which one discloses intellectual property misappropriation in its own filings?",
+    "aspects": [
+      {
+        "name": "Qualcomm names the competitor",
+        "spans": [
+          "NXP Semiconductors",
           "nxp semiconductors"
         ],
         "ticker": "QCOM"
@@ -1580,6 +5193,61 @@
     "seed": "QCOM",
     "target": "NXPI",
     "group_id": "NXPI|QCOM",
+    "generated": true
+  },
+  {
+    "question": "Among the companies Qualcomm names as key dependencies in its SEC filings, which one warns about intellectual property misappropriation in its own filings?",
+    "aspects": [
+      {
+        "name": "Qualcomm names the dependency",
+        "spans": [
+          "taiwan semiconductor",
+          "tsmc"
+        ],
+        "ticker": "QCOM"
+      },
+      {
+        "name": "that dependency's own intellectual property misappropriation disclosure",
+        "spans": [
+          "intellectual property misappropriation"
+        ],
+        "ticker": "TSM"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "depends_on",
+    "qtype": "bridging",
+    "seed": "QCOM",
+    "target": "TSM",
+    "group_id": "QCOM|TSM",
+    "generated": true
+  },
+  {
+    "question": "Among the competitors Qorvo US, Inc. names in its SEC filings, which one discloses loss of key personnel in its own filings?",
+    "aspects": [
+      {
+        "name": "Qorvo US, Inc. names the competitor",
+        "spans": [
+          "monolithic power systems"
+        ],
+        "ticker": "QRVO"
+      },
+      {
+        "name": "that competitor's own loss of key personnel disclosure",
+        "spans": [
+          "loss of key personnel"
+        ],
+        "ticker": "MPWR"
+      }
+    ],
+    "max_steps": null,
+    "stratum": "MED",
+    "relation": "competes_with",
+    "qtype": "bridging",
+    "seed": "QRVO",
+    "target": "MPWR",
+    "group_id": "MPWR|QRVO",
     "generated": true
   }
 ]

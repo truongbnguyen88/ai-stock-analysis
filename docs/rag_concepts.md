@@ -1907,6 +1907,70 @@ row-wise split. (Verified on the committed set: 149 train / 63 test, 0 group ove
 direct analogue of *grouped cross-validation* (GroupKFold) in standard ML, with the bridge pair as the
 group key.
 
+### 17.5 Benchmark size and statistical power — the $\sqrt{G}$ group-wise bootstrap law
+
+Growing the benchmark is a **statistical-power** intervention, so the number that matters is not the
+question count $N$ but the number of independent **groups** $G$. §17.4 established that the eval
+resamples *groups*, not rows (row-wise resampling would pseudo-replicate). The consequence for
+confidence intervals:
+
+- **What the CI is over.** The reported effect (e.g. mean coverage difference between two policies) is a
+  mean of per-**group** statistics. A group-wise bootstrap resamples the $G$ test groups with
+  replacement and recomputes the mean; its spread is the CI. Under the usual iid-group approximation the
+  bootstrap standard error of a mean scales as $\sigma/\sqrt{G}$, where $\sigma$ is the between-group
+  standard deviation of the per-group statistic. So the **half-width** obeys
+
+$$
+h(G) \approx \frac{k}{\sqrt{G}}, \qquad k \approx z\sigma
+$$
+
+  with $z$ the coverage multiplier (≈1.96 for 95%) folded into a single empirical constant $k$. The
+  extra questions *inside* a group buy almost nothing — they are near-duplicates (same bridge pair,
+  different topic), so they shrink within-group noise but not the between-group term $\sigma$ that
+  dominates $h$.
+
+- **The right denominator is HARD∪MED groups.** CTRL episodes are searched verbatim (the answer string
+  is in the query), so they are excluded from the RL episode set; only $g\in\text{HARD}\cup\text{MED}$
+  bridge groups are genuine 2-hop episodes. Hence the **RL power denominator** is
+  $G=\lvert\{\text{distinct HARD}\cup\text{MED groups in the test fold}\}\rvert$, not the raw test-question
+  count.
+
+**Worked example (the exact A6.0-expansion numbers).** Anchor $k$ on the pre-expansion fold, which had
+$G_1=13$ HARD∪MED test groups and a measured bootstrap half-width $h_1=\pm 0.077$:
+
+$$
+k = h_1\sqrt{G_1} = 0.077\sqrt{13} \approx 0.278.
+$$
+
+The 20→48-seed expansion raised the fold to $G_2=38$ distinct HARD∪MED test groups, so
+
+$$
+h_2 \approx \frac{k}{\sqrt{G_2}} = \frac{0.278}{\sqrt{38}} \approx \pm 0.045,
+$$
+
+i.e. the CI half-width falls from $\pm 0.077$ to $\approx\pm 0.045$ — a $\sqrt{38/13}\approx 1.7\times$
+tightening from a $2.9\times$ group increase. That $\sqrt{\cdot}$ is the whole story: **quadratic cost
+for linear precision.** To *halve* the half-width you need $4\times$ the groups; to resolve a small
+effect $\delta\approx 0.02$ at $h\approx 0.01$ you would need $G\approx (k/0.01)^2\approx 770$ groups —
+far beyond what the ingested universe can supply (48 seeds gave 125 HARD∪MED groups total). Supply-side
+growth alone cannot reach the small-effect regime; that is a structural ceiling, not a tuning problem.
+
+**Two independent obstructions to a promote decision.** Power is necessary but not sufficient. A
+promote claim needs *both*:
+
+| Obstruction | What it controls | Fixed by | Scales with |
+|---|---|---|---|
+| **Power** (CI width) | how tightly the *point estimate* is bracketed | more groups $G$ | $h\propto 1/\sqrt{G}$ |
+| **Validity** (bias) | *what the point estimate even measures* | a real-query eval | not $G$ at all |
+
+Growing the benchmark ($G$) is a pure power intervention: it shrinks $h$ but leaves any
+simulator-vs-reality bias in the point estimate untouched. When the bias (here the templated
+gold-text leak, measured at $\approx 0.18$ coverage — §20.7) is several times the effect $\delta$ being
+tested, a *tighter* CI around a *biased* estimate does not rescue the decision — it brackets the wrong
+number more precisely. This is why the A6.0 expansion improves the benchmark for every *future* run yet
+does **not** by itself change the standing "descriptive, not promote-able" verdict: it clears one of two
+gates.
+
 ---
 
 ## 18. Contextual bandits + off-policy evaluation (retrieval as a one-shot decision)

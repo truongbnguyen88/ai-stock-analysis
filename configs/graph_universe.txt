@@ -26,6 +26,13 @@
 #   domestic `--all`, whose default forms are 10-K/10-Q/8-K). NB: Samsung & SK Hynix are NOT SEC
 #   filers, so the other HBM makers remain un-ingestable; Micron is the only memory supplier in-graph.
 #
+# 2026-07-18: A6.0 EXPANSION 20 -> 48 seeds (grow the HARD/MED bridge-group count = the A6.2 RL power
+#   denominator). Added the 28 below via a SEPARATE additions-only run so the original 20 were NOT
+#   re-billed: `extract-graph --all --universe configs/graph_universe_additions.txt` (83 calls, ~$10-14,
+#   ceiling graph_max_extract_calls=100). All 28 were already ingested (=> $0 embed) and can bridge into
+#   the semis hub. THIS 48-seed file is what `rag gen-multistep` consumes. See graph_universe_additions.txt
+#   for per-ticker rationale; validations_results.md (2026-07-18) for the realized supply/CI numbers.
+#
 # --- The 16 domestic semis/AI tickers (10-K) ---
 NVDA   # GPUs / AI accelerators (the hub; bridging-benchmark subject)
 AVGO   # networking + custom silicon (Broadcom)
@@ -49,3 +56,36 @@ TSM    # Taiwan Semiconductor (TSMC) — NVDA's foundry; the NVDA->TSM bridge ta
 ASML   # ASML — EUV litho equipment; upstream of TSMC (TSM->ASML 2-hop)
 ARM    # Arm Holdings — CPU IP / architecture licensing
 STM    # STMicroelectronics — analog / automotive / MEMS
+
+# === A6.0 EXPANSION (2026-07-18) — +28 seeds; extracted via graph_universe_additions.txt ===
+# --- Core semis / hardware / data-center infra (12) ---
+QRVO   # RF (Qorvo)
+SWKS   # RF (Skyworks)
+ON     # power / analog (onsemi)
+MPWR   # power management (Monolithic Power) — data-center power ICs
+TER    # semiconductor test equipment (Teradyne)
+WDC    # storage / HDD-NAND (Western Digital)
+STX    # storage / HDD (Seagate)
+NTAP   # storage systems (NetApp)
+SMCI   # AI servers (Supermicro) — NVDA accelerator customer
+HPE    # AI servers / networking (HPE)
+CIEN   # optical networking (Ciena)
+VRT    # data-center power / thermal (Vertiv)
+# --- Hyperscalers (6) — name TSMC/NVDA/suppliers ---
+MSFT   # Azure — largest AI capex
+GOOGL  # Google Cloud / TPU
+AMZN   # AWS
+META   # AI infrastructure buildout
+AAPL   # names TSMC / supply chain heavily
+ORCL   # OCI — GPU cloud
+# --- AI software (10) — lower HARD/MED yield, one-shot insurance ---
+IBM    # enterprise AI / hybrid cloud
+CRM    # Salesforce
+NOW    # ServiceNow
+PLTR   # Palantir
+SNOW   # Snowflake
+PANW   # Palo Alto Networks
+CRWD   # CrowdStrike
+DDOG   # Datadog
+NET    # Cloudflare
+INTU   # Intuit

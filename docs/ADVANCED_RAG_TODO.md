@@ -758,6 +758,18 @@ bandit** (pick the retrieval config per query); A6.2: a **finite-horizon MDP** (
 > surfaces mix case (graph name ∪ lowercase aliases) — harmless under normalized matching. The curated
 > 12-Q `rag_eval_multistep.json` is left untouched (A4/A5.3 reproducibility); A6.1/A6.2 consume the
 > generated set (or the union).
+>
+> **EXPANSION (2026-07-18):** graph grown **20 → 48 seeds** (+28 already-ingested semis/hyperscaler/
+> software names, via additions-only `configs/graph_universe_additions.txt` so the original 20 were not
+> re-billed; one-time ≈ \$10.80 / 83 LLM calls, ceiling 100). Regenerated → **680 Q** (HARD 445 / MED 79
+> / CTRL 156); test fold **13 → 38 distinct HARD∪MED groups** (the RL power denominator, +2.9×) ⇒
+> projected bootstrap CI half-width **±0.077 → ±0.045** (§17.5). Span audit: 0/154 target-aspect misses,
+> 4/154 seed-aspect (all `INTC|META`, a documented alias surface-form gap). **This clears the power gate
+> only** — the sim-to-real bias (~0.18, A6.2g) is orthogonal and untouched, so E5 stays *descriptive*.
+> v1 (20-seed) numbers preserved in git history; v2 is not backward-compatible with A6.1/A6.2 point
+> estimates. Mechanism → [rag_implementation_notes.md](rag_implementation_notes.md) §A6.0-EXPANSION;
+> before/after → [validations_results.md](validations_results.md) 2026-07-18; power math →
+> [rag_concepts.md §17.5](rag_concepts.md).
 
 **Objective.** Grow `configs/rag_eval_multistep.json` from 12 → a clean, stratified ~100–200 multi-hop
 questions, **mined from the A5 graph** (not hand-written), every aspect span **auto-verified against the
@@ -916,7 +928,7 @@ learned policy realizes that lift.
 | **Action executor** | `build_named_system(name, settings)` over `LATTICE_SYSTEMS=(dense,reranked,hybrid,hybrid+rerank)`; `build_graph_system(settings)` | `rag/read_path.py:64-140` |
 | **Reward — single-shot nDCG** | `evaluate_query(system, LabeledQuery, *, top_k, corpus_chunks) -> QueryReport` (`.ndcg`) | `rag/eval.py:224` |
 | **Reward — multi-hop coverage** | `coverage(chunks, aspects)`; one `retrieve()` = the single-shot baseline | `research/multistep_eval.py` |
-| **Primary benchmark (contexts)** | `configs/rag_eval_multistep_generated.json` (212 Q; `stratum`/`group_id`) | A6.0 |
+| **Primary benchmark (contexts)** | `configs/rag_eval_multistep_generated.json` (v2: 680 Q over 48 seeds; `stratum`/`group_id`) | A6.0 |
 | **Secondary benchmark** | `configs/rag_eval_queries.json` (25 single-shot `LabeledQuery`, ticker-scoped) | P9b |
 | **Group-wise split (D2)** | `split_multihop(queries, *, test_frac, seed)` | `research/multistep_gen.py` |
 | **Context features** | `research/bridge.is_bridging(q)`, `mentioned_tickers(text, alias_map)`, `load_alias_map()`; router cues | `research/bridge.py`, `agent/router.py` |
