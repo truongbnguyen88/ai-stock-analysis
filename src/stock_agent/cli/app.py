@@ -85,6 +85,7 @@ from stock_agent.rag.rl.rleval import (
     OneShotArmPolicy,
     ReActBridgePolicy,
     ScriptedPolicy,
+    SweepBridgePolicy,
     build_baselines,
     evaluate_rl,
     format_report_markdown,
@@ -2112,6 +2113,7 @@ def rag_rl_simreal(
         LLMQueryWriter,
         estimate_llm_calls,
         format_simreal_markdown,
+        measure_llm_calls,
         run_sim_to_real,
         write_report,
     )
@@ -2136,16 +2138,6 @@ def rag_rl_simreal(
     random.Random(seed).shuffle(episodes)
     episodes = episodes[: min(n, len(episodes))]
 
-    bound = estimate_llm_calls(len(episodes), settings.agentic_max_steps)
-    typer.echo(
-        f"Sim-to-real: {len(episodes)} episodes from {sorted(wanted)} "
-        f"(policy={loaded.algo}/{loaded.action_space}). "
-        f"Worst case {bound} calls ({settings.agentic_max_steps} query hops + 1 synthesis each)."
-    )
-    if not dry_run and not yes:
-        typer.echo("This spends API budget. Re-run with --yes (or --dry-run for a $0 check).")
-        raise typer.Exit(code=1)
-
     alias_map = load_alias_map()
     universe = load_universe(graph_universe) if graph_universe.exists() else None
     cfg = loaded.config
@@ -2165,6 +2157,25 @@ def rag_rl_simreal(
             lambda_cost=cfg.get("lambda_cost"),
             query_writer=writer,  # type: ignore[arg-type]
         )
+
+    # Fan-out-aware spend estimate: roll the greedy policy through a $0 stand-in writer and count
+    # ACTUAL calls (one per retrieval request ⇒ a sweep counts branches, which the naive step bound
+    # misses). $0 (no Sonnet calls) — only the cached retrieval it shares with the paid
+    # run. Close but not exact: LLM queries can shift the hop-2 fan-out width (see docstring).
+    count_writer = LLMQueryWriter(DryRunLLM(), alias_map=alias_map)
+    measured = measure_llm_calls(
+        loaded.policy, episodes, env=_build(count_writer), writer=count_writer
+    )
+    naive = estimate_llm_calls(len(episodes), settings.agentic_max_steps)
+    typer.echo(
+        f"Sim-to-real: {len(episodes)} episodes from {sorted(wanted)} "
+        f"(policy={loaded.algo}/{loaded.action_space}). "
+        f"~{measured} LLM calls (fan-out-aware: query hops incl. sweep branches + 1 synthesis/"
+        f"episode; naive step-bound would say {naive})."
+    )
+    if not dry_run and not yes:
+        typer.echo("This spends API budget. Re-run with --yes (or --dry-run for a $0 check).")
+        raise typer.Exit(code=1)
 
     # --dry-run swaps the whole LLM (writer + synthesis) for a $0 stand-in: the writer returns "",
     # the env keeps the template, so the gap must come out exactly 0 — the harness self-test.
@@ -2192,7 +2203,10 @@ def rag_rl_h2h(
     ],
     baseline: Annotated[
         str,
-        typer.Option("--baseline", help="Opponent: `react:ARM` (A4) or `fixed:ARM` (A5.3)"),
+        typer.Option(
+            "--baseline",
+            help="Opponent: `sweep:ARM` (E3 strong), `react:ARM` (A4), or `fixed:ARM` (A5.3)",
+        ),
     ] = "react:hybrid",
     simreal: Annotated[
         Path | None,
@@ -2238,6 +2252,7 @@ def rag_rl_h2h(
         RealRow,
         format_h2h_markdown,
         head_to_head,
+        measure_llm_calls,
         run_real_policy,
     )
 
@@ -2298,38 +2313,52 @@ def rag_rl_h2h(
     space = named_action_space(loaded.action_space, n_discovered_slots=loaded.n_discovered_slots)
     kind, _, arm = baseline.partition(":")
     opponent: ScriptedPolicy
-    if kind == "react":
+    if kind == "sweep":  # the E3 strong baseline — the arm-parity opponent the RL verdict must beat
+        opponent = SweepBridgePolicy(arm, action_space=space)
+    elif kind == "react":
         opponent = ReActBridgePolicy(arm, action_space=space)
     elif kind == "fixed":
         opponent = OneShotArmPolicy(arm, action_space=space)
     else:
-        typer.echo(f"Unknown --baseline {baseline!r} (expected `react:ARM` or `fixed:ARM`)")
-        raise typer.Exit(code=1)
-
-    bound = len(episodes) * settings.agentic_max_steps  # no synthesis on this side ⇒ hops only
-    typer.echo(
-        f"Real-env head-to-head: rl({loaded.algo}) vs {baseline} on {len(episodes)} episodes. "
-        f"Worst case {bound} calls (query hops only; the rl side is already paid for)."
-    )
-    if not dry_run and not yes:
-        typer.echo("This spends API budget. Re-run with --yes (or --dry-run for a $0 check).")
+        typer.echo(
+            f"Unknown --baseline {baseline!r} (expected `sweep:ARM`, `react:ARM` or `fixed:ARM`)"
+        )
         raise typer.Exit(code=1)
 
     alias_map = load_alias_map()
     universe = load_universe(graph_universe) if graph_universe.exists() else None
     cfg = loaded.config
+
+    def _build(writer: object | None) -> RagRetrievalEnv:
+        return RagRetrievalEnv(
+            episodes,
+            settings=settings,
+            action_space=space,
+            alias_map=alias_map,
+            graph_universe=universe,
+            gamma=float(cfg.get("gamma", 1.0)),
+            lambda_cost=cfg.get("lambda_cost"),
+            query_writer=writer,  # type: ignore[arg-type]
+        )
+
+    # Fan-out-aware spend estimate for the BASELINE side (the only side that bills here — the rl
+    # side was paid by `rag rl-simreal`). No synthesis on this path ⇒ query hops only. A sweep
+    # opponent fans out like the learned policy, so the naive bound undercounts it the same way.
+    count_writer = LLMQueryWriter(DryRunLLM(), alias_map=alias_map)
+    measured = measure_llm_calls(
+        opponent, episodes, env=_build(count_writer), writer=count_writer, include_synthesis=False
+    )
+    typer.echo(
+        f"Real-env head-to-head: rl({loaded.algo}) vs {baseline} on {len(episodes)} episodes. "
+        f"~{measured} calls (fan-out-aware, query hops only; the rl side is already paid for)."
+    )
+    if not dry_run and not yes:
+        typer.echo("This spends API budget. Re-run with --yes (or --dry-run for a $0 check).")
+        raise typer.Exit(code=1)
+
     llm: TextLLM = DryRunLLM() if dry_run else AnthropicClient(settings)
     writer = LLMQueryWriter(llm, alias_map=alias_map)
-    real_env = RagRetrievalEnv(
-        episodes,
-        settings=settings,
-        action_space=space,
-        alias_map=alias_map,
-        graph_universe=universe,
-        gamma=float(cfg.get("gamma", 1.0)),
-        lambda_cost=cfg.get("lambda_cost"),
-        query_writer=writer,
-    )
+    real_env = _build(writer)
     rows_b = run_real_policy(opponent, episodes, real_env=real_env, writer=writer, seed=seed)
 
     suffix = " [templated]" if dry_run else ""

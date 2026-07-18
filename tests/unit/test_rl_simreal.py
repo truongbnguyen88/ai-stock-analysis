@@ -16,15 +16,22 @@ import pytest
 
 from stock_agent.rag.rl.action import named_action_space
 from stock_agent.rag.rl.env import RagRetrievalEnv, RetrieverFactory
-from stock_agent.rag.rl.rleval import OneShotArmPolicy, ReActBridgePolicy, run_episode
+from stock_agent.rag.rl.rleval import (
+    OneShotArmPolicy,
+    ReActBridgePolicy,
+    SweepBridgePolicy,
+    run_episode,
+)
 from stock_agent.research.multistep_eval import Aspect, MultiHopQuery
 from stock_agent.research.prompts import RL_QUERY_SYSTEM
 from stock_agent.research.rl_simreal import (
+    DryRunLLM,
     LLMQueryWriter,
     RealRow,
     estimate_llm_calls,
     format_simreal_markdown,
     head_to_head,
+    measure_llm_calls,
     run_real_policy,
     run_sim_to_real,
 )
@@ -211,9 +218,63 @@ def test_sim_to_real_measures_a_positive_coverage_gap() -> None:
     assert "UNDERSTATED" in format_simreal_markdown(report)
 
 
-def test_estimate_llm_calls_is_the_worst_case_bound() -> None:
-    # what the CLI prints before spending: max_steps writer calls + 1 synthesis, per episode
+def test_estimate_llm_calls_is_the_naive_step_floor() -> None:
+    # the cheap a-priori floor (kept for reference): max_steps writer calls + 1 synthesis / episode
     assert estimate_llm_calls(24, 3) == 96
+
+
+def test_measure_llm_calls_counts_fanout_branches_not_steps() -> None:
+    # The fix: a sweep issues one retrieval REQUEST per discovered candidate and the writer bills
+    # each, so a fan-out over 3 candidates is 3 calls in ONE step — the branch fan-out the naive
+    # step bound (1*(3+1)=4) never sees. Counted on a $0 dry rollout, so it reflects the real spend.
+    seed_chunk = _rc(
+        "NVDA:9", "NVIDIA relies on Micron, Samsung, and Broadcom for components.", ticker="NVDA"
+    )
+
+    class ThreeSupplierSystem:
+        name = "hybrid"
+
+        def retrieve(
+            self, query: str, *, top_k: int, where: ChunkFilter | None = None
+        ) -> EvidenceSet:
+            t = where.ticker if where is not None else None
+            hit = (
+                seed_chunk
+                if t == "NVDA"
+                else _rc(f"{t}:0", f"{t} discloses a risk.", ticker=t or "")
+            )
+            return EvidenceSet(query=query, chunks=[hit][:top_k])
+
+    alias = {"NVDA": ["NVIDIA"], "MU": ["Micron"], "SMSN": ["Samsung"], "AVGO": ["Broadcom"]}
+    ep = MultiHopQuery(
+        question="Which supplier NVIDIA depends on discloses export rules?",
+        aspects=[Aspect(name="A1", spans=["Micron"])],
+        seed="NVDA",
+        stratum="HARD",
+        relation="depends_on",
+        group_id="NVDA:MU",
+    )
+    writer = LLMQueryWriter(DryRunLLM(), alias_map=alias)  # $0: returns "" ⇒ env keeps the template
+    env = RagRetrievalEnv(
+        [ep],
+        settings=S,
+        action_space=named_action_space("pruned"),
+        retriever_factory=lambda arm: ThreeSupplierSystem(),
+        alias_map=alias,
+        graph_universe={"NVDA", "MU", "SMSN", "AVGO"},
+        gamma=1.0,
+        lambda_cost=0.05,
+        seating_rule="breadth_first",  # no cross-encoder ⇒ never downloads a model in CI
+        query_writer=writer,
+    )
+    sweep = SweepBridgePolicy("hybrid", action_space=env.action_space)  # self → fanout → STOP
+
+    n = measure_llm_calls(sweep, [ep], env=env, writer=writer)
+    assert n == 5  # 1 self + 3 fan-out branches + 1 synthesis
+    assert n > estimate_llm_calls(1, S.agentic_max_steps)  # 4: the naive step bound undercounts
+    # A baseline-only run (rl-h2h) pays no synthesis ⇒ one fewer.
+    writer.calls = 0
+    assert measure_llm_calls(sweep, [ep], env=env, writer=writer, include_synthesis=False) == 4
 
 
 # ---- the real-env head-to-head -------------------------------------------------------------------

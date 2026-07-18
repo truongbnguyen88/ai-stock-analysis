@@ -518,3 +518,44 @@ def test_a_noop_seating_reranker_falls_back_to_breadth_first_not_to_branch_order
     assert {rc.chunk.ticker for rc in env.evidence} == {"NVDA", *CANDIDATES}
     assert len(env.evidence) == 6
     assert info.coverage == 0.5  # the E3 outcome — NOT a silent alphabetical truncation
+
+
+class CountingReranker:
+    """FakeReranker's behaviour, but counts calls — proving the seating memo skips recompute."""
+
+    name = "counting-rerank"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def rerank(self, query: str, chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
+        self.calls += 1
+        return sorted(chunks, key=lambda rc: (CAC not in rc.chunk.text, rc.chunk.chunk_id))
+
+
+def test_seating_rerank_is_memoized_across_identical_fanouts() -> None:
+    """The seating cross-encoder — a fan-out's wall-clock driver — is cached like retrieval (§3a).
+
+    Replaying the same episode's self→fanout twice presents byte-identical branches (retrieval is
+    a cache hit), so the seating key (rule, pooled query, branch chunk-ids) repeats and the
+    reranker must run exactly ONCE. Without this memo, on-policy training reruns a ~1.4s
+    cross-encoder pass on every fan-out of every iteration; with it, only the first rollout pays.
+    The cached result must be byte-identical to the recomputed one (SAME object — pure memoization).
+    """
+    reranker = CountingReranker()
+    env = _seat_env(seating_rule="pooled_rerank", reranker=reranker)
+
+    env.reset(0)
+    env.step(HY_SELF)
+    env.step(HY_FANOUT)
+    first = [rc.chunk.chunk_id for rc in env.evidence]
+    assert reranker.calls == 1
+    assert (env.seating_hits, env.seating_misses) == (0, 1)
+
+    env.reset(0)  # same episode ⇒ identical branches ⇒ identical seating key
+    env.step(HY_SELF)
+    env.step(HY_FANOUT)
+    second = [rc.chunk.chunk_id for rc in env.evidence]
+    assert reranker.calls == 1, "second identical fan-out must hit the seating cache, not rerank"
+    assert (env.seating_hits, env.seating_misses) == (1, 1)
+    assert first == second  # cache returns the byte-identical seated order

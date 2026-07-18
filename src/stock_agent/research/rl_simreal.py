@@ -217,12 +217,46 @@ class DryRunLLM:
 
 
 def estimate_llm_calls(n_episodes: int, max_steps: int) -> int:
-    """Worst-case call count: ``max_steps`` query-writing calls + 1 synthesis, per episode.
+    """Naive per-STEP call bound: ``max_steps`` query-writing calls + 1 synthesis, per episode.
 
-    The bound the CLI prints before asking to spend. Actual usage is lower whenever the policy STOPs
-    early (and an empty union skips the synthesis call — ``answer_question`` short-circuits).
+    A cheap a-priori floor, kept for reference. It is **not** the real count for any policy that
+    fans out: a fan-out step issues one retrieval request *per discovered candidate* and the writer
+    bills each, so this undercounts every sweep (a 9-candidate sweep is 9 writer calls in one step,
+    not one). Use ``measure_llm_calls`` for the honest, fan-out-aware number the spend gate shows.
     """
     return n_episodes * (max_steps + 1)
+
+
+def measure_llm_calls(
+    policy: RolloutPolicy,
+    episodes: Sequence[MultiHopQuery],
+    *,
+    env: RagRetrievalEnv,
+    writer: LLMQueryWriter,
+    include_synthesis: bool = True,
+) -> int:
+    """Fan-out-aware LLM-call count for a paid run, measured on a ``$0`` dry rollout.
+
+    Rolls the greedy policy through ``env`` (which must carry ``writer`` as its ``query_writer``,
+    and ``writer`` must wrap a ``$0`` stand-in LLM, ``DryRunLLM``) and counts the writer's *actual*
+    calls. Because the writer bills once per retrieval **request**, a fan-out step contributes one
+    call per swept candidate — exactly the branch fan-out ``estimate_llm_calls`` misses. Adds one
+    synthesis per non-empty union when ``include_synthesis`` (``rl-simreal`` pays it; the ``rl-h2h``
+    baseline side does not). Costs nothing beyond the retrieval the paid run runs anyway.
+
+    An **estimate, not a guarantee**: the paid run's LLM-written queries change the hop-1 union, so
+    the hop-2 discovered set (and thus the fan-out width) can differ. Always far closer to the true
+    spend than the naive step bound — this is the number the ``--yes`` gate should quote.
+    """
+    greedy = GreedyPolicy(policy, name="dry-count")
+    rng = np.random.default_rng(0)  # greedy ignores it; kept for the rollout signature
+    total = 0
+    for i in range(len(episodes)):
+        writer.reset()
+        before = writer.calls
+        run_episode(env, greedy, i, rng=rng)
+        total += (writer.calls - before) + (1 if include_synthesis and env.evidence else 0)
+    return total
 
 
 def run_sim_to_real(

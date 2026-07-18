@@ -208,6 +208,15 @@ class RagRetrievalEnv:
 
         self._systems: dict[str, RetrievalSystem] = {}  # built once per arm, across episodes
         self._cache = TransitionCache()  # shared across episodes (key carries the question)
+        # E7 seating rerank is part of the deterministic transition too, but the TransitionCache
+        # (§3a) predates E7 and only covers *retrieval*. The cross-encoder recompute — not the
+        # cached retrieval — dominates a fan-out's wall-clock (~1.4s/sweep on the real fold), so
+        # it gets its own memo, keyed on the seating fn's pure inputs (rule, pooled query, branch
+        # chunk-ids). That is what makes thousands of on-policy rollouts over the seated env
+        # feasible (the same tractability argument as the retrieval cache). See `_seat`.
+        self._seat_cache: dict[tuple[str, str, tuple[str, ...]], list[RetrievedChunk]] = {}
+        self.seating_hits = 0
+        self.seating_misses = 0
 
         # Per-episode trajectory state (populated by reset()).
         self._episode: MultiHopQuery | None = None
@@ -360,18 +369,33 @@ class RagRetrievalEnv:
         """
         if len(branches) <= 1:
             return merge_breadth_first(branches)
-        return seat_branches(
+        rule = self._effective_rule()
+        # The pooled query is the TOPIC, with no candidate-name prefix: a name-prefixed query
+        # would tilt the cross-encoder toward one branch and destroy exactly the cross-branch
+        # comparability that makes pooled seating work. Every branch's request carries the same
+        # topic clause (E6), so any of them supplies it.
+        query = discovered_scope_query(self._episode.question, "") if self._episode else ""
+        # Memoize the seating rerank (the fan-out wall-clock driver) exactly as retrieval is cached.
+        # seat_branches is a pure function of (branches, rule, query, reranker config); rule/query
+        # are captured in the key and the reranker config is fixed per env, so the flattened branch
+        # chunk-ids identify the result uniquely — no collision is possible (equal inputs ⇒ equal
+        # output).
+        key = (rule, query, tuple(rc.chunk.chunk_id for branch in branches for rc in branch))
+        cached = self._seat_cache.get(key)
+        if cached is not None:
+            self.seating_hits += 1
+            return cached
+        self.seating_misses += 1
+        seated = seat_branches(
             branches,
-            rule=self._effective_rule(),
-            # The pooled query is the TOPIC, with no candidate-name prefix: a name-prefixed query
-            # would tilt the cross-encoder toward one branch and destroy exactly the cross-branch
-            # comparability that makes pooled seating work. Every branch's request carries the same
-            # topic clause (E6), so any of them supplies it.
-            query=discovered_scope_query(self._episode.question, "") if self._episode else "",
+            rule=rule,
+            query=query,
             reranker=self._seating_reranker(),
             top_branches=self.settings.rl_seating_top_branches,
             per_branch=self.settings.rl_seating_per_branch,
         )
+        self._seat_cache[key] = seated
+        return seated
 
     def _seating_reranker(self) -> Reranker | None:
         """The seating cross-encoder, built on first use (never at construction — see __init__)."""
