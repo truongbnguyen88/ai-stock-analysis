@@ -1294,3 +1294,42 @@ descriptive, not promote-able**, now bottlenecked purely on validity (needs a re
 on power. **All A6.1/A6.2 point estimates were computed on the v1 20-seed benchmark and remain valid in
 git history; the v2 set is not backward-compatible with them** — a future E5 must be re-run on v2 to use
 the tighter CI.
+
+### Frozen-policy inventory + next-session runbook (A6.2 close-out) — verified 2026-07-18
+
+**On-disk state (verified this session; corrects the "E5 is open" framing above).** The E5 retrain was
+already run on v1, and the checkpoints are **E7-seated** — `settings.rl_seating_rule="pooled_rerank"`
+with provider `"local"` is the *default*, and the env resolves `seating_rule or settings.rl_seating_rule`,
+so any run since E7 (2026-07-13) that did not override it trained under pooled-rerank/local:
+
+| artifact | date | fold | `n_actions` | seating | key result |
+|---|---|---|---|---|---|
+| `outputs/experiments/e5/reinforce-s{0,1,2}/` | 07-17 | v1 (train n=149) | 9 | E7 local | **`rl_eval` REJECT**: `rl-reinforce(greedy)` Δ_return **−0.001** vs `sweep(hybrid)`, CI [−0.0045,+0.0026], 71% same action |
+| `e5/reinforce-s1/rl_simreal.json` | 07-18 | v1 test | 9 | E7 Voyage | coverage −0.179 (sim 0.595→real 0.417) — the A6.2g gap above |
+| `outputs/experiments/a62g_reinforce_s0/` | 07-13 | v1 | 7 | older | `rl_h2h.json` Δ=+0.0175 vs **`react:hybrid`** — the **SUPERSEDED invalid-env** h2h; not the sweep baseline |
+| `e5_smoke*/` | — | — | — | — | smoke runs, ignore |
+
+So on the **sim objective the verdict is effectively settled: RL reproduces `sweep(hybrid)` (Δ≈0)** with
+a *tight* CI (this is not the power-limited coverage axis — it is the return-delta the promote gate
+actually uses). What is genuinely **not** yet run: (i) a v2 re-confirmation on the 2.9×-larger fold, and
+(ii) a real-query h2h **against `sweep:hybrid`** (only the old `react`-baseline/invalid-env h2h exists).
+
+**Runbook.** Prefix: `PYTHONPATH=src KMP_DUPLICATE_LIB_OK=TRUE .venv/bin/python -m stock_agent`. CLI
+defaults now auto-point at v2 (regenerated `train/test.json` + 48-seed `graph_universe.txt`); local
+E7 reranker is cached, so training is `$0`, no model download.
+
+1. **Re-confirm E5 on v2 (retrain + eval) — `$0`, minutes.**
+   `for s in 0 1 2; do … rag rl-train --seed $s --out-dir outputs/experiments/e5_v2/reinforce-s$s; done`
+   then `… rag rl-eval -p outputs/experiments/e5_v2/reinforce-s0/policy.json --seeds 0,1,2`.
+   Read `promote`/`delta_return`/`delta_ci`. **If REJECT again (expected) ⇒ close A6.2 with no spend:**
+   "RL not promote-able for multi-hop retrieval; deliverable = scripted `sweep(hybrid)` + E7 seating."
+2. **Only if Step 1 shows a positive, resolvable sim margin — paid validity, ~`$3–6`.**
+   `… rag rl-simreal -p <v2 policy> --n 42 --strata HARD,MED --yes`, then
+   `… rag rl-h2h -p <v2 policy> --baseline sweep:hybrid --simreal <that rl_simreal.json> --n 42 --strata HARD,MED --yes`.
+   ⚠️ `rl-h2h` defaults to the **wrong** `--baseline react:hybrid` — pass **`--baseline sweep:hybrid`**
+   (§20.5: else the win is an action-space artifact). Promote only if RL beats `sweep:hybrid` on real
+   queries with CI_low>0.
+
+**Honest expectation:** v1 already shows RL ≈ sweep (Δ=−0.001) and the sim inflating coverage by 0.18,
+so the most probable outcome is a **legitimate negative close-out at `$0`** (Step 1 confirms; Step 2 is
+due-diligence only). Housekeeping alongside: re-baseline A4/A5/A6.1 under entity-bound coverage on v2.
