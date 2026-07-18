@@ -3025,6 +3025,80 @@ deeper barely helps ($k = 6 \to 12$ recovers 2). The residual loss is **query fo
 and no longer seating. Each fix reveals the next bottleneck — which is the point of measuring the
 funnel to the *last* stage the metric actually reads (§20.4).
 
+### 20.8 The sim-to-real gap: when the simulator's queries flatter the policy
+
+**The setup.** The RL environment is a `$0` simulator — thousands of rollouts must stay free and
+deterministic — so at each retrieval step it issues a **templated** query built from the benchmark's
+gold aspect: the topic string is interpolated *verbatim* from the gold A2 span (§20.7's upper-bound
+caveat). Deployment cannot do this. At inference there is no gold span, so a real system must have an
+LLM **write** each query from the question and the evidence gathered so far. The policy is therefore
+trained and $0-evaluated on templated queries but *deployed* on LLM-written ones. The **sim-to-real
+gap** measures what that substitution costs — the single seam (like the Voyage arbitrator for seating,
+§20.7) where the free simulator is checked against a paid, realistic surrogate.
+
+**Definition.** For a frozen greedy policy $\pi$ and a held-out episode $i$, run the identical policy
+twice over the identical environment (same action space, arms, costs, horizon, seating), changing
+**only** the query text: templated (sim) vs LLM-written (real). Let $\Phi^{\text{sim}}_i$ and
+$\Phi^{\text{real}}_i$ be the terminal entity-bound coverage (§20.3) of the two runs. The per-episode
+gap and its mean are
+
+$$g_i = \Phi^{\text{real}}_i - \Phi^{\text{sim}}_i, \qquad \overline{g} = \frac{1}{n}\sum_{i=1}^{n} g_i.$$
+
+$\overline{g} > 0$ ⇒ the `$0` verdict was *conservative* (real queries help); $\overline{g} < 0$ ⇒ the
+simulator **flattered** the policy and its `$0` coverage magnitudes are optimistically biased. The same
+paired construction on the return gives the return gap.
+
+**The load-bearing decomposition — same action, different query.** The policy's *action* is an
+action-**type** (`hybrid@self`, `hybrid@fanout`, `STOP`), not a query string. Two runs can take the
+identical action *sequence* and still retrieve different chunks, because the query **text** those
+actions execute is templated in one run and LLM-written in the other. So split the gap into two
+channels:
+
+1. **Decision channel** — real queries make the policy choose *different actions* (its share is
+   $1 - \rho$, where $\rho$ is the same-action-sequence rate).
+2. **Realization channel** — the policy takes the *same actions*, but the real query text retrieves
+   worse evidence.
+
+A pure decision-channel story predicts the gap vanishes whenever the action sequence is unchanged. It
+does not: in this run 30/42 episodes kept the identical action sequence ($\rho = 0.71$) yet **13 of
+those 30 still lost coverage**. The gap lives mostly in the **realization channel** — the template's
+embedded gold text was doing retrieval work a real query-writer cannot reproduce. This is exactly the
+§20.7 upper-bound caveat *quantified*: templated coverage was inflated by the amount the gold-text leak
+buys, and the sim-to-real gap is a direct estimate of that inflation.
+
+**An environment-validity limit, not a policy defect.** The gap bounds what *any* templated-query
+evaluation can conclude. If the sim-to-real bias exceeds the effect being measured — here the
+RL-vs-`sweep(hybrid)` margin — the `$0` eval cannot resolve the promote question at **any** sample
+size. This is a *distinct* obstruction from the power limit (§19.15's 18-group bootstrap CI): power is
+the *width* of the interval; sim-to-real bias is whether the point estimate measures the deployed
+quantity at all. Both must clear before a promote verdict is supportable.
+
+**Refusal is a second axis.** Only the real run synthesizes (the sim never calls the LLM), so it is
+also the only place the faithfulness guard can fire: an episode whose real union is empty or ungrounded
+**refuses** ("Insufficient evidence found.") rather than fabricate. A policy that looks fine on coverage
+can still be undeployable if it refuses often, so the **refusal rate** is reported alongside the gap.
+
+**Cost accounting (why the call estimate is fan-out-aware).** The query-writer bills once per retrieval
+**request**, and a fan-out step issues one request *per discovered candidate*, so a naive per-step bound
+undercounts by the fan-out width. The honest pre-spend count rolls the greedy policy through a `$0`
+stand-in writer and counts actual requests, plus one synthesis per non-empty union. It is an estimate,
+not a guarantee — real queries reshape the hop-1 union and thus the hop-2 fan-out width — but it is far
+tighter than the step bound and is the number the spend gate quotes. (For this run: fan-out-aware
+projection 473 as a ceiling; actual billed 274, because greedy episodes STOP early.)
+
+**Worked numbers (this run).** Frozen REINFORCE (seed 1, E7-seated env, Voyage embeddings) over
+$n = 42$ held-out HARD+MED episodes: $\overline{\Phi^{\text{sim}}} = 0.595$,
+$\overline{\Phi^{\text{real}}} = 0.417$, so $\overline{g} = -0.179$ (95% $t$-CI $[-0.363, +0.006]$;
+one-sample $t$: $p \approx 0.06$, Wilcoxon $p \approx 0.08$ — directionally negative but **not**
+significant at $n = 42$); return gap $-0.155$; same-action rate $\rho = 0.71$; refusal rate $0.33$.
+Sign split $7 : 18 : 17$ (positive : tie : negative); both strata agree (HARD $-0.171$, MED $-0.214$).
+Contrast the RL-vs-sweep margin the templated eval was built to detect — $\approx 0.02$ to $0.05$: the
+sim-to-real bias ($0.18$) is $\approx 4$ to $9\times$ that margin, so the templated verdict is dominated
+by simulator bias, not policy quality. **Direction is robust; the magnitude is not resolved at this
+$n$** — per-episode gaps are $\{-0.5, 0, +0.5\}$-valued ($\text{sd} = 0.59$), so the interval includes
+zero. Both obstructions (this bias *and* the §19.15 power limit) point to the same fix: a larger
+benchmark, then a real-query eval.
+
 ## 21. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —

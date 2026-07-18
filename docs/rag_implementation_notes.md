@@ -2019,3 +2019,55 @@ query-writer speaks to.
 `{topic}`, so the pooled query the cross-encoder scores against contains the gold text. The *relative*
 ordering (pooled ≫ breadth-first) is robust — both rules see identical branches — but the magnitudes
 need the paid query-writer run to arbitrate.
+
+## A6.2g — the sim-to-real gap run + the spend-gate wart-fix (`research/rl_simreal.py`, `rag rl-simreal`)
+
+**Role.** E7 closed with a promise: "the magnitudes need the paid query-writer run to arbitrate." This
+is that run. It takes the frozen policy and measures how much the `$0` simulator's **templated** queries
+inflate its coverage versus **real Sonnet-written** queries — the sim-to-real gap. Theory:
+`rag_concepts.md` §20.8; numbers: `validations_results.md` (2026-07-18).
+
+**Key files.**
+- `research/rl_simreal.py` — `LLMQueryWriter` (wraps a `TextLLM`, writes one query per retrieval
+  *request* via `RL_QUERY_SYSTEM`, bills `self.calls`, degrades to the template on empty/malformed),
+  `run_sim_to_real` (rolls the greedy policy twice over paired sim/real envs, scores coverage, runs the
+  terminal guarded synthesis on the real union only), `measure_llm_calls` (fan-out-aware pre-count),
+  `DryRunLLM` (the `$0` stand-in), `SimRealReport` / `EpisodeGap`.
+- `cli/app.py::rag_rl_simreal` — three-phase command: measure (`$0`) → spend gate → paid run.
+
+**How it works, step by step.**
+1. Build two envs over the *same* episode list, identical in every dimension except the query writer:
+   `sim_env` (no writer ⇒ templated queries) and `real_env` (carries the `LLMQueryWriter`).
+2. For each episode, roll the **greedy** policy through both (deploy semantics — the policy the `$0`
+   verdict gated on). The action is an action-*type*; only the query text differs between the two.
+3. Score entity-bound coverage on each terminal union; the gap is `real − sim`. Synthesis (and hence the
+   faithfulness guard / refusal) runs on the real union only.
+4. Aggregate: mean coverage/return gap, `same_action_rate` (share of episodes whose action *sequence*
+   real queries left intact), `refusal_rate`, `total_llm_calls`.
+
+**Result (n=42, Voyage, $2.6).** coverage gap **−0.179** (95% t-CI [−0.363, +0.006]; p≈0.06 — negative
+but not significant at n=42), return gap −0.155,
+same-action 71.4%, refusal 33.3%. The gap is the **realization channel**, not decisions: 30/42 episodes
+kept the identical action sequence yet 13 still lost coverage — the templated text's embedded gold span
+was doing retrieval work a real writer can't reproduce (the E6/§20.7 caveat, now quantified). This bias
+(0.18) is 4–9× the RL-vs-sweep margin it was meant to measure, so the templated eval can't arbitrate
+promote on its own — a *distinct* obstruction from the 18-group power limit.
+
+**The spend-gate wart-fix (same change).** Two defects surfaced while running it:
+1. `measure_llm_calls` (the ~3-min `$0` pre-count) ran **unconditionally** — even under `--yes`, where
+   the spend decision is already made and `SimRealReport.total_llm_calls` (identical accounting: writer
+   calls + 1 synthesis per non-empty union) already gives the honest number. Fix: the pre-count now runs
+   **only on the refuse path** (`not dry_run and not yes`); `--yes`/`--dry-run` report the count from the
+   run's own report. Saves a redundant full retrieval pass and stops a confusing mid-paid-run log flood.
+2. The count writer logged `rl_simreal.query_writer_empty` once per branch (the `DryRunLLM` returns `""`
+   by design), **visually indistinguishable** from a real degenerate query during the paid run — this is
+   exactly what triggered a false "the run is wasting money" alarm mid-flight. Fix: `LLMQueryWriter`
+   grew a `quiet_empty` flag (default `False`); the count writer sets it `True`, so the paid writer still
+   surfaces a *genuine* empty as signal while the `$0` count writer stays silent. Regression test:
+   `test_quiet_empty_suppresses_the_count_writers_empty_log_only`.
+
+**How the next phase uses it.** The gap says the deployed policy loses ~0.18 coverage to real queries;
+it does **not** say whether the RL *advantage* over `sweep(hybrid)` survives — that needs the paired
+real-query head-to-head (`rag rl-h2h` + `SweepBridgePolicy`, built here, ~$3.2, currently held). E5
+(retrain) remains the open promote item and is now blocked for **two** independent reasons: sample size
+(18 groups) *and* sim-to-real bias exceeding the effect.

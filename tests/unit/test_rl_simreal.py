@@ -194,6 +194,28 @@ def test_writer_returns_empty_on_malformed_json() -> None:
     assert writer(req, EP, []) == ""  # → env falls back to the template
 
 
+def test_quiet_empty_suppresses_the_count_writers_empty_log_only() -> None:
+    # The $0 measure-phase writer returns "" on EVERY branch by design; its query_writer_empty
+    # events are noise and were once misread as a real degenerate-query failure mid-paid-run.
+    # `quiet_empty=True` silences them; the default (paid) writer must still emit the event so a
+    # genuine empty query stays visible. Both still return "" (env falls back to the template).
+    import structlog
+
+    from stock_agent.rag.rl.action import RetrievalRequest
+
+    req = RetrievalRequest(arm="hybrid", query="template", scope_ticker="MU")
+
+    loud = LLMQueryWriter(DryRunLLM(), alias_map=ALIAS)  # default quiet_empty=False (paid path)
+    with structlog.testing.capture_logs() as events:
+        assert loud(req, EP, []) == ""
+    assert any(e["event"] == "rl_simreal.query_writer_empty" for e in events)
+
+    quiet = LLMQueryWriter(DryRunLLM(), alias_map=ALIAS, quiet_empty=True)  # count-writer path
+    with structlog.testing.capture_logs() as events:
+        assert quiet(req, EP, []) == ""
+    assert not any(e["event"] == "rl_simreal.query_writer_empty" for e in events)
+
+
 # ---- the measured gap ---------------------------------------------------------------------------
 def test_sim_to_real_measures_a_positive_coverage_gap() -> None:
     # The LLM's query surfaces MU_DEEP (the template cannot), so the real run covers A2 and the sim

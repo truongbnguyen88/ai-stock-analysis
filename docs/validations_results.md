@@ -1208,3 +1208,45 @@ sets too large to be worth `N × cost`), and possibly pick a **different arm per
 hop 2, is catastrophic on hop 1). If no policy beats the scripted sweeper on that margin, **RL
 genuinely adds nothing here** — a legitimate finding, honestly obtained. No RL verdict is
 supportable until that re-run.
+
+## 2026-07-18 — A6.2g sim-to-real gap: the `$0` simulator flatters the policy by 0.18 coverage 🔬
+
+**What was run (paid, $2.6).** The frozen REINFORCE policy (`outputs/experiments/e5/reinforce-s1/`,
+E7-seated env, Voyage embeddings) rolled twice over the **same** 42 held-out HARD+MED episodes —
+templated `$0` queries vs **real Sonnet-written** queries — changing only the query text (the
+`rag rl-simreal` harness; theory in `rag_concepts.md` §20.8). This is the "measure the sim-to-real
+gap" commitment in the A6.2 design (rollout realism), not the E5 retrain — it validates the frozen
+policy's `$0` numbers against a realistic query-writer.
+
+| metric | `$0` sim (templated) | real (LLM-written) | gap |
+|---|---|---|---|
+| coverage Φ(s_T) | 0.595 | 0.417 | **−0.179** (95% t-CI [−0.363, +0.006]; p≈0.06) |
+| return | +0.544 | +0.389 | **−0.155** |
+| same action sequence | — | — | 71.4% |
+| synthesis refused (insufficient) | — | — | 33.3% |
+| LLM calls (fan-out-aware) | — | 274 billed (473 ceiling) | — |
+
+**The mechanism is the realization channel, not decisions.** 30/42 episodes took the **identical**
+action sequence under real queries, yet **13 of those 30 still lost coverage** (mean −0.154). The
+policy's "action" is an action-*type* (`hybrid@self`, `hybrid@fanout`, `STOP`); the query *text* is
+what differs, and the templated text embeds the gold A2 span verbatim (the §20.7 / E6 upper-bound
+caveat). So the −0.18 is a **direct estimate of how much that gold-text leak inflated the templated
+coverage** — the caveat, quantified. Real coverage even *beats* sim on 7 episodes (impossible under a
+"real union never reaches synthesis" wiring bug — the mixed {0.0, 0.5, 1.0} spread was the live check
+that the pipeline was sound before the full spend).
+
+**Why this matters for the promote question.** The RL-vs-`sweep(hybrid)` margin the templated eval was
+built to detect is ~0.02–0.05. The sim-to-real bias (0.18) is **4–9× that margin**, so the `$0`
+verdict is dominated by simulator bias, *independent of* the 18-group power limit (that limit sets the
+CI width; this bias sets what the point estimate even measures — two separate obstructions, both must
+clear). Practical consequence: **the templated eval cannot arbitrate promote on its own**; a real-query
+eval is mandatory for any A6.2 promote claim, and the honest read of E5 stays "descriptive, not
+promote-able" — now for *two* independent reasons.
+
+**Caveats.** Direction is robust (sign split 7:18:17 pos:tie:neg; both strata agree, HARD −0.171 / MED
+−0.214) but **not significant at n=42** — per-episode gaps are {−0.5, 0, +0.5}-valued (sd 0.59), so the
+t-CI includes zero (one-sample t p≈0.06, Wilcoxon p≈0.08). The −0.18 is a point estimate of the bias,
+not a resolved magnitude. Measured under **Voyage** (the higher-ceiling substrate, §20.7), so the sim side is the
+0.595 Voyage number, not the 0.607 local one. The optional `sweep`-vs-RL real-query head-to-head
+(`rag rl-h2h`, ~$3.2) — which would say whether the RL *advantage* survives real queries, not just
+whether the policy degrades — is built and gated but **not yet run** (held).

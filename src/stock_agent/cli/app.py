@@ -2158,23 +2158,26 @@ def rag_rl_simreal(
             query_writer=writer,  # type: ignore[arg-type]
         )
 
-    # Fan-out-aware spend estimate: roll the greedy policy through a $0 stand-in writer and count
-    # ACTUAL calls (one per retrieval request ⇒ a sweep counts branches, which the naive step bound
-    # misses). $0 (no Sonnet calls) — only the cached retrieval it shares with the paid
-    # run. Close but not exact: LLM queries can shift the hop-2 fan-out width (see docstring).
-    count_writer = LLMQueryWriter(DryRunLLM(), alias_map=alias_map)
-    measured = measure_llm_calls(
-        loaded.policy, episodes, env=_build(count_writer), writer=count_writer
-    )
-    naive = estimate_llm_calls(len(episodes), settings.agentic_max_steps)
-    typer.echo(
-        f"Sim-to-real: {len(episodes)} episodes from {sorted(wanted)} "
-        f"(policy={loaded.algo}/{loaded.action_space}). "
-        f"~{measured} LLM calls (fan-out-aware: query hops incl. sweep branches + 1 synthesis/"
-        f"episode; naive step-bound would say {naive})."
-    )
+    # Fan-out-aware spend gate. The estimate exists ONLY to let a human authorize spend, so pay for
+    # the pre-roll ONLY when we are about to REFUSE (no --yes, not a dry-run). It rolls the greedy
+    # policy through a $0 stand-in writer and counts ACTUAL calls (one per retrieval request ⇒ a
+    # sweep counts branches, which the naive step bound misses). Under --yes / --dry-run the run
+    # itself yields the same honest `total_llm_calls`, so this ~3-min pre-roll (and its benign
+    # query_writer_empty flood) would be pure waste — skip it. `quiet_empty` keeps this path clean
+    # too, so a real empty in the paid writer below stays legible as signal.
     if not dry_run and not yes:
-        typer.echo("This spends API budget. Re-run with --yes (or --dry-run for a $0 check).")
+        count_writer = LLMQueryWriter(DryRunLLM(), alias_map=alias_map, quiet_empty=True)
+        measured = measure_llm_calls(
+            loaded.policy, episodes, env=_build(count_writer), writer=count_writer
+        )
+        naive = estimate_llm_calls(len(episodes), settings.agentic_max_steps)
+        typer.echo(
+            f"Sim-to-real: {len(episodes)} episodes from {sorted(wanted)} "
+            f"(policy={loaded.algo}/{loaded.action_space}). "
+            f"~{measured} LLM calls (fan-out-aware: query hops incl. sweep branches + 1 "
+            f"synthesis/episode; naive step-bound would say {naive}). "
+            "This spends API budget. Re-run with --yes (or --dry-run for a $0 check)."
+        )
         raise typer.Exit(code=1)
 
     # --dry-run swaps the whole LLM (writer + synthesis) for a $0 stand-in: the writer returns "",
@@ -2191,6 +2194,15 @@ def rag_rl_simreal(
         seed=seed,
     )
     typer.echo("\n" + format_simreal_markdown(report))
+    # The honest fan-out-aware count, straight from the run that just executed (identical accounting
+    # to the pre-roll gate) — no separate $0 pass needed: --dry-run counts it, --yes billed it.
+    naive = estimate_llm_calls(len(episodes), settings.agentic_max_steps)
+    tally = "billed" if not dry_run else "counted ($0 dry-run)"
+    typer.echo(
+        f"\n{len(episodes)} episodes from {sorted(wanted)} "
+        f"(policy={loaded.algo}/{loaded.action_space}); "
+        f"{report.total_llm_calls} LLM calls {tally} (naive step-bound would say {naive})."
+    )
     destination = out or policy_path.parent / "rl_simreal.json"
     write_report(report, destination)
     typer.echo(f"\nWrote sim-to-real report to {destination}")

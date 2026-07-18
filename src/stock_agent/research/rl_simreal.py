@@ -76,12 +76,22 @@ class LLMQueryWriter:
     """
 
     def __init__(
-        self, llm: TextLLM, *, alias_map: Mapping[str, Sequence[str]] | None = None
+        self,
+        llm: TextLLM,
+        *,
+        alias_map: Mapping[str, Sequence[str]] | None = None,
+        quiet_empty: bool = False,
     ) -> None:
         self.llm = llm
         self.calls = 0
         self.issued: list[str] = []
         self._alias_map = alias_map or {}
+        # The $0 measure-phase writer (wraps DryRunLLM) returns "" on EVERY branch by design, so
+        # logging each one floods the log with `query_writer_empty` events that are visually
+        # indistinguishable from a real degenerate query during a paid run. Silence them for the
+        # count writer only; the PAID writer keeps quiet_empty=False so a genuine empty stays
+        # visible as signal.
+        self._quiet_empty = quiet_empty
 
     def reset(self) -> None:
         """Clear the per-episode anti-loop list (call between episodes; ``calls`` keeps rising)."""
@@ -120,7 +130,8 @@ class LLMQueryWriter:
             return ""
         query = str(payload.get("query", "")).strip()
         if not query:
-            log.info("rl_simreal.query_writer_empty", scope=request.scope_ticker)
+            if not self._quiet_empty:
+                log.info("rl_simreal.query_writer_empty", scope=request.scope_ticker)
             return ""
         self.issued.append(query)
         return query

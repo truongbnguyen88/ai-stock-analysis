@@ -1121,6 +1121,18 @@ Ridge backend = hand-rolled numpy normal equations (no sklearn dep). (4) `λ_c`=
 >   choice** (rerank helps hop 2, is catastrophic on hop 1). ⚠️ **Still power-limited: 18 test groups
 >   ⇒ ±0.077 CI vs a ~0.02–0.05 effect** — run E5 descriptively; *promote* is blocked on benchmark
 >   size, not on RL. The old "ceiling ~0.84" was **wrong** — it never checked the union cap.
+> - [x] **A6.2g — sim-to-real gap MEASURED (2026-07-18, paid $2.6).** Fulfils the A6.2 "rollout
+>   realism / measure the sim-to-real gap" commitment; **not** E5 retrain. Frozen REINFORCE
+>   (`e5/reinforce-s1`, E7-seated, Voyage) run twice over the same 42 held-out episodes — templated
+>   `$0` vs real Sonnet queries. **coverage gap −0.179** (95% t-CI [−0.363, +0.006], p≈0.06 — negative
+>   but not significant at n=42), return −0.155,
+>   same-action 71.4%, refusal 33.3%. The `$0` sim **flatters** the policy: the gap is the realization
+>   channel (30/42 kept the same action sequence, 13 still lost coverage) — the templated text's
+>   embedded gold span, quantified (§20.8 · rag_concepts.md · validations 2026-07-18). Bias (0.18) is
+>   4–9× the RL-vs-sweep margin ⇒ the templated eval can't arbitrate promote *independent of* the power
+>   limit. Also fixed the spend-gate wart (pre-count skipped under `--yes`; `quiet_empty` silences the
+>   `$0` count-writer's benign empties). Real-query **head-to-head** (`rag rl-h2h` + `SweepBridgePolicy`,
+>   ~$3.2) — does the RL *advantage* survive real queries — is built + gated but **held** (not run).
 
 
 > **Detailed execution plan (slice-by-slice, module/interface designs, TransitionCache, action-space
