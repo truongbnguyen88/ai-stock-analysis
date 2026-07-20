@@ -45,7 +45,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 - **`chat`** — a conversational agent (Role C) that orchestrates the tools, grounds
   every number, and can export an executive summary to PDF/DOCX/Markdown. It can also
   answer **SEC-filing questions** (`search_filings`), run **multi-hop filing research**
-  (`research_multistep` — a bounded ReAct loop for comparative / change-over-time /
+  (`research_multistep` — a bounded ReAct loop, graph-backed, for comparative / change-over-time /
   bridging questions one retrieval can't answer), and produce an **integrated brief**
   (`research_summary`) over the RAG layer below — all cited. **Hybrid routing:** by
   default the LLM picks the tool(s); pass `--domain <area>` to dispatch a capability
@@ -157,6 +157,29 @@ Build steps + locked decisions: [docs/RAG_TODO.md](docs/RAG_TODO.md); concepts:
 [docs/rag_concepts.md](docs/rag_concepts.md); per-phase mechanism notes:
 [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md).
 
+### Advanced retrieval track (A1–A6)
+
+Each stage of the retrieval stack was **promoted on measured evidence, not by default** — every phase
+had to beat the incumbent on a labeled benchmark before its flag flipped on, and three did not.
+Plan of record + full verdicts: [docs/ADVANCED_RAG_TODO.md](docs/ADVANCED_RAG_TODO.md).
+
+| Phase | Verdict |
+|---|---|
+| **A1** — retrieval eval harness (nDCG, precision/recall on a labeled benchmark) | the gate every later phase had to clear |
+| **A2** — cross-encoder reranking | **built, default-OFF** — gain marginal with a domain-mismatched ms-marco reranker; kept available via `rerank_provider=local\|voyage` |
+| **A3** — hybrid dense ⊕ BM25, fused by reciprocal rank fusion | **PROMOTED** — nDCG 0.787 → 0.823, precision 0.760 → 0.805; now the default `retrieval_mode` |
+| **A4** — agentic RAG (bounded ReAct loop over retrieval) | shipped — powers `research_multistep` |
+| **A5** — GraphRAG (entity/relation graph mined from filings) | **PROMOTED for the multi-hop path only** (scoped/tiered; single-shot QA stays hybrid) |
+| **A6.1** — contextual bandits + doubly-robust off-policy evaluation | **REJECT** — lift CI includes 0; `adaptive_retrieval` stays off |
+| **A6.2** — REINFORCE retrieval policy | **REJECT** — the learned policy reproduces the scripted `sweep(hybrid)` controller byte-identically on the hard split |
+
+**On the RL result.** A6 was implemented, trained, and evaluated in full — and then rejected. Off-policy
+evaluation showed no significant lift, and the learned policy converged onto the behavior of the very
+scripted controller it was meant to beat. The shipped deliverable is therefore that scripted controller
+plus pooled-rerank seating; the RL code stays in `rag/rl/` behind default-off flags and **never touches
+the serving path**. Reporting the negative result is the point — the A1 harness exists precisely so a
+promotion is allowed to fail.
+
 ## Development
 
 ```bash
@@ -176,6 +199,7 @@ canned responses) — no live API calls in tests.
 | [docs/models_explanation.md](docs/models_explanation.md) | Every forecasting model, math, assumptions, failure modes |
 | [docs/validations_results.md](docs/validations_results.md) | Backtest / tuning / calibration results |
 | [docs/RAG_TODO.md](docs/RAG_TODO.md) · [docs/rag_concepts.md](docs/rag_concepts.md) · [docs/rag_implementation_notes.md](docs/rag_implementation_notes.md) | SEC-grounded RAG layer: build plan, concepts, per-phase mechanism notes |
+| [docs/ADVANCED_RAG_TODO.md](docs/ADVANCED_RAG_TODO.md) | Advanced retrieval track A1–A6 (hybrid · reranking · eval · agentic · GraphRAG · retrieval-RL) with each phase's promote/reject verdict |
 | [docs/APP_REDESIGN.md](docs/APP_REDESIGN.md) · [docs/PHASE2_REACT_FASTAPI_PLAN.md](docs/PHASE2_REACT_FASTAPI_PLAN.md) | Frontend redesign: brass-on-ink Streamlit restyle + the React/FastAPI streaming app (event schema, API surface) |
 | [docs/ROADMAP.md](docs/ROADMAP.md) · [docs/TASKS.md](docs/TASKS.md) | Build plan + progress log |
 

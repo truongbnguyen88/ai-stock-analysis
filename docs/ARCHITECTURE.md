@@ -167,7 +167,11 @@ ai-stock-analysis/
 │   ├── news/                    # fetch · dedup · rank · clean · aggregate · gdelt_ingest (BigQuery)
 │   ├── documents/               # ticker_cik · download (+bulk_download, date-floor) · parsers (HTML→text + section detect) · manifest
 │   ├── rag/                     # embeddings (Protocol: fastembed/openai/voyage, batched) · chunking · vector_store (Protocol: InMemory/Chroma, per-embedder namespaced) · retriever · pipeline (ingest/bulk_ingest) · eval (A/B)
+│   │                            #   advanced: sparse_store (BM25/FTS5) · hybrid (RRF) · rerank (cross-encoder, OFF) · read_path (composition root)
+│   │                            #   · retrieval_log · policy/policy_features/policy_retriever · ope (DR/IPS) · reward · rl/ (env · action · state · reinforce · ppo · seating · rleval) — A6, default-OFF
+│   ├── graph/                   # A5 GraphRAG: extract (LLM entity/relation mining) · store (SQLite) · retriever (traversal ⊕ hybrid) · prompts
 │   ├── research/                # synthesis (single grounded call + citation guard) · memo · evidence · prompts
+│   │                            #   · agentic (A4 ReAct loop) · multistep_{gen,eval,templates} · bridge · brief · rl_simreal (sim-to-real audit)
 │   ├── llm/                     # client · prompts · news_summarizer (A) · synthesizer (C) · guards
 │   ├── forecasting/             # base · buckets · historical · monte_carlo · ml · pooled · train_pooled ·
 │   │                            #   ensemble · quantiles · conformal(+_calibrate · train_conformal) · large_move · verify · regime
@@ -177,7 +181,7 @@ ai-stock-analysis/
 │   ├── pipelines/               # analyze · forecast · backtest · research (SEC memo)
 │   ├── ui/                       # PURE view layer (typed, gate-tested, no Streamlit import): theme (design tokens + web_tokens_css) · html · tiles · chart_theme · state · routing · capabilities
 │   ├── api/                      # FastAPI streaming backend (thin, downward-only): app · deps · schemas · streaming (AgentEvent→SSE) · routes/{chat,threads,export,meta}
-│   └── cli/                     # app.py (analyze · forecast · backtest · train · conformal-calibrate · verify-models · ingest-news · chat · documents download-sec/ingest · rag query/eval · research)
+│   └── cli/                     # app.py (analyze · forecast · backtest · train · conformal-calibrate · verify-models · ingest-news · chat · documents download-sec/ingest/backfill-sparse · rag query/graph-query/ask/eval/eval-multistep/policy-eval/rl-train/rl-eval/rl-simreal/rl-h2h · research)
 ├── configs/  (default.yaml · models.yaml · providers.yaml · universe.txt · ticker_aliases.json)
 ├── ui/                          # Streamlit frontend (view code, ungated): chat_app.py · session.py · components/{sidebar,hero,message,inputs}.py  (imports the pure src/stock_agent/ui layer)
 ├── web/                         # React SPA (Vite + TS + Tailwind + shadcn/ui): src/{components,lib,store,styles} · tokens.css (generated from ui.theme) — talks only to api/ over HTTP/SSE
@@ -186,7 +190,7 @@ ai-stock-analysis/
 ├── notebooks/                   # exploration only — no core logic
 ├── outputs/  (reports · experiments · models [+conformal.json] · news_sentiment — gitignored)
 ├── data/     (raw [SEC filings] · processed · vectorstore [Chroma] — gitignored; the RAG corpus)
-└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST · app_enhancements · APP_REDESIGN · PHASE2_REACT_FASTAPI_PLAN · RAG_TODO · RAG_IMPLEMENTATION_PLAN · rag_concepts · rag_implementation_notes)
+└── docs/   (ARCHITECTURE · ROADMAP · TASKS · models_explanation · validations_results · NEWS_INGEST · app_enhancements · APP_REDESIGN · PHASE2_REACT_FASTAPI_PLAN · RAG_TODO · RAG_IMPLEMENTATION_PLAN · ADVANCED_RAG_TODO (A1–A6 plan of record) · RAG_IMPLEMENTATION_PLAN_ADV · a6_2_plan · rag_concepts · rag_implementation_notes · PROMPT_ENGINEERING_LESSONS)
 ```
 
 ## 6. Module responsibilities
@@ -202,8 +206,10 @@ ai-stock-analysis/
 | `features` | Point-in-time feature matrix (price + news) | Leakage prevention is the core concern |
 | `news` | Fetch, dedup, clean, rank | Dedup before LLM (cost + quality) |
 | `documents` | Download SEC filings (official EDGAR API), parse HTML→text, detect sections | Official API only (no scraping); raw never overwritten; idempotent |
-| `rag` | Chunk, embed (once, at ingestion), store, retrieve (filter + top-k + dedup) | Embedder + store behind Protocols; **no LLM in retrieval** |
-| `research` | One grounded synthesis call → cited memo / answer | Citation guard: every cite ∈ retrieved set; non-advisory |
+| `rag` | Chunk, embed (once, at ingestion), store, retrieve (hybrid dense⊕BM25, filter + top-k + dedup) | Embedder + store behind Protocols; **no LLM in retrieval** |
+| `rag.rl` (A6) | Offline retrieval-policy research: env, REINFORCE/PPO, OPE, seating | **Default-OFF and off the serving path** — reachable only from `cli/` + the eval harness |
+| `graph` (A5) | Mine entity/relation edges from filings → SQLite; traversal-based retrieval | Scoped universe (cost); multi-hop path only; degrades to hybrid when a ticker has no edges |
+| `research` | One grounded synthesis call → cited memo / answer; bounded ReAct loop for multi-hop | Citation guard: every cite ∈ retrieved set; non-advisory |
 | `llm` | Summarize news, extract signals, cite URLs | **No numbers**; schema-validated output |
 | `forecasting` | Scenario probabilities, E[r], VaR, CIs | All probabilities model-derived; common interface |
 | `backtesting` | Walk-forward OOS eval + calibration | Strict temporal separation |
@@ -353,10 +359,13 @@ providers/sec_edgar   EDGAR OFFICIAL API client (Protocol; throttle ≤10 rps; U
 documents/            download (+bulk, date-floor, idempotent) · parse HTML→text · detect Item sections · manifest
         ▼
 rag/                  chunk (section-aware, pure) · embed ONCE (Embedder Protocol) · store (VectorStore Protocol) · retrieve (filter+top-k+dedup, NO LLM)
+                      A3 hybrid = dense ⊕ BM25 fused by RRF (the promoted default); A2 rerank available, OFF
+        ▼
+graph/                A5 entity/relation graph mined from filings (SQLite) — traversal ⊕ hybrid, multi-hop path only
         ▼
 research/             ONE grounded synthesis call (llm/ + guards) → GroundedAnswer / ResearchMemo
         ▼
-research/agentic        A4 bounded ReAct loop (multi-hop) — reuses retrieval + the P7 guarded answer
+research/agentic        A4 bounded ReAct loop (multi-hop, graph-backed) — reuses retrieval + the P7 guarded answer
         ▼
 pipelines/research · cli (research · rag ask) · agent tools (search_filings · research_multistep · research_summary)
 ```
@@ -412,13 +421,33 @@ narrative with cited SEC claims — **no recommendation field**, same as the ana
 
 ### Production state
 
-Built incrementally P0–P9 (`RAG_TODO.md`), then an **advanced-RAG track A1–A4** ([ADVANCED_RAG_TODO.md](ADVANCED_RAG_TODO.md)):
-A1 retrieval-eval harness, A2 reranking (kept available, OFF), **A3 hybrid dense⊕BM25 — promoted to the
-default** on a measured eval win, A4 **agentic multi-hop** retrieval (`research_multistep`). The MVP
-corpus = SEC filings only (transcripts / decks / GraphRAG (A5) / retrieval-RL (A6) are still future).
-As shipped: ~3 years of 10-K/10-Q/8-K across the universe (≈93k chunks, with a backfilled BM25 index)
-embedded with **voyage-4** in production (local BGE collection retained as fallback); the production
-embedder is selected by `EMBEDDING_PROVIDER` in `.env`.
+Built incrementally P0–P9 (`RAG_TODO.md`), then an **advanced-RAG track A1–A6, now CLOSED**
+([ADVANCED_RAG_TODO.md](ADVANCED_RAG_TODO.md)). Every stage had to beat the incumbent on a labeled
+benchmark before its flag flipped on — **three did not, and stayed off**:
+
+| Phase | Verdict | Production state |
+|---|---|---|
+| A1 retrieval-eval harness (nDCG, P/R) | the gate for everything after it | — |
+| A2 cross-encoder reranking | marginal (domain-mismatched ms-marco) | **OFF** (`rerank_provider="none"`, kept available) |
+| A3 hybrid dense⊕BM25 (RRF) | **PROMOTED** — nDCG 0.787→0.823, P 0.760→0.805 | **ON** (`retrieval_mode="hybrid"`) |
+| A4 agentic multi-hop (bounded ReAct) | shipped | **ON** — powers `research_multistep` |
+| A5 GraphRAG (entity/relation graph) | **PROMOTED, scoped** | **ON for the multi-hop path only** (`graph_multistep_enabled=True`); single-shot QA stays hybrid |
+| A6.1 contextual bandits + DR/IPS off-policy eval | **REJECT** — lift CI includes 0 | **OFF** (`adaptive_retrieval=False`, `bandit_policy="fixed"`) |
+| A6.2 REINFORCE retrieval policy | **REJECT** — learned policy reproduces the scripted `sweep(hybrid)` byte-identically on the hard split | **OFF** — deliverable is the scripted sweep + pooled-rerank seating |
+
+**A6 is a deliberate negative result, not an unfinished phase.** The RL stack (`rag/rl/`, `rag/policy*`,
+`rag/ope.py`, `research/rl_simreal.py`) is fully built, trained, and evaluated — including a paid
+sim-to-real audit that measured the simulator overstating coverage by ~0.18. It stays behind default-off
+flags and is **reachable only from `cli/` and the eval harness — nothing on the serving path imports
+it**, so the rejected policy cannot affect a user answer. Keeping the code is intentional: it is the
+evidence for the verdict and the substrate for any future re-test.
+
+Corpus as shipped: ~3 years of 10-K/10-Q/8-K across the universe — **96,576 chunks / 4,476 filings /
+108 tickers** (BM25 index backfilled in lockstep), embedded with **voyage-4** in production (local BGE
+collection retained as fallback); the production embedder is selected by `EMBEDDING_PROVIDER` in `.env`.
+The A5 graph is built over a **scoped semis/AI subset** (`configs/graph_universe.txt`, 48 seeds — not the
+full universe, for cost), and the graph DB is a gitignored local intermediate. Still future: transcripts
+and decks.
 
 ## 14. Frontend & streaming API layer
 
