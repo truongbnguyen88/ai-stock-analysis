@@ -18,7 +18,9 @@ from stock_agent.research.multistep_templates import (
 def test_fill_bridge_depends_on_golden() -> None:
     fq = fill_bridge(
         seed_name="NVIDIA",
+        seed_ticker="NVDA",
         target_surfaces=["Taiwan Semiconductor", "TSMC"],
+        target_ticker="TSM",
         topic="earthquake",
         relation="depends_on",
     )
@@ -32,12 +34,16 @@ def test_fill_bridge_depends_on_golden() -> None:
     assert [a.spans for a in fq.aspects] == [["Taiwan Semiconductor", "TSMC"], ["earthquake"]]
     assert fq.aspects[0].name == "NVIDIA names the dependency"
     assert fq.aspects[1].name == "that dependency's own earthquake disclosure"
+    # the entity binding: A1 must be evidenced by the SEED's filing, A2 by the TARGET's own
+    assert [a.ticker for a in fq.aspects] == ["NVDA", "TSM"]
 
 
 def test_fill_bridge_competes_with_golden() -> None:
     fq = fill_bridge(
         seed_name="NVIDIA",
+        seed_ticker="NVDA",
         target_surfaces=["Advanced Micro Devices"],
+        target_ticker="AMD",
         topic="7 nm",
         relation="competes_with",
     )
@@ -47,26 +53,40 @@ def test_fill_bridge_competes_with_golden() -> None:
     )
     assert fq.aspects[0].name == "NVIDIA names the competitor"
     assert fq.aspects[1].spans == ["7 nm"]
+    assert fq.aspects[1].ticker == "AMD"  # "that competitor's OWN disclosure"
 
 
 def test_fill_bridge_rejects_unsupported_relation() -> None:
     with pytest.raises(ValueError, match="unsupported bridge relation"):
         fill_bridge(
-            seed_name="NVDA", target_surfaces=["Micron"], topic="x", relation="mentions_risk"
+            seed_name="NVDA",
+            seed_ticker="NVDA",
+            target_surfaces=["Micron"],
+            target_ticker="MU",
+            topic="x",
+            relation="mentions_risk",
         )
 
 
 def test_fill_bridge_rejects_empty_surfaces() -> None:
     with pytest.raises(ValueError, match="target_surfaces must be non-empty"):
-        fill_bridge(seed_name="NVDA", target_surfaces=[], topic="x", relation="depends_on")
+        fill_bridge(
+            seed_name="NVDA",
+            seed_ticker="NVDA",
+            target_surfaces=[],
+            target_ticker="MU",
+            topic="x",
+            relation="depends_on",
+        )
 
 
 def test_fill_control_golden() -> None:
-    fq = fill_control(company_name="Micron", topic="DRAM")
+    fq = fill_control(company_name="Micron", company_ticker="MU", topic="DRAM")
     assert fq.question == "What does Micron disclose about DRAM in its SEC filings?"
     assert fq.relation == "single-entity"
     assert len(fq.aspects) == 1
     assert fq.aspects[0].spans == ["DRAM"]
+    assert fq.aspects[0].ticker == "MU"
 
 
 def test_bridge_relations_are_company_to_company() -> None:

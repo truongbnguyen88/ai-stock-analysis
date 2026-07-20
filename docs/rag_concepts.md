@@ -26,7 +26,10 @@
 14. [The four retrieval configurations (dense / reranked / hybrid / hybrid+rerank)](#14-the-four-retrieval-configurations-dense--reranked--hybrid--hybridrerank)
 15. [Agentic RAG — the ReAct loop for multi-hop retrieval](#15-agentic-rag--the-react-loop-for-multi-hop-retrieval)
 16. [GraphRAG — knowledge graphs and graph-augmented retrieval](#16-graphrag--knowledge-graphs-and-graph-augmented-retrieval)
-17. [References](#17-references)
+17. [Multi-hop benchmark construction — span-isolation, stratification, leakage-safe splits](#17-multi-hop-benchmark-construction--span-isolation-stratification-leakage-safe-splits)
+18. [Contextual bandits + off-policy evaluation (retrieval as a one-shot decision)](#18-contextual-bandits--off-policy-evaluation-retrieval-as-a-one-shot-decision)
+19. [Full RL for retrieval — MDP, policy gradients, REINFORCE, behavior cloning](#19-full-rl-for-retrieval--mdp-policy-gradients-reinforce-behavior-cloning)
+20. [References](#20-references)
 
 ---
 
@@ -1904,6 +1907,70 @@ row-wise split. (Verified on the committed set: 149 train / 63 test, 0 group ove
 direct analogue of *grouped cross-validation* (GroupKFold) in standard ML, with the bridge pair as the
 group key.
 
+### 17.5 Benchmark size and statistical power — the $\sqrt{G}$ group-wise bootstrap law
+
+Growing the benchmark is a **statistical-power** intervention, so the number that matters is not the
+question count $N$ but the number of independent **groups** $G$. §17.4 established that the eval
+resamples *groups*, not rows (row-wise resampling would pseudo-replicate). The consequence for
+confidence intervals:
+
+- **What the CI is over.** The reported effect (e.g. mean coverage difference between two policies) is a
+  mean of per-**group** statistics. A group-wise bootstrap resamples the $G$ test groups with
+  replacement and recomputes the mean; its spread is the CI. Under the usual iid-group approximation the
+  bootstrap standard error of a mean scales as $\sigma/\sqrt{G}$, where $\sigma$ is the between-group
+  standard deviation of the per-group statistic. So the **half-width** obeys
+
+$$
+h(G) \approx \frac{k}{\sqrt{G}}, \qquad k \approx z\sigma
+$$
+
+  with $z$ the coverage multiplier (≈1.96 for 95%) folded into a single empirical constant $k$. The
+  extra questions *inside* a group buy almost nothing — they are near-duplicates (same bridge pair,
+  different topic), so they shrink within-group noise but not the between-group term $\sigma$ that
+  dominates $h$.
+
+- **The right denominator is HARD∪MED groups.** CTRL episodes are searched verbatim (the answer string
+  is in the query), so they are excluded from the RL episode set; only $g\in\text{HARD}\cup\text{MED}$
+  bridge groups are genuine 2-hop episodes. Hence the **RL power denominator** is
+  $G=\lvert\{\text{distinct HARD}\cup\text{MED groups in the test fold}\}\rvert$, not the raw test-question
+  count.
+
+**Worked example (the exact A6.0-expansion numbers).** Anchor $k$ on the pre-expansion fold, which had
+$G_1=13$ HARD∪MED test groups and a measured bootstrap half-width $h_1=\pm 0.077$:
+
+$$
+k = h_1\sqrt{G_1} = 0.077\sqrt{13} \approx 0.278.
+$$
+
+The 20→48-seed expansion raised the fold to $G_2=38$ distinct HARD∪MED test groups, so
+
+$$
+h_2 \approx \frac{k}{\sqrt{G_2}} = \frac{0.278}{\sqrt{38}} \approx \pm 0.045,
+$$
+
+i.e. the CI half-width falls from $\pm 0.077$ to $\approx\pm 0.045$ — a $\sqrt{38/13}\approx 1.7\times$
+tightening from a $2.9\times$ group increase. That $\sqrt{\cdot}$ is the whole story: **quadratic cost
+for linear precision.** To *halve* the half-width you need $4\times$ the groups; to resolve a small
+effect $\delta\approx 0.02$ at $h\approx 0.01$ you would need $G\approx (k/0.01)^2\approx 770$ groups —
+far beyond what the ingested universe can supply (48 seeds gave 125 HARD∪MED groups total). Supply-side
+growth alone cannot reach the small-effect regime; that is a structural ceiling, not a tuning problem.
+
+**Two independent obstructions to a promote decision.** Power is necessary but not sufficient. A
+promote claim needs *both*:
+
+| Obstruction | What it controls | Fixed by | Scales with |
+|---|---|---|---|
+| **Power** (CI width) | how tightly the *point estimate* is bracketed | more groups $G$ | $h\propto 1/\sqrt{G}$ |
+| **Validity** (bias) | *what the point estimate even measures* | a real-query eval | not $G$ at all |
+
+Growing the benchmark ($G$) is a pure power intervention: it shrinks $h$ but leaves any
+simulator-vs-reality bias in the point estimate untouched. When the bias (here the templated
+gold-text leak, measured at $\approx 0.18$ coverage — §20.7) is several times the effect $\delta$ being
+tested, a *tighter* CI around a *biased* estimate does not rescue the decision — it brackets the wrong
+number more precisely. This is why the A6.0 expansion improves the benchmark for every *future* run yet
+does **not** by itself change the standing "descriptive, not promote-able" verdict: it clears one of two
+gates.
+
 ---
 
 ## 18. Contextual bandits + off-policy evaluation (retrieval as a one-shot decision)
@@ -2235,7 +2302,868 @@ policy is a bandit whose promotion is gated behind an OPE certificate rather tha
 
 ---
 
-## 19. References
+## 19. Full RL for retrieval — MDP, policy gradients, REINFORCE, behavior cloning
+
+> **Scope.** This section covers the A6.2d layer: the MDP the retrieval loop becomes, the
+> policy-gradient theorem, REINFORCE with reward-to-go, value baselines, and behavior cloning — the
+> theory behind [`rag/rl/policy.py`](../src/stock_agent/rag/rl/policy.py) and
+> [`rag/rl/reinforce.py`](../src/stock_agent/rag/rl/reinforce.py). PPO (clipped surrogate, GAE) is
+> deferred to A6.2e and appended here then. Potential-based shaping (§19.8) is the reward the returns
+> in §19.5 are built from.
+
+### 19.1 From one-shot bandit (§18) to a sequential MDP
+
+§18 framed a *single* retrieval as a contextual bandit: observe a query context, pull one arm, collect
+one reward. A6.2 lifts that to the full multi-hop loop of §15 — **which** retriever, **where** to point
+it, **when** to stop — as a finite-horizon **Markov decision process (MDP)**. The distinction that
+matters: in a bandit the action does not change the next context; in an MDP each retrieval *appends to
+the evidence union*, which changes the next state (e.g. it surfaces a newly-named-but-unretrieved
+entity to bridge to). Credit must now be assigned *across* steps, not within one.
+
+Formally the MDP is a tuple $(\mathcal{S}, \mathcal{A}, P, r, \gamma, T)$:
+
+- **State** $s_t \in \mathcal{S}$ — the 18-dim label-free vector of §A6.2a (static query block ⊕ dynamic
+  evidence summary). "Label-free" is load-bearing: $s_t$ is a function of the trajectory-so-far only,
+  so a policy trained here runs unchanged on a real, unlabeled query.
+- **Action** $a_t \in \mathcal{A}$ — the discrete space of §A6.2b: `STOP` or a `(config, scope)`
+  retrieval. Illegal actions (a discovered slot with no entity) are masked.
+- **Transition** $P(s_{t+1} \mid s_t, a_t)$ — **deterministic** here: the action templates to a query,
+  the *real* retriever runs against the *fixed* corpus, the chunks fold into the deduped union. A
+  deterministic, memoized transition (the `TransitionCache`) is what makes unlimited on-policy rollouts
+  free and fast.
+- **Reward** $r_t$ — potential-based shaping on coverage minus a cost penalty (§19.8).
+- **Discount** $\gamma \in (0, 1]$ and **horizon** $T = 3$ (`agentic_max_steps`).
+
+### 19.2 The objective
+
+A stochastic policy $\pi_\theta(a \mid s)$ (parameters $\theta$) induces a distribution over
+trajectories $\tau = (s_0, a_0, r_0, s_1, \dots, s_T)$. We maximize the expected discounted return:
+
+$$J(\theta) = \mathbb{E}_{\tau \sim \pi_\theta}\left[ R(\tau) \right], \quad R(\tau) = \sum_{t=0}^{T-1} \gamma^t r_t$$
+
+Every quantity is plain: $\pi_\theta(a \mid s)$ is the probability the policy takes action $a$ in state
+$s$; $\gamma^t$ down-weights a reward earned $t$ steps in the future; $R(\tau)$ is one episode's total
+(discounted) reward; $J(\theta)$ averages that over the randomness in the policy's own action choices
+(the env is deterministic, so *all* the randomness is the policy's sampling).
+
+### 19.3 The policy: linear softmax + the score function
+
+Each action gets a weight row; the per-action bias is folded in by appending a constant $1$ to the
+state, $x = [s; 1] \in \mathbb{R}^{d+1}$, so a single matrix $W \in \mathbb{R}^{K \times (d+1)}$ (with
+$K$ actions) holds everything:
+
+$$z = W x, \qquad \pi_\theta(a \mid s) = \frac{\exp(z_a)}{\sum_{k} \exp(z_k)}$$
+
+$z$ is the vector of **logits** (one real score per action); softmax turns them into a probability
+distribution. Masking sets $z_k = -\infty$ for illegal $k$, so those actions get probability $0$ and
+never contribute; `STOP` is always legal, so at least one logit is finite and the softmax is defined.
+
+The **score function** is the gradient of the log-probability. Using the standard softmax identity
+$\partial \log \pi_\theta(a \mid s) / \partial z_k = \mathbb{1}[k = a] - \pi_\theta(k \mid s)$ and the
+chain rule through $z_k = W_{k,:} x$:
+
+$$\frac{\partial \log \pi_\theta(a \mid s)}{\partial W_{k,:}} = \left( \mathbb{1}[k = a] - \pi_\theta(k \mid s) \right) x$$
+
+In words: the gradient row for action $k$ is the state $x$ scaled by "did we take $k$" ($\mathbb{1}[k=a]$,
+which is $1$ for the action actually taken and $0$ otherwise) minus "how likely was $k$"
+($\pi_\theta(k \mid s)$). Taking action $a$ pushes its logit up and pushes every action's logit down in
+proportion to its current probability — a soft winner-take-all. This closed form (`grad_log_prob`) is
+why the numpy learner needs no autodiff; a finite-difference test pins it.
+
+### 19.4 The policy-gradient theorem (derivation)
+
+We cannot differentiate $J$ by sampling naively, because the *distribution* we sample from depends on
+$\theta$. The **likelihood-ratio (log-derivative) trick** $\nabla p = p \nabla \log p$ moves the
+gradient inside the expectation:
+
+$$\nabla_\theta J(\theta) = \nabla_\theta \sum_\tau p_\theta(\tau) R(\tau) = \sum_\tau p_\theta(\tau) \nabla_\theta \log p_\theta(\tau) R(\tau) = \mathbb{E}_{\tau \sim \pi_\theta}\left[ R(\tau) \nabla_\theta \log p_\theta(\tau) \right]$$
+
+The trajectory density factorizes over the initial-state distribution $\rho$, the policy, and the
+dynamics $P$:
+
+$$p_\theta(\tau) = \rho(s_0) \prod_{t=0}^{T-1} \pi_\theta(a_t \mid s_t) P(s_{t+1} \mid s_t, a_t) \quad\Longrightarrow\quad \nabla_\theta \log p_\theta(\tau) = \sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t \mid s_t)$$
+
+The key cancellation: $\rho$ and $P$ do **not** depend on $\theta$, so their log-gradients vanish. This
+is why the algorithm needs **no model of the transition dynamics** — the black-box retriever can stay
+black-box. Substituting back:
+
+$$\nabla_\theta J(\theta) = \mathbb{E}_{\tau}\left[ \left( \sum_{t} \nabla_\theta \log \pi_\theta(a_t \mid s_t) \right) R(\tau) \right]$$
+
+### 19.5 REINFORCE with reward-to-go
+
+Weighting *every* score term by the *whole* return $R(\tau)$ is valid but needlessly noisy: an action at
+step $t$ cannot have caused rewards earned *before* $t$. Dropping those (zero-expectation) cross terms
+gives the **reward-to-go** form:
+
+$$\nabla_\theta J(\theta) = \mathbb{E}_{\tau}\left[ \sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t \mid s_t) G_t \right], \qquad G_t = \sum_{k \ge t} \gamma^{k-t} r_k$$
+
+$G_t$ (the reward-to-go) is the discounted sum of rewards *from step $t$ onward* — the part of the
+return the action at $t$ can actually influence. (`discounted_returns_to_go` computes it by a backward
+pass $G_t = r_t + \gamma G_{t+1}$; convention note: we use $G_t$ as the weight, the common
+undiscounted-weighting variant of REINFORCE, rather than the strict $\gamma^t G_t$.) The Monte-Carlo
+estimator over $N$ sampled episodes, and one ascent step:
+
+$$\hat{g} = \frac{1}{N} \sum_{i=1}^{N} \sum_{t} \left( G_t^{(i)} - b(s_t^{(i)}) \right) \nabla_\theta \log \pi_\theta\left(a_t^{(i)} \mid s_t^{(i)}\right), \qquad \theta \leftarrow \theta + \eta \hat{g}$$
+
+with learning rate $\eta$ and a baseline $b$ (next). This is exactly `reinforce_update`.
+
+### 19.6 Baselines and variance reduction
+
+The Monte-Carlo estimator is unbiased but high-variance (a single episode's return is a noisy sample).
+Subtracting a **baseline** $b(s_t)$ that depends on the state but *not* the action leaves the gradient
+unbiased, because in expectation the baseline term is zero:
+
+$$\mathbb{E}_{a \sim \pi_\theta(\cdot \mid s)}\left[ b(s) \nabla_\theta \log \pi_\theta(a \mid s) \right] = b(s) \sum_a \pi_\theta(a \mid s) \frac{\nabla_\theta \pi_\theta(a \mid s)}{\pi_\theta(a \mid s)} = b(s) \nabla_\theta \sum_a \pi_\theta(a \mid s) = b(s) \nabla_\theta 1 = 0$$
+
+The last step uses $\sum_a \pi_\theta(a \mid s) = 1$ (probabilities sum to one, for any $\theta$, so its
+gradient is zero). What a good baseline *does* buy is lower variance: the **advantage**
+$A_t = G_t - b(s_t)$ measures whether an action did better or worse than *typical from that state*, so
+only genuinely-better-than-average actions get reinforced. `LinearValueBaseline` fits
+$b(s) = \theta_v^\top [s; 1]$ by ridge least squares to the observed returns; `reinforce_update`
+subtracts the *pre-fit* baseline (so this batch's gradient stays unbiased) and refits *after*, ready
+for the next step.
+
+### 19.7 Behavior cloning (BC) — supervised warm start
+
+Rather than learn from reward, BC learns to *imitate* an expert by maximum likelihood: minimize the
+cross-entropy of the expert action $e_i$ under the policy over $M$ demonstration states:
+
+$$\mathrm{CE}(\theta) = -\frac{1}{M} \sum_{i=1}^{M} \log \pi_\theta(e_i \mid s_i), \qquad \nabla_\theta \mathrm{CE}(\theta) = -\frac{1}{M} \sum_{i} \nabla_\theta \log \pi_\theta(e_i \mid s_i)$$
+
+A gradient-*descent* step on cross-entropy is a gradient-*ascent* step on log-likelihood — i.e. the
+**same score-function update** as REINFORCE with the advantage pinned to $+1$ on the expert action.
+That is why `behavior_clone` reuses `grad_log_prob`. The expert here (`bridge_expert_rollout`) scripts
+the A4/A5 heuristic into the action space — self-search, then bridge the first
+discovered-but-unretrieved entity while budget allows, then `STOP`. It is deliberately a **weak
+teacher** (a warm start, not a target): it demonstrates *scope* and *stop* but never varies the
+*config*, so cloning it cannot teach config selection — that must come from reward.
+
+### 19.8 Potential-based reward shaping (Ng–Harada) — why densifying is free
+
+The natural reward is **sparse**: coverage is only known at the end of the episode. Sparse terminal
+rewards make credit assignment hard. **Potential-based shaping** densifies it without changing the
+optimum. With a potential $\Phi(s) = \mathrm{coverage}(\mathrm{union}(s))$ (the fraction of gold aspects
+the accumulated evidence covers — the *only* place labels enter, and simulator-side only), the shaped
+per-step reward on a search step is:
+
+$$r_t = \underbrace{\gamma \Phi(s_{t+1}) - \Phi(s_t)}_{\text{shaping (progress in coverage)}} - \underbrace{\lambda_c c(a_t)}_{\text{cost penalty}}, \qquad r_{\text{STOP}} = 0$$
+
+where $c(a_t)$ is the arm's cost proxy and $\lambda_c$ (`reward_lambda_cost`) prices it. The shaping term
+**telescopes** along a trajectory:
+
+$$\sum_{t=0}^{n-1} \gamma^t \left( \gamma \Phi(s_{t+1}) - \Phi(s_t) \right) = \gamma^n \Phi(s_n) - \Phi(s_0)$$
+
+With an empty initial union $\Phi(s_0) = 0$, the discounted shaping return equals $\gamma^n \Phi(s_n)$ —
+the discounted **terminal coverage**. So the dense reward and the sparse terminal-coverage reward have
+the *same* return up to discounting, but the dense one credits each step the moment progress is made.
+**Ng, Harada & Russell (1999)** prove this is not luck: a shaping term of the exact form
+$F(s, s') = \gamma \Phi(s') - \Phi(s)$ is the necessary-and-sufficient shape that leaves the set of
+optimal policies unchanged for *every* reward and transition function. The cost penalty is a genuine
+(non-shaping) objective term — it is what makes a high-recall-but-useless arm a net negative (the
+reward-hacking sentinel test).
+
+### 19.9 Worked micro-examples (the exact values the tests assert)
+
+- **Reward-to-go.** Rewards $(r_0, r_1, r_2) = (1, 2, 3)$, $\gamma = 0.5$: $G_2 = 3$;
+  $G_1 = 2 + 0.5 \cdot 3 = 3.5$; $G_0 = 1 + 0.5 \cdot 3.5 = 2.75$. → `test_discounted_returns_to_go`.
+- **Shaping telescopes.** Coverage path $\Phi(s_0)=0, \Phi(s_1)=0.5, \Phi(s_2)=1.0$, $\gamma=0.9$,
+  $\lambda_c=0$: $r_0 = 0.9 \cdot 0.5 - 0 = 0.45$; $r_1 = 0.9 \cdot 1.0 - 0.5 = 0.4$; discounted return
+  $= 0.45 + 0.9 \cdot 0.4 = 0.81 = 0.9^2 \cdot 1.0 = \gamma^2 \Phi(s_2)$. →
+  `test_shaping_telescopes_to_discounted_terminal_coverage`.
+- **REINFORCE recovers a state-dependent optimum.** A 2-step, 3-action toy (`STOP`, arm A, arm B)
+  rewards A at step 0 and B at step 1; the optimum (A then B, return $2$) requires *using the state*
+  (the one-hot step), not just the bias. From a uniform start, REINFORCE with a linear baseline drives
+  the greedy policy to A@step0, B@step1 and mean return $> 1.5$. → `test_reinforce_converges_on_toy`.
+
+### 19.10 Assumptions, failure modes, and what A6.2e/g add
+
+- **On-policy sample cost.** The gradient is valid only for trajectories drawn from the *current*
+  $\pi_\theta$, so every update needs fresh rollouts. The deterministic, memoized transition
+  (`TransitionCache`) removes the *retrieval* cost of that, but not the rollout count — hence PPO's
+  sample-reuse (A6.2e).
+- **Monte-Carlo variance.** Single-trajectory returns are noisy; the baseline and a large batch cut
+  variance, but REINFORCE is still higher-variance than actor-critic. PPO adds a learned critic, GAE
+  advantage estimation, and a trust region.
+- **Tiny data.** ~149 train episodes at $T=3$ is a small-data regime — a real overfitting risk;
+  train-vs-held-out gap reporting (A6.2g) is the guard, and a rigorous *negative* (learned ≈ the fixed
+  A4 loop + router) is a pre-registered acceptable outcome.
+- **Weak expert.** BC's demonstrator never varies the config, so BC alone cannot select configs; it is
+  a warm start only.
+- **Determinism & the leakage line.** The env holds no RNG (only the policy samples, seeded), and the
+  *state* is label-free — the gradient never sees gold aspects. Labels enter **only** through $\Phi$
+  inside the reward, simulator-side. This is what lets the frozen policy deploy on unlabeled queries.
+- **Next (A6.2g).** §19.11–§19.13 add the actor-critic upgrade (PPO — critic, GAE, clipped surrogate,
+  entropy); the held-out eval vs baselines, the sim-to-real gap, and the verdict close A6.2.
+
+### 19.11 The critic and Generalized Advantage Estimation (GAE)
+
+REINFORCE's advantage $A_t = G_t - b(s_t)$ (§19.6) uses the full Monte-Carlo return $G_t$: unbiased but
+high variance. An **actor-critic** learns a value function $V(s) \approx \mathbb{E}[G_t \mid s_t = s]$
+(the "critic") and uses it both as the baseline and to **bootstrap**. The one-step temporal-difference
+residual measures how much better step $t$ turned out than the critic predicted:
+
+$$\delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)$$
+
+**GAE** (Schulman et al. 2016) is the exponentially-weighted sum of these residuals, computed by a
+backward recursion:
+
+$$\hat{A}_t = \sum_{l \ge 0} (\gamma \lambda)^l \delta_{t+l} = \delta_t + \gamma \lambda \hat{A}_{t+1}$$
+
+The knob $\lambda \in [0, 1]$ trades bias for variance. At $\lambda = 0$ it is the one-step TD advantage
+$\hat{A}_t = \delta_t$ (low variance, but biased by the critic's error); at $\lambda = 1$ it collapses to
+the Monte-Carlo advantage $\hat{A}_t = G_t - V(s_t)$ (unbiased, high variance). The target used to fit
+the critic is the **TD($\lambda$) return** $\hat{R}_t = \hat{A}_t + V(s_t)$. Every episode here
+**terminates** (STOP or the horizon $T$), so the bootstrap past the last step is $V(s_T) = 0$.
+`compute_gae` is exactly this recursion.
+
+**Worked micro (the exact test values).** Rewards $(r_0, r_1) = (1, 0)$, critic $V = (0.5, 0.2)$,
+$\gamma = 1$, terminal bootstrap $0$:
+
+- $\lambda = 1$: $\hat{A}_1 = \delta_1 = 0 + 0 - 0.2 = -0.2$; $\hat{A}_0 = \delta_0 + \hat{A}_1
+  = (1 + 0.2 - 0.5) + (-0.2) = 0.5$ — which equals $G_t - V(s_t)$ (reward-to-go $(1, 0)$ minus $V$). Value
+  targets $\hat{R}_t = \hat{A}_t + V_t = (1.0, 0.0)$. → `test_compute_gae_lambda_one_is_monte_carlo`.
+- $\lambda = 0$: $\hat{A}_t = \delta_t = (0.7, -0.2)$. → `test_compute_gae_lambda_zero_is_one_step_td`.
+
+### 19.12 The PPO clipped surrogate — trust-region-free sample reuse
+
+REINFORCE is strictly on-policy: each batch buys exactly one gradient step, after which the samples are
+stale (drawn from a policy that has moved). **PPO** (Schulman et al. 2017) reuses each batch for several
+epochs by optimizing a surrogate written in the **importance ratio**
+
+$$\rho_t(\theta) = \frac{\pi_\theta(a_t \mid s_t)}{\pi_{\theta_{\mathrm{old}}}(a_t \mid s_t)}$$
+
+where $\pi_{\theta_{\mathrm{old}}}$ is the policy that *collected* the batch (so $\rho_t = 1$ at the start
+of the first epoch, and drifts as $\theta$ moves). The bare surrogate $\rho_t \hat{A}_t$ is the
+off-policy-corrected policy-gradient objective, but maximizing it directly lets a handful of samples push
+$\rho_t$ arbitrarily far and wreck the policy. PPO **clips** the ratio and takes the pessimistic branch:
+
+$$L^{\mathrm{CLIP}}(\theta) = \mathbb{E}_t\left[ \min\left( \rho_t \hat{A}_t, \mathrm{clip}(\rho_t, 1-\epsilon, 1+\epsilon) \hat{A}_t \right) \right]$$
+
+The $\min$ makes the surrogate a **pessimistic lower bound** on $\rho_t \hat{A}_t$. Two cases:
+
+- $\hat{A}_t > 0$ (action better than average from $s_t$): the objective rises with $\rho_t$, but the clip
+  caps it at $\rho_t = 1+\epsilon$ — no further reward for pushing the probability up.
+- $\hat{A}_t < 0$ (worse than average): the objective rises as $\rho_t$ falls, capped at $\rho_t = 1-\epsilon$.
+
+Either way the gradient vanishes once $\rho_t$ leaves $[1-\epsilon, 1+\epsilon]$ in the improving
+direction, so several ascent epochs stay inside an implicit trust region with no KL penalty or
+second-order step.
+
+**Worked micro (four quadrants, the exact test values).** $\epsilon = 0.2$, band $[0.8, 1.2]$:
+
+| $\hat{A}$ | $\rho$ | $\rho\hat{A}$ | $\mathrm{clip}(\rho)\hat{A}$ | $\min$ | clipped? |
+|---|---|---|---|---|---|
+| $+1$ | $1.5$ | $1.5$ | $1.2$ | $1.2$ | yes (gain capped) |
+| $+1$ | $0.5$ | $0.5$ | $0.8$ | $0.5$ | no |
+| $-1$ | $1.5$ | $-1.5$ | $-1.2$ | $-1.5$ | no (penalty kept) |
+| $-1$ | $0.5$ | $-0.5$ | $-0.8$ | $-0.8$ | yes |
+
+→ `test_clipped_surrogate_four_quadrants`. The full minimized loss adds a value-regression term and an
+entropy bonus:
+
+$$L(\theta) = -L^{\mathrm{CLIP}}(\theta) + c_v \mathbb{E}_t\left[ (V_\theta(s_t) - \hat{R}_t)^2 \right] - c_e \mathbb{E}_t\left[ H[\pi_\theta(\cdot \mid s_t)] \right]$$
+
+with value target $\hat{R}_t = \hat{A}_t + V(s_t)$, coefficients $c_v$ (value) and $c_e$ (entropy), and
+$H$ the policy entropy (the bonus keeps exploration alive early). Advantages are batch-normalized before
+the update for a stable step size; masked (illegal) actions get a $-\infty$ logit, and `ppo_update`
+zeroes those log-probs *before* the entropy product so they contribute $0$, not $0 \cdot (-\infty) =$ NaN.
+
+### 19.13 REINFORCE vs PPO — what it buys, determinism, and torch isolation
+
+- **What PPO buys.** The critic + GAE cut variance below REINFORCE's Monte-Carlo advantage, and the
+  clipped surrogate reuses each on-policy batch for several epochs (REINFORCE discards it after one
+  step). On the 2-step toy both reach the optimum (return $2$); PPO's edge is meant to show on the
+  larger, noisier real benchmark. A rigorous *negative* (PPO $\approx$ the fixed A4 loop + router)
+  remains a pre-registered acceptable outcome.
+- **Backend-agnostic surface.** `PPOPolicy` exposes the *same* numpy `act` / `greedy_action` /
+  `action_probs` / `log_prob` as the A6.2d `LinearSoftmaxPolicy` — both satisfy the `RolloutPolicy`
+  structural type, so the rollout helpers and the A6.2g eval harness drive either backend unchanged.
+- **Determinism.** The env holds no RNG; the policy samples from a caller-supplied seeded `Generator`;
+  torch is seeded with `use_deterministic_algorithms(True)` on a single thread — reruns are bit-stable.
+- **torch isolation.** torch lives in the optional `[rl]` extra, lazy-imported inside `ppo.py` only, so
+  the CI gate stays torch-free (numpy REINFORCE is the floor). On macOS torch and lightgbm each ship
+  their own OpenMP runtime and abort if co-loaded; setting `KMP_DUPLICATE_LIB_OK=TRUE` before the first
+  `import torch` lets them coexist, verified by a subprocess smoke test.
+- **PPO-specific failure modes.** On ~149 episodes the critic can overfit (mitigated by a small shared
+  torso and the held-out gap check in A6.2g); too-small $\epsilon$ throttles learning while too-large
+  $\epsilon$ forfeits the trust region; $c_e$ trades exploration for policy sharpness.
+
+### 19.14 Feature standardization and the freeze/load contract (A6.2f)
+
+Training a linear or MLP policy on **raw** state features is ill-conditioned: the A6.2a state mixes a
+static query block with a dynamic evidence block whose counts (`n_chunks`, `step_idx`, …) live on
+very different scales, so a single learning rate over-steps the large-magnitude features and starves
+the small ones. The fix is **z-score standardization** of each feature.
+
+**Definition.** For feature $j$ with sample mean $\mu_j$ and standard deviation $\sigma_j$ over a
+reference set of states, the standardized value is
+
+$$\tilde{s}_j = \frac{s_j - \mu_j}{\sigma_j}.$$
+
+- $\mu_j$ — the average value of feature $j$ across the reference states (its center).
+- $\sigma_j$ — the spread of feature $j$ (its scale); after dividing, every feature has unit variance.
+- **Constant-feature guard.** If a feature never varies on the fold ($\sigma_j \approx 0$) the
+  quotient is $0/0$. We set $\sigma_j := 1$, which **centers** that feature ($s_j - \mu_j$) but does
+  not rescale it — no division by (almost) zero, and a constant column contributes nothing anyway.
+
+**Where $(\mu, \sigma)$ come from.** They are fit **once**, before training, from seeded
+uniform-random rollouts over the train fold (a zero-weight softmax policy is uniform over the legal
+actions). A random policy's reachable-state coverage is a superset of any single learned policy's, so
+this is a broad, reproducible reference distribution — and it reads only states, never labels
+(the leakage line of §19 holds: standardization is label-free).
+
+**Two placements, one transform (the correctness point).** The policies hold *no* internal
+standardizer (they are scale-agnostic), so the transform is applied by a wrapper — and *where*
+matters:
+
+| Phase | Wrapper | Why there |
+|---|---|---|
+| Train | `StandardizingEnv` (env-side) | the states the policy **samples on**, the states **recorded** in the trajectory, and the states the gradient **recomputes on** are all the *same* standardized vector. Standardizing policy-side during training would record raw states but act on standardized ones, desyncing the score-function gradient $\nabla \log \pi(a \mid s)$ from the state it was evaluated at. |
+| Inference | `StandardizedPolicy` (policy-side) | the loader applies the *same* frozen $(\mu, \sigma)$ to the incoming **raw** state before `act`, so a stored policy runs directly on the raw `RagRetrievalEnv` (and a real, unlabeled deploy) with no env wrapper. |
+
+Because both wrappers hold the *same* `Standardizer`, the two paths are behaviorally identical — the
+A6.2f round-trip test asserts that greedy actions and `action_probs` from (train env-side) and
+(load policy-side) match byte-for-byte.
+
+**The freeze/load contract.** A checkpoint that stores only weights is unsafe: the weight matrix
+$W \in \mathbb{R}^{K \times (d+1)}$ indexes into a specific feature order and action order. If either
+reorders, the stored weights silently attach to the wrong feature/action — a *silent* correctness
+bug, not a crash. The checkpoint therefore also freezes the **load-bearing orderings**
+(`STATE_FEATURE_NAMES`, the ordered `action_labels`) and the loader **refuses** any drift (feature
+names, action labels, action count, weight shape, schema version). Fail loud beats silently loading
+stale weights against a new state layout.
+
+---
+
+### 19.15 Held-out policy evaluation: the paired group bootstrap and the reward-hacking sentinel (A6.2g)
+
+Training told us the policy improves *on the fold it trained on*. §19.15 is the question that actually
+matters: **is the learned controller better than the hand-written ones on questions it has never
+seen** — and is the improvement real or an artifact of a lucky fold?
+
+**What is being estimated.** The value of a policy is its expected episode return
+
+$$V(\pi) = \mathbb{E}_{q \sim \mathcal{D}} \mathbb{E}_{\tau \sim \pi(\cdot \mid q)} \left[ R(\tau) \right], \qquad R(\tau) = \sum_{t=0}^{T-1} r_t .$$
+
+- $q$ — a question drawn from the held-out benchmark $\mathcal{D}$ (one question = one episode).
+- $\tau = (s_0, a_0, r_0, \dots)$ — the trajectory the policy produces on that question.
+- $R(\tau)$ — the undiscounted return of that trajectory ($\gamma = 1$ here).
+
+We report $V$ two ways, because they answer different questions:
+
+| row | policy used | what it means |
+|---|---|---|
+| `(greedy)` | $\pi_{\text{greedy}}(s) = \arg\max_a \pi(a \mid s)$ | **deploy semantics** — what a shipped checkpoint actually does. Deterministic, so it carries no seed noise. This is the row the verdict gates on. |
+| `(sampled)` | $a_t \sim \pi(\cdot \mid s_t)$ | the on-policy value $V(\pi)$ that the training objective (§19.2) literally maximizes. Averaged over seeds. |
+
+**The return identity (why one number carries both quality and cost).** With $\gamma = 1$ the
+potential-based shaping of §19.8 telescopes, so for *every* policy the episode return collapses to
+
+$$R(\tau) = \underbrace{\Phi(s_T)}_{\text{terminal aspect coverage}} - \lambda_c \sum_{t} \mathrm{cost}(a_t) .$$
+
+- $\Phi(s_T) \in [0, 1]$ — the fraction of the question's gold aspects covered by the final evidence
+  union (the quality half).
+- $\mathrm{cost}(a_t)$ — the static per-arm latency/compute proxy of §18.2 (`dense` 0.0 … `graph` 0.3).
+- $\lambda_c$ — the price of compute in coverage units (default 0.05).
+
+This identity is a free end-to-end audit of the whole stack, and the harness asserts it on every
+candidate. Worked example (the sentinel row from the real smoke run): coverage $0.875$, three
+`graph` searches $\Rightarrow$ cost $3 \times 0.3 = 0.9$, so
+$R = 0.875 - 0.05 \times 0.9 = 0.875 - 0.045 = 0.830$ — exactly what the report prints.
+
+**The four baselines are policies in the same MDP.** Each is a *script over the state* — it reads
+`step_idx` and the legal mask and returns an action index — so it flows through the same `env.step`,
+the same union dedup, the same coverage oracle, and the same cost accounting as the learned policy.
+Nothing but the decision rule differs, which is what makes the comparison a controlled experiment.
+The `react` baseline is asserted to emit the *same trajectory* as the A4/A5 controller
+(`bridge_expert_rollout`), so "the strong baseline" is production, not a model of production.
+
+**Why a *paired* delta.** Episodes differ enormously in difficulty (a CTRL single-hop is nearly free
+coverage; a HARD bridge is not). Comparing two policies by their mean returns throws that structure
+away. Instead compare them **on the same episode** and average the differences:
+
+$$\Delta_i = R_{\text{learned}}(q_i) - R_{\text{base}}(q_i), \qquad \bar{\Delta} = \frac{1}{N} \sum_{i=1}^{N} \Delta_i .$$
+
+The variance of an unpaired difference is $\mathrm{Var}(A) + \mathrm{Var}(B)$; the paired one is
+$\mathrm{Var}(A) + \mathrm{Var}(B) - 2 \mathrm{Cov}(A, B)$. Because both policies are hurt by the same
+hard questions, $\mathrm{Cov}(A,B)$ is large and positive, so pairing cancels most of the
+episode-difficulty variance and leaves the policy effect.
+
+**Why a *group* bootstrap.** The benchmark's questions come in **bridge pairs** — several phrasings
+of the same underlying two-hop fact share a `group_id`. Those rows are near-copies, so treating them
+as independent samples (a row bootstrap) would count the same evidence several times and produce a CI
+that is too narrow. The group bootstrap resamples the $G$ groups with replacement and recomputes
+$\bar{\Delta}$ over the union of the drawn groups' rows:
+
+$$\bar{\Delta}^{(b)} = \frac{1}{\lvert I_b \rvert} \sum_{i \in I_b} \Delta_i, \qquad b = 1 \dots B,$$
+
+where $I_b$ collects the row indices of the $G$ groups drawn on replicate $b$. The 95% CI is the
+$[2.5, 97.5]$ percentile interval of $\{\bar{\Delta}^{(b)}\}$, and
+$P(\Delta > 0) = \frac{1}{B} \sum_b \mathbb{1}[\bar{\Delta}^{(b)} > 0]$ is the one-sided bootstrap
+achieved significance (reported, not gated). This is the same estimator as §18.7 — reused verbatim.
+
+**The pre-registered promote rule** (written before the numbers, as in §18.9):
+
+$$\text{PROMOTE} \iff \bar{\Delta} > 0 \quad \text{and} \quad \mathrm{CI}_{\text{low}} > 0 \quad \text{and} \quad \bar{\Delta}_{\text{CTRL}} \ge 0 \quad \text{and} \quad V(\pi_{\text{spam}}) < V(\pi_{\text{greedy}}) .$$
+
+A positive point estimate is not enough (gate 2 demands the group bootstrap exclude zero); a gain
+bought by wrecking the control stratum is not a gain (gate 3); and gate 4 is new to the sequential
+setting:
+
+**The reward-hacking sentinel.** Reward hacking is scoring well on the *proxy* without doing the
+task. In a sequential retrieval MDP the obvious exploit is **budget-spamming**: never stop, retrieve
+with the highest-recall arm every step, and let coverage creep up. The sentinel is exactly that
+policy, $\pi_{\text{spam}}$: never STOP, always the costliest arm. Compare it against a policy that
+stops at step $t^{*}$:
+
+$$V(\pi_{\text{spam}}) - V(\pi_{\text{stop}}) = \underbrace{\left[ \Phi_{\text{spam}}(s_T) - \Phi_{\text{stop}}(s_{t^{*}}) \right]}_{\text{extra coverage bought}} - \lambda_c \underbrace{\left[ \mathrm{cost}_{\text{spam}} - \mathrm{cost}_{\text{stop}} \right]}_{\text{extra compute paid}} .$$
+
+The cost tax is doing its job **iff** this quantity is negative whenever the extra retrieval buys
+little coverage. So the sentinel is a *tripwire on the reward function itself*: if
+$V(\pi_{\text{spam}}) \ge V(\pi_{\text{greedy}})$, then either $\lambda_c$ is too small or the learned
+policy has itself converged to spamming — and in both cases the measured $\bar{\Delta}$ is not
+interpretable, so promotion is blocked regardless of how good it looks. Setting $\lambda_c = 0$ makes
+the tripwire fire by construction (a regression test does exactly this).
+
+**The overfit gap, and its control.** With ~149 train episodes, memorization is the primary risk, so
+the report shows
+
+$$\mathrm{gap}(\pi) = V_{\text{train}}(\pi) - V_{\text{test}}(\pi)$$
+
+for the learned policy **and** for the best baseline. The baseline never trained on anything, so its
+gap measures pure *fold difficulty*. A large learned gap next to a small baseline gap is
+memorization; a large gap on **both** just means the held-out fold is harder. Reporting only the
+learned gap would confound the two.
+
+**Assumptions and limits.** (i) The $\$0$ simulator uses **templated** queries, so `n_llm_calls` is 0
+for every candidate and the faithfulness floor never fires — the A4 loop's real edge (an LLM writing
+a better query each hop) is *invisible* here, which is precisely why the paid sim-to-real run exists.
+(ii) The coverage oracle $\Phi$ is span-matching, so it rewards retrieving the right *text*, not
+answering well. (iii) The group split is the only leakage barrier, and the harness re-verifies it on
+the loaded folds rather than trusting the filenames.
+
+---
+
+## 20. When the environment, not the learner, is the bug — reward misspecification and action-space reachability
+
+A6.2 trained a policy, evaluated it honestly against a strong baseline, and produced a clean
+negative. The negative was **not about RL**. Two properties of the *environment* made the experiment
+incapable of showing a win, and a third made its reward partly fictional. This section states the
+three ideas precisely, because they generalise far past this repo: any time you wrap a system in an
+MDP and optimise it, these are the first things to check.
+
+### 20.1 Reachability: an action space that cannot express the optimal action
+
+Let $\mathcal{A}(s)$ be the legal actions at state $s$, and let $a^{*}(s)$ be the action an oracle
+would take. Define the **reachability** of the action space on a distribution of episodes $\mathcal{D}$:
+
+$$\rho = \Pr_{s \sim \mathcal{D}}\left[a^{*}(s) \in \mathcal{A}(s)\right]$$
+
+In plain English: **the fraction of situations in which the right move is even on the menu.** If
+$\rho$ is small, then *every* policy over $\mathcal{A}$ — learned, scripted, or optimal — is bounded
+away from the oracle, and the gap between the best and worst policy shrinks toward zero. A learner
+cannot discover an action that does not exist.
+
+**What we measured.** A bridge question ("among the competitors NVIDIA names, which one discloses
+$X$?") requires re-scoping retrieval to the *right* competitor. The env exposed exactly two
+discovered-entity actions, `disc0` and `disc1`, bound to the **alphabetically first two** of the
+discovered candidates. On the held-out HARD episodes there were a mean of **9.7** candidates, and the
+correct target landed in an addressable slot only **4 of 13** times it was discovered at all:
+
+$$\rho \approx 0.114$$
+
+So the correct bridge was on the menu in about **11%** of episodes. The consequence is arithmetic, not
+statistical. Writing $\Phi$ for aspect coverage and taking the two aspects of a bridge question (A1 =
+the seed names the target; A2 = the target's own disclosure):
+
+$$\Phi_{\max} \approx \frac{\Pr[\text{A1 retrievable}] + \rho}{2} \approx \frac{0.405 + 0.114}{2} \approx 0.26$$
+
+and the scripted baseline `react(hybrid)` scored **0.271**. **The baseline was already at the ceiling
+of the action space.** Any RL result on this MDP was predetermined to be a null.
+
+> **The diagnostic to run before trusting any negative RL result:** compute $\rho$. If the oracle
+> action is unreachable, your "RL doesn't help" finding is a statement about your action space.
+
+### 20.2 When no ranking function can exist (an information argument, not a tuning failure)
+
+The obvious repair for §20.1 is "order the candidate slots by relevance instead of alphabetically."
+It does not work, and the reason is worth stating carefully because it is easy to mistake for a
+hyperparameter problem.
+
+Let $C$ be the discovered candidates and let $Y \in C$ be the correct one. A ranking function
+$r: C \to \mathbb{R}$ built from the hop-1 evidence $E_1$ can only beat chance if $Y$ is not
+conditionally independent of the features $r$ reads:
+
+$$I(Y ; E_1) > 0$$
+
+where $I$ is mutual information — informally, *how much the hop-1 evidence tells you about which
+candidate is the answer.* But hop-1 evidence is the seed's **competitor list**. Which of those
+competitors discloses topic $X$ is a fact about **their** filings, which hop-1 never read. So
+$I(Y; E_1) \approx 0$, and no ranking function — and no learned policy conditioning on the same
+state — can order the candidates better than chance.
+
+Measured, on held-out HARD (fraction of episodes placing the target in the top 2):
+
+| ordering | target in top-2 |
+|---|---|
+| alphabetical (what the env used) | 42.9% |
+| by mention count | 40.0% |
+| by retrieval score | 40.0% |
+| **random** | **40.0%** |
+
+Nothing beats random, exactly as the information argument predicts. **The correct response to
+"I can't rank these" is not a better ranker — it is an action that makes ranking unnecessary.** If
+the candidates cannot be ordered, they must be **swept**: a single *fan-out* action that scopes hop 2
+to all $|C|$ candidates at once. It converts the policy's job from an impossible guess into a real,
+learnable cost/quality decision — breadth costs $|C| \times \text{cost(arm)}$ and is only worth
+paying on bridging questions.
+
+**What the sweep actually bought (measured, and a lesson in its own right).** Fan-out repaired
+*reachability* — the target is a discovered candidate on **78.6%** of held-out bridge episodes, up
+from 11.4%. It did **not** produce a large coverage win, because fixing the binding constraint only
+reveals the next one. The honest funnel, per §20.4's seating analysis:
+
+| stage | rate |
+|---|---|
+| target is a discovered candidate (reachability — what fan-out fixed) | 78.6% |
+| its branch **retrieved** the evidence | 50.0% (33.3% before the §20.4 hop-2 query fix) |
+| that chunk was **seated** in the capped union | **21.4%** |
+
+An earlier estimate — "A2 → 68.6%, ceiling ≈0.84" — was **wrong**, and wrong in an instructive way:
+it measured whether the evidence was *retrieved into a branch* and never asked whether it *survived
+the union cap*. **A retrieval that does not reach the synthesis context did not happen.** Always
+measure the funnel to the last stage that the metric actually reads.
+
+### 20.3 Reward misspecification: paying for evidence that answers nothing
+
+The A6 reward is terminal aspect coverage, $\Phi(s_T)$. The original definition was
+
+$$\Phi(s_T) = \frac{1}{|A|} \sum_{a \in A} \mathbb{1}\left[\exists c \in U : \text{span}(a) \subseteq \text{text}(c)\right]$$
+
+where $A$ is the aspect set, $U$ the retrieved union, and $\text{span}(a) \subseteq \text{text}(c)$
+means "some span of aspect $a$ occurs as a substring of chunk $c$". Read the indicator carefully: it
+quantifies over **all** chunks. It never asks **whose filing the chunk came from.**
+
+That is a bug, and specifically it is a bug of the shape RL is famous for finding. The A2 aspect of a
+bridge question means "*that competitor's own* disclosure of $X$". A chunk from an **unrelated**
+company that happens to repeat the phrase $X$ satisfies the indicator while answering nothing. The
+fix binds each aspect to the company whose filings must supply the evidence:
+
+$$\Phi(s_T) = \frac{1}{|A|} \sum_{a \in A} \mathbb{1}\left[\exists c \in U : \text{ticker}(c) = \text{ticker}(a) \ \wedge\  \text{span}(a) \subseteq \text{text}(c)\right]$$
+
+**Why this matters more than it looks.** The size of the exploit scales with *retrieval breadth*, so
+a narrow action space hides it and a wide one detonates it. Measured under a fan-out policy on
+held-out HARD:
+
+| quantity | value |
+|---|---|
+| A2 "covered" per the old reward | 77.1% |
+| A2 genuinely evidenced (span in a chunk **from the target**) | 68.6% |
+| **spurious credit** (reward paid, target's filings never retrieved) | **8.6%** |
+| episodes where some non-target company also carries the topic phrase | 28.6% |
+
+So the moment we gave the policy the action it needed (§20.2), the reward would have started paying
+it to retrieve *broadly* rather than *correctly* — the textbook reward-hacking dynamic, and one we
+would have mistaken for "RL finally beat the baseline."
+
+**The general lesson.** A reward built from a *matching* predicate (a span, a keyword, a regex, an
+LLM judge's yes/no) is only as good as the predicate's **quantifiers**. Ask of every reward: *what is
+this maximised by?* Here the honest answer was "retrieve everything," which is not the behaviour we
+wanted, and the only reason we never saw it is that the agent was too crippled to try.
+
+### 20.4 If you cannot rank, sweep — and a sweep is a budget-allocation problem
+
+§20.2 showed the hop-2 target cannot be *ranked*. The only reliable alternative is to **sweep**:
+search every candidate. Two quantities decide whether a sweep actually delivers, and both bite.
+
+**1. Cost is linear in breadth.** A sweep over $N$ candidates pays the arm's cost once per branch:
+
+$$\mathrm{cost}(\text{sweep}) = N \cdot c(\text{arm})$$
+
+**2. Seating — who actually reaches the answer.** Retrieval is not the finish line: the union handed
+to synthesis is capped at $C$ chunks. Write $e$ for chunks already gathered (hop 1), $N$ for the
+number of branches, $k$ for chunks retrieved per branch. A branch only *counts* if at least one of
+its chunks survives into the union, and **the merge order decides who survives**:
+
+| merge order | branches seated |
+|---|---|
+| concatenate the branches (depth-first) | $\mathrm{floor}\left(\frac{C-e}{k}\right)$ |
+| round-robin by rank (breadth-first) | $\min(N, C-e)$ |
+
+Concatenation spends the whole budget going *deep* into whichever branch happens to come first;
+round-robin spends it going *wide*. To seat every candidate at least once you need
+
+$$C \ge e + N$$
+
+**Worked example (our benchmark, the exact numbers the tests assert).** $C = 20$, hop 1 returns
+$e = 6$ chunks, each branch returns $k = 6$, and a HARD episode can have $N = 19$ candidates:
+
+- **concatenate:** $\mathrm{floor}(14/6) = 2$ branches seated — **17 of 19 candidates never reach
+  synthesis**, even though we paid to retrieve all of them.
+- **round-robin, flat cap:** $\min(19, 14) = 14$ seated — better, still 5 short.
+- **round-robin, widened cap** $C' = \max(C, e+N) = 25$: all 19 seated.
+
+So the merge order and the cap are **both** necessary — either alone leaves candidates unseated, and
+the ones dropped are dropped by an *arbitrary* order (alphabetical), which is precisely the bias
+§20.1 diagnosed. A sweep that quietly drops candidates is not a sweep; it is the old bug wearing a
+new action.
+
+**Why not just sort the merged chunks by score?** Because scores are **not comparable across
+branches**. Each branch is a *scoped* retrieval, and under RRF (§6) the score is rank-derived:
+
+$$s(d) = \sum_{L} \frac{1}{k_{\mathrm{RRF}} + \mathrm{rank}_L(d)}$$
+
+The rank-1 chunk of *every* branch therefore carries the *same* score. Sorting by score degenerates
+to the insertion order it was meant to fix. **Rank is the only meaningful cross-branch quantity** —
+which is exactly why the merge is round-robin over ranks.
+
+> ⚠️ **Read §20.7 before taking that last sentence as final.** It is true *of RRF*, not of scoring in
+> general. A **cross-encoder** produces a genuinely cross-branch-comparable score, and swapping it in
+> for the round-robin is worth more than everything else in §20.4 combined. The sentence above is the
+> correct conclusion from a premise (RRF) that we were free to change.
+
+### 20.5 If the fix is scriptable, the baseline must get it too
+
+A trap that is easy to walk into once §20.1 is fixed, and more seductive than the original bug
+because it produces a **positive** result.
+
+Fan-out makes the correct hop-2 move *expressible*. It also makes it **trivially scriptable**:
+"search the seed, then sweep everything it named" is a two-line policy that requires no learning at
+all. If you give the learner the enlarged action space but leave the baseline in the old one, you
+measure
+
+$$\Delta = R(\text{learner} + \text{fanout}) - R(\text{baseline without fanout})$$
+
+and attribute to *learning* what is really an **action-space asymmetry**. Same error class as
+§20.1 — an artifact of the action set masquerading as a fact about the policy — only with the sign
+flipped.
+
+**The rule: whenever you enlarge the action space to repair a reachability failure, re-express the
+baseline in the enlarged space.** Here the comparator becomes `sweep(hybrid)` = self → fanout →
+STOP, and the promote rule is run against *that*, not against `react(hybrid)`.
+
+Doing so also sharpens what is actually being asked. If the answer is *always* "sweep", a scripted
+sweeper already has it, and the learner's only remaining edge is the **cost** side — knowing when
+**not** to sweep:
+
+- a CTRL question that names no other company (nothing to sweep — the sweep is illegal anyway),
+- an episode already covered by hop 1 (the sweep buys no coverage and still costs $N \cdot c$),
+- a candidate set so large that $N \cdot c$ exceeds the coverage the sweep can buy.
+
+If no policy beats the scripted sweeper on that margin, **RL genuinely adds nothing to this problem**
+— and that is a legitimate, honestly obtained finding, which is what §20 is ultimately for.
+
+### 20.6 The checklist this generalises to
+
+Before believing any RL result — positive **or** negative:
+
+1. **Reachability** ($\rho$): is the oracle action in the action set? If not, the negative is about
+   the action space.
+2. **Informability**: does the state carry the information the optimal decision depends on? Compute
+   or bound $I(Y; \text{state})$. Ours was ~0 for the central decision, and the state had *no*
+   per-candidate features at all.
+3. **Reward quantifiers**: what literally maximises the reward? If the answer is "do more of X"
+   rather than "do the task", you have a hacking surface — and a stronger agent will find it.
+4. **Ceiling vs baseline**: compute the best achievable return under the action space and compare it
+   to the scripted baseline. If the baseline is *at* the ceiling, there is no headroom and your
+   experiment has no power, regardless of sample size.
+5. **Power in the right unit**: the bootstrap unit is the **group** (correlated episodes), not the
+   row. Ours: 9 groups, CI half-width ±0.077 — only an effect ≥ 0.08 was ever detectable.
+
+Items 1–4 are all $0 to check and each one, on its own, would have saved the A6.2 training run.
+
+### 20.7 Seating: retrieval is not the finish line, and *a posteriori* ranking is legal
+
+Fixing the sweep (§20.4) exposed the next stage. Retrieving a chunk and getting it **into the
+synthesis context** are different events, and the gap between them was costing more than everything
+§20.4 bought.
+
+**Setup and symbols.** A fan-out searches $N$ candidate companies, each branch returning $k$ chunks.
+Hop 1 has already gathered $e$ chunks. The union handed to synthesis is capped at $C$ chunks. Let
+$r^{\star}$ be the **rank of the target's span-bearing chunk inside its own branch** (0-indexed, so
+$r^{\star}=0$ means "top hit"); $r^{\star} = \infty$ if the branch never retrieved it at all.
+
+**The breadth-first rule is arithmetic, not a heuristic.** §20.4 concluded: round-robin by rank, and
+widen the cap to $C = e + N$ so every branch gets a seat. Substitute those two choices into each
+other. The round-robin emits *all* $N$ rank-0 chunks before *any* rank-1 chunk, and the cap admits
+exactly $C - e = N$ of them. Therefore
+
+$$\text{seated} \iff r^{\star} = 0$$
+
+The rule that was designed to guarantee *breadth* silently became **"be your branch's top hit, or you
+do not exist."** Nothing at rank 1 or deeper can ever seat, at any $N$. Measured over the 33 reachable
+held-out targets, the rank histogram is
+
+| $r^{\star}$ | 0 | 1 | 2 | 3 | 4 | not retrieved |
+|---|---|---|---|---|---|---|
+| count | 9 | 1 | 3 | 4 | 4 | 12 |
+
+so $P(r^{\star} = 0) = 9/33 \approx 0.273$: **12 of the 21 targets whose branch had already found the
+evidence were thrown away by the cap.** And of the $C = 25$ seated chunks, $18$ were rank-0 chunks
+from companies that are not the target — the budget was spent on noise.
+
+**The seemingly obvious fix, and why it is a trap.** Seat $m$ chunks per branch instead of 1. Then
+seated $\iff r^{\star} < m$, at a context cost of
+
+$$C_m = e + m N$$
+
+Read the histogram: $m=2$ buys **one** extra episode (9 → 10) and $m=5$ needs $C = 6 + 5 \cdot 19 =
+101$ chunks. That is the "coverage-vs-context Pareto choice" we believed we faced. **It was a false
+dilemma** — it takes the round-robin merge as *given* and asks only how much deeper to dig.
+
+**Why scores were rejected, and why that reasoning does not survive.** §20.4 ruled out sorting the
+pool by score because RRF's score is **rank-derived**,
+
+$$s_{\mathrm{RRF}}(d) = \sum_{L} \frac{1}{k_{\mathrm{RRF}} + \mathrm{rank}_L(d)}$$
+
+so every branch's rank-1 chunk carries an *identical* score and sorting degenerates to insertion
+order. That argument is sound — **about RRF**. It is not about scoring. A **cross-encoder** computes
+
+$$\sigma(q, d) \in \mathbb{R}$$
+
+jointly from the query and the chunk *text*, with no reference to the branch $d$ came from. Its scale
+is therefore shared across branches by construction, and it induces a genuine total order on the
+pooled $N k$ chunks. Seat the global top $C - e$ of that order and the target's chunk competes **on
+merit** instead of being locked out by "your branch already spent its one seat."
+
+**The information argument, stated precisely enough to see its limit.** §20.2 proved candidates
+cannot be ranked: hop-1 evidence $E_1$ carries essentially no signal about which candidate $Y$
+discloses the topic,
+
+$$I(Y; E_1) \approx 0$$
+
+which is *why* we must sweep. But that is a statement about $E_1$ — and it says **nothing** about the
+evidence the sweep itself produces. After each candidate's filings have actually been searched *for
+the topic*, the retrieved content $E_2$ is precisely the observation that discriminates: the target
+discloses the topic, most of the other $N-1$ do not. So
+
+$$I(Y; E_1) \approx 0 \quad\text{but}\quad I(Y; E_2) > 0$$
+
+**Ranking candidates *a priori* is impossible; ranking them *a posteriori* is not.** The
+impossibility result is about hop-1 and does not reach seating. This is the single conceptual move
+of §20.7, and it is worth stating as a rule: *an impossibility proof constrains the stage it was
+proved about — check its premises before letting it govern a later stage.*
+
+**Consequence — the Pareto choice evaporates.** Exploit $I(Y; E_2) > 0$ directly: rescore the pool,
+keep only the $b$ **best-scoring branches**, $m$ chunks each. Context is now $e + b m$, *independent
+of $N$*. Measured on the held-out fold ($b = m = 3$): it discards 16 of the 19 branches and still
+beats the production rule by **+0.083 coverage on a smaller context (13.5 vs 15.0 chunks)** — a
+strict Pareto improvement, where §20.4's framing had promised a trade.
+
+| seating rule | seated | coverage | context |
+|---|---|---|---|
+| breadth-first, $C = e+N$ (was production) | 21.4% | 0.500 | 15.0 |
+| pooled cross-encoder, top $C$ | **42.9%** | **0.607** | 21.7 |
+| top-$b$ branches, $m$ each ($b=m=3$) | 38.1% | 0.583 | **13.5** |
+
+Seating **efficiency** — the share of *retrieved* targets that reach synthesis — goes from
+$9/21 = 43\%$ to $18/21 = 86\%$ (and 96% with a stronger cross-encoder).
+
+**Worked micro-example (the exact numbers the regression test asserts).** $N = 5$ candidates, $k = 2$
+chunks each, hop 1 gives $e = 1$, cap $C = 4$. The target TSM's evidence sits at $r^{\star} = 1$; a
+decoy company repeats the same span verbatim.
+
+- **breadth-first** ($C' = \max(4, 1+5) = 6$): the union is hop 1 plus all five rank-0 chunks — every
+  branch is "seated", the E3 guarantee *holds*, and **A2 is still uncovered**, because TSM's evidence
+  is at rank 1. Coverage $0.5$.
+- **pooled cross-encoder** (flat $C = 4$): the two topical chunks outscore the eight fillers, so TSM's
+  rank-1 chunk seats. Coverage $1.0$ — on a **smaller** union (4 vs 6).
+- The **decoy also seats**: $\sigma(q, d)$ is entity-blind and cannot tell TSM's disclosure from the
+  copy. That is fine, and it is *load-bearing that it is fine* — **entity-bound coverage (§20.3) is
+  what refuses the decoy.** Seating and grounding are separate guarantees; do not ask one to do the
+  other's job.
+
+**Two coupled traps** (both are in the regression suite, and each fails independently):
+
+1. **A no-op reranker must fall back to breadth-first, not to the pooled order.** The pool is
+   branch-major, so seating it under a cap spends the whole budget on the alphabetically-first
+   candidates — §20.1's bias, rebuilt.
+2. **The ordering and the cap must agree on the same rule.** A reranked rule's flat cap is safe *only
+   because* the reranked order puts the best chunks first. Pair a breadth-first ordering with a flat
+   cap and candidates get dropped alphabetically again — the original bug, reassembled from two
+   individually reasonable halves. Resolve the effective rule **once**; feed it to both.
+
+**What this does not fix.** Seating is now ~96% efficient, so the binding constraint moves *back* to
+retrieval: for 12 of 33 reachable episodes the span is not in the target's top-6 at all, and fetching
+deeper barely helps ($k = 6 \to 12$ recovers 2). The residual loss is **query formulation**, not depth
+and no longer seating. Each fix reveals the next bottleneck — which is the point of measuring the
+funnel to the *last* stage the metric actually reads (§20.4).
+
+### 20.8 The sim-to-real gap: when the simulator's queries flatter the policy
+
+**The setup.** The RL environment is a `$0` simulator — thousands of rollouts must stay free and
+deterministic — so at each retrieval step it issues a **templated** query built from the benchmark's
+gold aspect: the topic string is interpolated *verbatim* from the gold A2 span (§20.7's upper-bound
+caveat). Deployment cannot do this. At inference there is no gold span, so a real system must have an
+LLM **write** each query from the question and the evidence gathered so far. The policy is therefore
+trained and $0-evaluated on templated queries but *deployed* on LLM-written ones. The **sim-to-real
+gap** measures what that substitution costs — the single seam (like the Voyage arbitrator for seating,
+§20.7) where the free simulator is checked against a paid, realistic surrogate.
+
+**Definition.** For a frozen greedy policy $\pi$ and a held-out episode $i$, run the identical policy
+twice over the identical environment (same action space, arms, costs, horizon, seating), changing
+**only** the query text: templated (sim) vs LLM-written (real). Let $\Phi^{\text{sim}}_i$ and
+$\Phi^{\text{real}}_i$ be the terminal entity-bound coverage (§20.3) of the two runs. The per-episode
+gap and its mean are
+
+$$g_i = \Phi^{\text{real}}_i - \Phi^{\text{sim}}_i, \qquad \overline{g} = \frac{1}{n}\sum_{i=1}^{n} g_i.$$
+
+$\overline{g} > 0$ ⇒ the `$0` verdict was *conservative* (real queries help); $\overline{g} < 0$ ⇒ the
+simulator **flattered** the policy and its `$0` coverage magnitudes are optimistically biased. The same
+paired construction on the return gives the return gap.
+
+**The load-bearing decomposition — same action, different query.** The policy's *action* is an
+action-**type** (`hybrid@self`, `hybrid@fanout`, `STOP`), not a query string. Two runs can take the
+identical action *sequence* and still retrieve different chunks, because the query **text** those
+actions execute is templated in one run and LLM-written in the other. So split the gap into two
+channels:
+
+1. **Decision channel** — real queries make the policy choose *different actions* (its share is
+   $1 - \rho$, where $\rho$ is the same-action-sequence rate).
+2. **Realization channel** — the policy takes the *same actions*, but the real query text retrieves
+   worse evidence.
+
+A pure decision-channel story predicts the gap vanishes whenever the action sequence is unchanged. It
+does not: in this run 30/42 episodes kept the identical action sequence ($\rho = 0.71$) yet **13 of
+those 30 still lost coverage**. The gap lives mostly in the **realization channel** — the template's
+embedded gold text was doing retrieval work a real query-writer cannot reproduce. This is exactly the
+§20.7 upper-bound caveat *quantified*: templated coverage was inflated by the amount the gold-text leak
+buys, and the sim-to-real gap is a direct estimate of that inflation.
+
+**An environment-validity limit, not a policy defect.** The gap bounds what *any* templated-query
+evaluation can conclude. If the sim-to-real bias exceeds the effect being measured — here the
+RL-vs-`sweep(hybrid)` margin — the `$0` eval cannot resolve the promote question at **any** sample
+size. This is a *distinct* obstruction from the power limit (§19.15's 18-group bootstrap CI): power is
+the *width* of the interval; sim-to-real bias is whether the point estimate measures the deployed
+quantity at all. Both must clear before a promote verdict is supportable.
+
+**Refusal is a second axis.** Only the real run synthesizes (the sim never calls the LLM), so it is
+also the only place the faithfulness guard can fire: an episode whose real union is empty or ungrounded
+**refuses** ("Insufficient evidence found.") rather than fabricate. A policy that looks fine on coverage
+can still be undeployable if it refuses often, so the **refusal rate** is reported alongside the gap.
+
+**Cost accounting (why the call estimate is fan-out-aware).** The query-writer bills once per retrieval
+**request**, and a fan-out step issues one request *per discovered candidate*, so a naive per-step bound
+undercounts by the fan-out width. The honest pre-spend count rolls the greedy policy through a `$0`
+stand-in writer and counts actual requests, plus one synthesis per non-empty union. It is an estimate,
+not a guarantee — real queries reshape the hop-1 union and thus the hop-2 fan-out width — but it is far
+tighter than the step bound and is the number the spend gate quotes. (For this run: fan-out-aware
+projection 473 as a ceiling; actual billed 274, because greedy episodes STOP early.)
+
+**Worked numbers (this run).** Frozen REINFORCE (seed 1, E7-seated env, Voyage embeddings) over
+$n = 42$ held-out HARD+MED episodes: $\overline{\Phi^{\text{sim}}} = 0.595$,
+$\overline{\Phi^{\text{real}}} = 0.417$, so $\overline{g} = -0.179$ (95% $t$-CI $[-0.363, +0.006]$;
+one-sample $t$: $p \approx 0.06$, Wilcoxon $p \approx 0.08$ — directionally negative but **not**
+significant at $n = 42$); return gap $-0.155$; same-action rate $\rho = 0.71$; refusal rate $0.33$.
+Sign split $7 : 18 : 17$ (positive : tie : negative); both strata agree (HARD $-0.171$, MED $-0.214$).
+Contrast the RL-vs-sweep margin the templated eval was built to detect — $\approx 0.02$ to $0.05$: the
+sim-to-real bias ($0.18$) is $\approx 4$ to $9\times$ that margin, so the templated verdict is dominated
+by simulator bias, not policy quality. **Direction is robust; the magnitude is not resolved at this
+$n$** — per-episode gaps are $\{-0.5, 0, +0.5\}$-valued ($\text{sd} = 0.59$), so the interval includes
+zero. Both obstructions (this bias *and* the §19.15 power limit) point to the same fix: a larger
+benchmark, then a real-query eval.
+
+## 21. References
 
 - Lewis et al. (2020), *Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks* —
   the original RAG paper (RAG-Sequence / RAG-Token, the latent-variable formulation).
@@ -2279,3 +3207,16 @@ policy is a bandit whose promotion is gated behind an OPE certificate rather tha
 - Swaminathan & Joachims (2015), *The Self-Normalized Estimator for Counterfactual Learning* — the
   **SNIPS** estimator of §18.5.
 - Kish (1965), *Survey Sampling* — the effective-sample-size (design-effect) diagnostic of §18.7.
+- Williams (1992), *Simple Statistical Gradient-Following Algorithms for Connectionist Reinforcement
+  Learning* — the **REINFORCE** estimator of §19.5.
+- Sutton, McAllester, Singh & Mansour (2000), *Policy Gradient Methods for Reinforcement Learning with
+  Function Approximation* — the **policy-gradient theorem** of §19.4.
+- Ng, Harada & Russell (1999), *Policy Invariance Under Reward Transformations: Theory and Application
+  to Reward Shaping* — **potential-based shaping** and its policy-invariance (§19.8).
+- Pomerleau (1991), *Efficient Training of Artificial Neural Networks for Autonomous Navigation* /
+  Ross, Gordon & Bagnell (2011), *A Reduction of Imitation Learning …* — **behavior cloning** and its
+  distribution-shift caveat (§19.7).
+- Schulman et al. (2017), *Proximal Policy Optimization Algorithms* — the clipped surrogate
+  $L^{\mathrm{CLIP}}$ of §19.12.
+- Schulman et al. (2016), *High-Dimensional Continuous Control Using Generalized Advantage Estimation* —
+  the GAE($\lambda$) advantage of §19.11.

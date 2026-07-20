@@ -193,3 +193,71 @@ def test_set_summary_and_markdown() -> None:
     md = format_multihop_markdown(reports, summary)
     assert "| gain |" in md  # table header column
     assert "over 2" in md and "gain +0.50" in md  # aggregate line
+
+
+# ---- the entity binding (A6.2 E1): coverage must not pay for the WRONG company's boilerplate ----
+def _rc_t(idx: int, text: str, ticker: str) -> RetrievedChunk:
+    """A retrieved chunk attributed to ``ticker`` (the binding's whole point)."""
+    doc_id = f"{ticker}:10-K:2026-02-25"
+    return RetrievedChunk(
+        chunk=DocumentChunk(
+            chunk_id=f"{doc_id}:{idx}",
+            document_id=doc_id,
+            chunk_index=idx,
+            text=text,
+            ticker=ticker,
+            document_type="10-K",
+            source="SEC",
+            source_url="https://www.sec.gov/x",
+            filing_date=date(2026, 2, 25),
+            section="Item 1A. Risk Factors",
+        ),
+        score=0.9 - 0.01 * idx,
+    )
+
+
+# A2 of a bridge question: "that competitor's OWN export-license disclosure" — only MU's filing
+# answers it. INTC's 10-K repeats the same boilerplate phrase; crediting that is the reward-hacking
+# surface a broad-retrieval policy exploits (measured: 8.6% of fan-out episodes scored on it).
+_A2 = Aspect(name="that competitor's own export license disclosure",
+             spans=["export license requirements"], ticker="MU")
+
+
+def test_coverage_rejects_the_span_from_the_wrong_company() -> None:
+    wrong = [_rc_t(0, "Intel discloses export license requirements for China.", "INTC")]
+    frac, covered, missed = coverage(wrong, [_A2])
+    assert frac == 0.0 and covered == [] and missed == [_A2.name]  # would have been 1.0 pre-E1
+
+
+def test_coverage_credits_the_span_from_the_bound_company() -> None:
+    right = [
+        _rc_t(0, "Intel discloses export license requirements for China.", "INTC"),  # a distractor
+        _rc_t(1, "Micron discloses export license requirements for China.", "MU"),
+    ]
+    frac, covered, _ = coverage(right, [_A2])
+    assert frac == 1.0 and covered == [_A2.name]
+
+
+def test_unbound_aspect_keeps_the_old_any_chunk_semantics() -> None:
+    """The hand-written P-set carries no ticker — it must score exactly as it always did."""
+    unbound = Aspect(name="a", spans=["export license requirements"])
+    assert coverage([_rc_t(0, "Intel: export license requirements.", "INTC")], [unbound])[0] == 1.0
+
+
+def test_citation_accuracy_uses_the_same_entity_binding() -> None:
+    """A citation to the wrong company's chunk is not evidence for 'that competitor's own …'."""
+    union = [
+        _rc_t(0, "Intel discloses export license requirements for China.", "INTC"),
+        _rc_t(1, "Micron discloses export license requirements for China.", "MU"),
+    ]
+    answer = GroundedAnswer(
+        question="Which competitor discloses export license requirements?",
+        answer="Micron does. [1][2]",
+        citations=[
+            SourceCitation(marker=1, chunk_id=union[0].chunk.chunk_id, label="INTC 10-K"),
+            SourceCitation(marker=2, chunk_id=union[1].chunk.chunk_id, label="MU 10-K"),
+        ],
+        insufficient_evidence=False,
+    )
+    # 1 of the 2 citations points at the company the aspect is bound to.
+    assert multihop_citation_accuracy(answer, union, [_A2]) == 0.5

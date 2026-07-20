@@ -17,13 +17,21 @@ Install the real backends with the extras:  ``pip install -e ".[rag]"`` (fastemb
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import math
 import struct
-from collections.abc import Iterator, Sequence
-from typing import Protocol, runtime_checkable
+import time
+from collections.abc import Callable, Iterator, Sequence
+from typing import Protocol, TypeVar, runtime_checkable
+
+import structlog
 
 from stock_agent.settings import Settings
+
+logger = structlog.get_logger(__name__)
+
+_T = TypeVar("_T")
 
 # Output dimensionality of the OpenAI embedding models (no model load needed to know it).
 _OPENAI_DIMS = {
@@ -48,6 +56,22 @@ _VOYAGE_DIMS = {
     "voyage-code-2": 1024,
 }
 _VOYAGE_DEFAULT_MODEL = "voyage-4"
+# Client resilience. Long RL rollouts issue thousands of live query embeds; with the SDK
+# default (max_retries=0, timeout=None → a ~600s read hang) a single transient network
+# blip kills a multi-hour, $0 training run (observed: e5_v2 seed 1 died on one
+# api.voyageai.com read-timeout). Retries re-issue the *identical* request, so successful
+# embeddings are byte-identical — determinism and the retrieval space are unchanged; only
+# the failure path differs. Shorter per-attempt timeout fails fast then backs off.
+_VOYAGE_MAX_RETRIES = 6
+_VOYAGE_TIMEOUT_S = 120.0
+# App-level retry. The voyageai SDK's own controller retries only RateLimit /
+# ServiceUnavailable / Timeout — it does NOT retry APIConnectionError ("Connection
+# aborted", ConnectTimeout), which is exactly what killed e5_v2 seed 1's second attempt.
+# We wrap embed calls in our own exponential backoff over the full transient set so a
+# dropped connection during a multi-hour rollout is survived, not fatal. Non-transient
+# errors (auth, bad request) still propagate immediately.
+_VOYAGE_APP_RETRIES = 5     # total attempts at the app layer
+_VOYAGE_RETRY_BASE_S = 2.0  # backoff between attempts: 2s, 4s, 8s, 16s
 
 
 @runtime_checkable
@@ -229,6 +253,58 @@ class OpenAIEmbedder:
         return self.embed_documents([text])[0]
 
 
+def _voyage_transient_excs() -> tuple[type[Exception], ...]:
+    """Voyage error classes worth retrying (lazy import keeps voyageai optional).
+
+    Returns ``()`` when voyageai isn't importable. The ``[voyage]`` extra is ABSENT in CI
+    (pyproject), where only an injected fake client is exercised — so the retry wrapper must
+    not hard-require the package on the hot path (an empty set == retry nothing == the
+    pre-retry behavior). In production the real client construction already requires voyageai,
+    so the full transient set is active there.
+    """
+    try:
+        from voyageai import error as ve  # local: only imported when Voyage is actually used
+    except ImportError:  # pragma: no cover - CI path (voyage extra not installed)
+        return ()
+    return (
+        ve.APIConnectionError,
+        ve.Timeout,
+        ve.ServiceUnavailableError,
+        ve.RateLimitError,
+    )
+
+
+def _voyage_call_with_retry(fn: Callable[[], _T]) -> _T:
+    """Call a Voyage embed request ``fn``, retrying transient network/rate errors.
+
+    Exponential backoff over the transient set — crucially including
+    ``APIConnectionError``, which the SDK's own controller does not retry. Non-transient
+    errors (auth, malformed request) propagate immediately. On success the request is
+    issued exactly as the caller built it, so the returned embedding is byte-identical to
+    a no-retry call (determinism and the retrieval space are unchanged).
+    """
+    excs = _voyage_transient_excs()
+    last_exc: Exception | None = None
+    for attempt in range(_VOYAGE_APP_RETRIES):
+        try:
+            return fn()
+        except excs as exc:
+            last_exc = exc
+            if attempt == _VOYAGE_APP_RETRIES - 1:
+                break
+            delay = _VOYAGE_RETRY_BASE_S * (2**attempt)
+            logger.warning(
+                "voyage_embed_retry",
+                attempt=attempt + 1,
+                max_attempts=_VOYAGE_APP_RETRIES,
+                delay_s=delay,
+                error=type(exc).__name__,
+            )
+            time.sleep(delay)
+    assert last_exc is not None  # loop runs >=1 time, so a break implies an exception
+    raise last_exc
+
+
 class VoyageEmbedder:
     """Voyage AI embeddings (opt-in). Default ``voyage-4`` (1024-d).
 
@@ -261,7 +337,11 @@ class VoyageEmbedder:
                 raise RuntimeError(
                     "Voyage embeddings need the voyageai package: pip install -e \".[voyage]\""
                 ) from exc
-            self._client = voyageai.Client(api_key=key)
+            self._client = voyageai.Client(
+                api_key=key,
+                max_retries=_VOYAGE_MAX_RETRIES,
+                timeout=_VOYAGE_TIMEOUT_S,
+            )
         return self._client
 
     @property
@@ -272,15 +352,28 @@ class VoyageEmbedder:
         client = self._ensure_client()
         out: list[list[float]] = []
         for batch in _embed_batches(texts):
-            result = client.embed(  # type: ignore[attr-defined]
-                batch, model=self._model, input_type="document"
+            # partial binds `batch` by value (no loop-variable closure) and is a proper
+            # zero-arg callable for the retry wrapper.
+            result = _voyage_call_with_retry(
+                functools.partial(
+                    client.embed,  # type: ignore[attr-defined]
+                    batch,
+                    model=self._model,
+                    input_type="document",
+                )
             )
             out.extend([float(x) for x in vec] for vec in result.embeddings)
         return out
 
     def embed_query(self, text: str) -> list[float]:
-        result = self._ensure_client().embed(  # type: ignore[attr-defined]
-            [text], model=self._model, input_type="query"
+        client = self._ensure_client()
+        result = _voyage_call_with_retry(
+            functools.partial(
+                client.embed,  # type: ignore[attr-defined]
+                [text],
+                model=self._model,
+                input_type="query",
+            )
         )
         return [float(x) for x in result.embeddings[0]]
 

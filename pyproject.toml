@@ -62,6 +62,15 @@ dev = [
 sequence = [
     "torch>=2.2,<3",
 ]
+# Retrieval RL — PPO actor-critic (advanced-RAG A6.2e). Kept OUT of core deps + CI:
+# the CI-floor learner is the numpy REINFORCE (rag/rl/reinforce.py); torch is only the
+# escalation rung and is lazy-imported inside rag/rl/ppo.py, so importing the module
+# never pulls torch. On macOS torch and lightgbm each bundle their own OpenMP runtime;
+# rag/rl/ppo.py sets KMP_DUPLICATE_LIB_OK=TRUE before importing torch so the two coexist
+# (a subprocess smoke test guards this). Install with `pip install -e ".[rl]"`.
+rl = [
+    "torch>=2.2,<3",
+]
 # GDELT news-feature ingest (Task 10). Kept OUT of core deps: only needed to run
 # the offline `ingest-news` backfill against BigQuery. Install with
 # `pip install -e ".[gdelt]"` + `gcloud auth application-default login`.
@@ -131,14 +140,14 @@ module = ["openai.*", "voyageai.*"]
 follow_imports = "skip"
 ignore_missing_imports = true
 
-# The experimental LSTM forecaster subclasses torch.nn.Module. torch is an OPTIONAL
-# extra ([sequence]); it is absent from [dev]/CI, so nn.Module resolves to Any there
-# and strict mode's disallow_subclassing_any fires — `make check` then passes locally
-# (torch installed) but fails in CI (torch absent). The module is torch-gated at
-# runtime (its tests are collect-ignored without torch), so relax just this one check
-# for it, keeping mypy environment-independent.
+# The experimental LSTM forecaster and the A6.2e PPO actor-critic subclass torch.nn.Module.
+# torch is an OPTIONAL extra ([sequence]/[rl]); it is absent from [dev]/CI, so nn.Module resolves
+# to Any there and strict mode's disallow_subclassing_any fires — `make check` then passes locally
+# (torch installed) but fails in CI (torch absent). Both modules are torch-gated at runtime (their
+# tests are collect-ignored without torch), so relax just this one check for them, keeping mypy
+# environment-independent.
 [[tool.mypy.overrides]]
-module = ["stock_agent.forecasting.sequence"]
+module = ["stock_agent.forecasting.sequence", "stock_agent.rag.rl.ppo"]
 disallow_subclassing_any = false
 
 [tool.pytest.ini_options]

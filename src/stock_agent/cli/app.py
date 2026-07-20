@@ -7,8 +7,10 @@ Commands: analyze (Phase 4), forecast (Phase 5), chat (Phase 4.5).
 from __future__ import annotations
 
 import json
+import random
 import textwrap
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
@@ -27,7 +29,7 @@ from stock_agent.graph.extract import (
     select_extraction_chunks,
 )
 from stock_agent.graph.store import build_graph_store
-from stock_agent.llm.client import AnthropicClient
+from stock_agent.llm.client import AnthropicClient, TextLLM
 from stock_agent.logging_config import configure_logging
 from stock_agent.pipelines.analyze import run_analyze
 from stock_agent.pipelines.forecast import MODEL_NAMES, run_forecast
@@ -66,6 +68,7 @@ from stock_agent.rag.policy_eval import (
     build_dataset,
     evaluate_gated,
     evaluate_offline,
+    fit_bandit_baseline,
     split_dataset,
 )
 from stock_agent.rag.policy_retriever import build_arm_system
@@ -75,6 +78,19 @@ from stock_agent.rag.read_path import (
     build_named_system,
     build_retrieval_system,
 )
+from stock_agent.rag.rl.action import named_action_space
+from stock_agent.rag.rl.env import RagRetrievalEnv
+from stock_agent.rag.rl.rleval import (
+    AlwaysSearchPolicy,
+    OneShotArmPolicy,
+    ReActBridgePolicy,
+    ScriptedPolicy,
+    SweepBridgePolicy,
+    build_baselines,
+    evaluate_rl,
+    format_report_markdown,
+)
+from stock_agent.rag.rl.train import TrainConfig, load_checkpoint, save_checkpoint, train_policy
 from stock_agent.rag.sparse_store import InMemoryBM25Store, build_sparse_store
 from stock_agent.rag.status import corpus_status
 from stock_agent.rag.vector_store import InMemoryVectorStore, build_vector_store
@@ -1816,3 +1832,558 @@ def rag_gated_eval(
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report.to_json_dict(), indent=2), encoding="utf-8")
     typer.echo(f"\nWrote verdict to {out}")
+
+
+@rag_app.command("rl-train")
+def rag_rl_train(
+    queries: Annotated[
+        Path,
+        typer.Option("--queries", "-q", help="Train-fold benchmark JSON (list of MultiHopQuery)"),
+    ] = Path("configs/rag_eval_multistep_generated.train.json"),
+    algo: Annotated[
+        str, typer.Option("--algo", help="Learner: bc | reinforce | ppo (ppo needs the [rl] extra)")
+    ] = "reinforce",
+    action_space: Annotated[
+        str, typer.Option("--action-space", help="Action space preset: pruned (7) | full (16)")
+    ] = "pruned",
+    seed: Annotated[int, typer.Option("--seed", help="Master RNG seed (init + rollouts)")] = 0,
+    iterations: Annotated[
+        int, typer.Option("--iterations", help="REINFORCE/PPO iterations (bc uses its own epochs)")
+    ] = 200,
+    lr: Annotated[
+        float | None,
+        typer.Option("--lr", help="Learning rate override (defaults per algo: reinforce/bc/ppo)"),
+    ] = None,
+    gamma: Annotated[float, typer.Option("--gamma", help="Discount γ (1.0 = exact cover)")] = 1.0,
+    lambda_cost: Annotated[
+        float | None,
+        typer.Option("--lambda-cost", help="Cost weight λ_c (default settings.reward_lambda_cost)"),
+    ] = None,
+    test_frac: Annotated[
+        float,
+        typer.Option("--test-frac", help="If >0, group-split and train on the train side (safety)"),
+    ] = 0.0,
+    graph_universe: Annotated[
+        Path, typer.Option("--graph-universe", help="Graph universe file (in_graph_universe flag)")
+    ] = Path("configs/graph_universe.txt"),
+    out_dir: Annotated[
+        Path | None,
+        typer.Option("--out-dir", help="Checkpoint dir (default outputs/experiments/<run_id>)"),
+    ] = None,
+) -> None:
+    """Train a retrieval-RL policy on the group-split train fold and freeze it (A6.2f, local, $0).
+
+    Builds the deterministic retrieval MDP over the labeled episodes (real $0 retrieval — needs the
+    ingested corpus + A5 graph, like `rag policy-eval`), fits a feature standardizer, trains
+    `--algo`, and writes a self-describing `policy.json` (weights + STATE_FEATURE_NAMES order +
+    action-space name + standardizer + config + seed) the A6.2g eval / a deploy can reload. No LLM.
+    """
+    from datetime import UTC, datetime
+
+    settings = get_settings()
+    configure_logging(settings)
+    if algo not in ("bc", "reinforce", "ppo"):
+        typer.echo("--algo must be one of bc | reinforce | ppo.")
+        raise typer.Exit(code=1)
+    if action_space not in ("pruned", "full"):
+        typer.echo("--action-space must be 'pruned' or 'full'.")
+        raise typer.Exit(code=1)
+    if not queries.exists():
+        typer.echo(f"Benchmark not found: {queries} (generate via `rag gen-multistep`).")
+        raise typer.Exit(code=1)
+
+    labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(queries.read_text())]
+    if test_frac > 0.0:  # optional internal group-split guard when given the FULL catalog
+        labeled, _ = split_multihop(labeled, test_frac=test_frac, seed=seed)
+    if not labeled:
+        typer.echo("No training episodes after loading/splitting.")
+        raise typer.Exit(code=1)
+
+    alias_map = load_alias_map()
+    universe = load_universe(graph_universe) if graph_universe.exists() else None
+    env = RagRetrievalEnv(
+        labeled,
+        settings=settings,
+        action_space=named_action_space(action_space),
+        alias_map=alias_map,
+        graph_universe=universe,
+        gamma=gamma,
+        lambda_cost=lambda_cost,
+    )
+
+    # Route a single --lr override to the algo-appropriate field (each optimizer has its own scale).
+    lr_field = {"reinforce": "lr", "bc": "bc_lr", "ppo": "ppo_lr"}[algo]
+    overrides: dict[str, float] = {lr_field: lr} if lr is not None else {}
+    config = TrainConfig(
+        algo=algo,
+        action_space=action_space,
+        seed=seed,
+        gamma=gamma,
+        lambda_cost=lambda_cost,
+        iterations=iterations,
+        queries_path=str(queries),
+        test_frac=test_frac,
+        **overrides,  # type: ignore[arg-type]
+    )
+    trained = train_policy(env, list(range(len(labeled))), config)
+
+    ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    run_id = f"{ts}_rl-{algo}-{action_space}-s{seed}"
+    checkpoint = (out_dir or Path("outputs/experiments") / run_id) / "policy.json"
+    save_checkpoint(trained, checkpoint)
+
+    final = trained.history[-1] if trained.history else float("nan")
+    typer.echo(
+        # `trained.config`, not `config` — train_policy fills n_train in on its own copy.
+        f"Trained {algo} ({action_space}, {trained.n_actions} actions) on "
+        f"{trained.config.n_train} episodes × {iterations if algo != 'bc' else config.bc_epochs} "
+        f"{'epochs' if algo == 'bc' else 'iterations'}; "
+        f"final {trained.history_metric}={final:.4f}\nWrote checkpoint to {checkpoint}"
+    )
+
+
+@rag_app.command("rl-eval")
+def rag_rl_eval(
+    policy_path: Annotated[
+        Path, typer.Option("--policy", "-p", help="Frozen checkpoint from `rag rl-train`")
+    ],
+    train_queries: Annotated[
+        Path,
+        typer.Option("--train-queries", help="TRAIN fold (the one the policy was trained on)"),
+    ] = Path("configs/rag_eval_multistep_generated.train.json"),
+    test_queries: Annotated[
+        Path, typer.Option("--test-queries", help="Held-out TEST-fold benchmark (group-disjoint)")
+    ] = Path("configs/rag_eval_multistep_generated.test.json"),
+    seeds: Annotated[
+        str, typer.Option("--seeds", help="Comma-separated rollout seeds (sampled rows averaged)")
+    ] = "0,1,2",
+    react_arms: Annotated[
+        str, typer.Option("--react-arms", help="Production arms for the A4-loop baseline")
+    ] = "hybrid,graph",
+    bandit: Annotated[
+        bool,
+        typer.Option("--bandit/--no-bandit", help="Fit the A6.1 LinUCB baseline (5-arm matrix)"),
+    ] = True,
+    lambda_cost: Annotated[
+        float | None,
+        typer.Option("--lambda-cost", help="Cost weight λ_c (default: the checkpoint's own)"),
+    ] = None,
+    graph_universe: Annotated[
+        Path, typer.Option("--graph-universe", help="Graph universe file (in_graph_universe flag)")
+    ] = Path("configs/graph_universe.txt"),
+    n_boot: Annotated[
+        int, typer.Option("--n-boot", help="Group-bootstrap resamples for the paired CI")
+    ] = 1000,
+    seed: Annotated[int, typer.Option("--seed", help="Bootstrap seed")] = 42,
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Verdict JSON (default: next to the policy)")
+    ] = None,
+) -> None:
+    """Judge a frozen RL policy on the held-out fold vs the 4 baselines (A6.2g verdict, local, $0).
+
+    Replays the checkpoint greedily (deploy semantics) on the group-wise held-out episodes of the
+    same deterministic MDP it trained in, against: the fixed pipelines (one per arm), the A4 ReAct
+    loop + A5 bridge, the A6.1 LinUCB bandit, and a random policy — plus a reward-hacking sentinel.
+    Reports mean return / coverage / retrievals / cost, the train-vs-held-out gap, and the paired
+    group-bootstrap CI, then applies the pre-registered promote rule. No LLM (templated queries):
+    the sim-to-real gap is measured separately.
+    """
+    settings = get_settings()
+    configure_logging(settings)
+    for path in (policy_path, train_queries, test_queries):
+        if not path.exists():
+            typer.echo(f"Not found: {path}")
+            raise typer.Exit(code=1)
+
+    loaded = load_checkpoint(policy_path)
+    train_labeled = [
+        MultiHopQuery.model_validate(obj) for obj in json.loads(train_queries.read_text())
+    ]
+    test_labeled = [
+        MultiHopQuery.model_validate(obj) for obj in json.loads(test_queries.read_text())
+    ]
+    if not train_labeled or not test_labeled:
+        typer.echo("Both folds must be non-empty.")
+        raise typer.Exit(code=1)
+
+    alias_map = load_alias_map()
+    universe = load_universe(graph_universe) if graph_universe.exists() else None
+    cfg = loaded.config
+    # One env over BOTH folds ⇒ one shared TransitionCache: the baselines' retrievals ARE the
+    # learned policy's cached ones, so every candidate sees byte-identical transitions.
+    env = RagRetrievalEnv(
+        train_labeled + test_labeled,
+        settings=settings,
+        action_space=named_action_space(
+            loaded.action_space, n_discovered_slots=loaded.n_discovered_slots
+        ),
+        alias_map=alias_map,
+        graph_universe=universe,
+        gamma=float(cfg.get("gamma", 1.0)),  # the checkpoint's own reward definition, not a new one
+        lambda_cost=lambda_cost if lambda_cost is not None else cfg.get("lambda_cost"),
+    )
+    train_idx = list(range(len(train_labeled)))
+    test_idx = list(range(len(train_labeled), len(train_labeled) + len(test_labeled)))
+
+    scorer, ctx_mean, ctx_std = None, None, None
+    if bandit:
+        typer.echo(f"Fitting the A6.1 LinUCB baseline on {len(train_labeled)} train episodes …")
+        # ARMS order == reward-matrix column order == bandit action order (load-bearing alignment).
+        systems = {name: build_arm_system(name, settings) for name in ARMS}
+        train_ds = build_dataset(
+            train_labeled,
+            systems,
+            settings=settings,
+            alias_map=alias_map,
+            graph_universe=universe,
+            lambda_cost=lambda_cost,
+        )
+        scorer, ctx_mean, ctx_std = fit_bandit_baseline(train_ds, seed=seed)
+
+    baselines = build_baselines(
+        env,
+        react_arms=tuple(a.strip() for a in react_arms.split(",") if a.strip()),
+        bandit=scorer,
+        bandit_arm_names=ARMS,
+        context_mean=ctx_mean,
+        context_std=ctx_std,
+    )
+    report = evaluate_rl(
+        env,
+        train_indices=train_idx,
+        test_indices=test_idx,
+        learned=loaded.policy,
+        baselines=baselines,
+        sentinel=AlwaysSearchPolicy(action_space=env.action_space, arm_costs=env.arm_costs),
+        learned_name=f"rl-{loaded.algo}",
+        algo=loaded.algo,
+        action_space=loaded.action_space,
+        seeds=[int(s) for s in seeds.split(",") if s.strip()],
+        n_boot=n_boot,
+        seed=seed,
+    )
+    typer.echo("\n" + format_report_markdown(report))
+    destination = out or policy_path.parent / "rl_eval.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(report.to_json_dict(), indent=2), encoding="utf-8")
+    typer.echo(f"\nWrote verdict to {destination}")
+
+
+@rag_app.command("rl-simreal")
+def rag_rl_simreal(
+    policy_path: Annotated[
+        Path, typer.Option("--policy", "-p", help="Frozen checkpoint from `rag rl-train`")
+    ],
+    test_queries: Annotated[
+        Path, typer.Option("--test-queries", help="Held-out benchmark (the fold rl-eval judged)")
+    ] = Path("configs/rag_eval_multistep_generated.test.json"),
+    n: Annotated[
+        int, typer.Option("--n", help="Episodes to run (sampled deterministically from the strata)")
+    ] = 24,
+    strata: Annotated[
+        str, typer.Option("--strata", help="Strata to draw from (bridges are the sim's weak spot)")
+    ] = "HARD,MED",
+    seed: Annotated[int, typer.Option("--seed", help="Episode-subset seed (reproducible)")] = 0,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run/--no-dry-run", help="Use a $0 stand-in LLM to test the harness"),
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm the paid LLM calls (required unless --dry-run)")
+    ] = False,
+    graph_universe: Annotated[
+        Path, typer.Option("--graph-universe", help="Graph universe file (in_graph_universe flag)")
+    ] = Path("configs/graph_universe.txt"),
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Report JSON (default: next to the policy)")
+    ] = None,
+) -> None:
+    """Measure the sim-to-real gap of a frozen RL policy (A6.2g — **PAID**, ~$2-3 for 24 episodes).
+
+    Runs the same policy over the same held-out episodes twice: once with the $0 simulator's
+    TEMPLATED queries (what `rag rl-eval` judged), once with the query text written by the LLM at
+    each hop (what production does). The policy still owns which arm, where to point it and when to
+    stop — the LLM only phrases the search — so the difference in coverage IS the gap. The
+    accumulated union then goes through the real guarded synthesis (citation + number guards), the
+    one place the faithfulness floor can fire. Prints the call bound and refuses to spend without
+    `--yes`.
+    """
+    from stock_agent.research.rl_simreal import (
+        DryRunLLM,
+        LLMQueryWriter,
+        estimate_llm_calls,
+        format_simreal_markdown,
+        measure_llm_calls,
+        run_sim_to_real,
+        write_report,
+    )
+
+    settings = get_settings()
+    configure_logging(settings)
+    for path in (policy_path, test_queries):
+        if not path.exists():
+            typer.echo(f"Not found: {path}")
+            raise typer.Exit(code=1)
+
+    loaded = load_checkpoint(policy_path)
+    labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(test_queries.read_text())]
+    wanted = {s.strip().upper() for s in strata.split(",") if s.strip()}
+    pool = [q for q in labeled if (q.stratum or "NA").upper() in wanted]
+    if not pool:
+        typer.echo(f"No held-out episodes in strata {sorted(wanted)}.")
+        raise typer.Exit(code=1)
+    # Deterministic subset: a seeded shuffle of the filtered pool (reproducible) — never "the first
+    # n", which would bias the sample toward whichever seed tickers sort first in the benchmark.
+    episodes = list(pool)
+    random.Random(seed).shuffle(episodes)
+    episodes = episodes[: min(n, len(episodes))]
+
+    alias_map = load_alias_map()
+    universe = load_universe(graph_universe) if graph_universe.exists() else None
+    cfg = loaded.config
+    space = named_action_space(
+        loaded.action_space, n_discovered_slots=loaded.n_discovered_slots
+    )
+
+    def _build(writer: object | None) -> RagRetrievalEnv:
+        # Both envs are identical apart from the query writer — that is what isolates the gap.
+        return RagRetrievalEnv(
+            episodes,
+            settings=settings,
+            action_space=space,
+            alias_map=alias_map,
+            graph_universe=universe,
+            gamma=float(cfg.get("gamma", 1.0)),
+            lambda_cost=cfg.get("lambda_cost"),
+            query_writer=writer,  # type: ignore[arg-type]
+        )
+
+    # Fan-out-aware spend gate. The estimate exists ONLY to let a human authorize spend, so pay for
+    # the pre-roll ONLY when we are about to REFUSE (no --yes, not a dry-run). It rolls the greedy
+    # policy through a $0 stand-in writer and counts ACTUAL calls (one per retrieval request ⇒ a
+    # sweep counts branches, which the naive step bound misses). Under --yes / --dry-run the run
+    # itself yields the same honest `total_llm_calls`, so this ~3-min pre-roll (and its benign
+    # query_writer_empty flood) would be pure waste — skip it. `quiet_empty` keeps this path clean
+    # too, so a real empty in the paid writer below stays legible as signal.
+    if not dry_run and not yes:
+        count_writer = LLMQueryWriter(DryRunLLM(), alias_map=alias_map, quiet_empty=True)
+        measured = measure_llm_calls(
+            loaded.policy, episodes, env=_build(count_writer), writer=count_writer
+        )
+        naive = estimate_llm_calls(len(episodes), settings.agentic_max_steps)
+        typer.echo(
+            f"Sim-to-real: {len(episodes)} episodes from {sorted(wanted)} "
+            f"(policy={loaded.algo}/{loaded.action_space}). "
+            f"~{measured} LLM calls (fan-out-aware: query hops incl. sweep branches + 1 "
+            f"synthesis/episode; naive step-bound would say {naive}). "
+            "This spends API budget. Re-run with --yes (or --dry-run for a $0 check)."
+        )
+        raise typer.Exit(code=1)
+
+    # --dry-run swaps the whole LLM (writer + synthesis) for a $0 stand-in: the writer returns "",
+    # the env keeps the template, so the gap must come out exactly 0 — the harness self-test.
+    llm: TextLLM = DryRunLLM() if dry_run else AnthropicClient(settings)
+    writer = LLMQueryWriter(llm, alias_map=alias_map)
+    report = run_sim_to_real(
+        loaded.policy,
+        episodes,
+        sim_env=_build(None),
+        real_env=_build(writer),
+        writer=writer,
+        llm=llm,
+        seed=seed,
+    )
+    typer.echo("\n" + format_simreal_markdown(report))
+    # The honest fan-out-aware count, straight from the run that just executed (identical accounting
+    # to the pre-roll gate) — no separate $0 pass needed: --dry-run counts it, --yes billed it.
+    naive = estimate_llm_calls(len(episodes), settings.agentic_max_steps)
+    tally = "billed" if not dry_run else "counted ($0 dry-run)"
+    typer.echo(
+        f"\n{len(episodes)} episodes from {sorted(wanted)} "
+        f"(policy={loaded.algo}/{loaded.action_space}); "
+        f"{report.total_llm_calls} LLM calls {tally} (naive step-bound would say {naive})."
+    )
+    destination = out or policy_path.parent / "rl_simreal.json"
+    write_report(report, destination)
+    typer.echo(f"\nWrote sim-to-real report to {destination}")
+
+
+@rag_app.command("rl-h2h")
+def rag_rl_h2h(
+    policy_path: Annotated[
+        Path, typer.Option("--policy", "-p", help="Frozen checkpoint from `rag rl-train`")
+    ],
+    baseline: Annotated[
+        str,
+        typer.Option(
+            "--baseline",
+            help="Opponent: `sweep:ARM` (E3 strong), `react:ARM` (A4), or `fixed:ARM` (A5.3)",
+        ),
+    ] = "react:hybrid",
+    simreal: Annotated[
+        Path | None,
+        typer.Option("--simreal", help="Paid rl-simreal report to pair against"),
+    ] = None,
+    test_queries: Annotated[
+        Path, typer.Option("--test-queries", help="Held-out benchmark (must match rl-simreal)")
+    ] = Path("configs/rag_eval_multistep_generated.test.json"),
+    n: Annotated[int, typer.Option("--n", help="Episodes (must match the rl-simreal run)")] = 24,
+    strata: Annotated[
+        str, typer.Option("--strata", help="Strata (must match the rl-simreal run)")
+    ] = "HARD,MED",
+    seed: Annotated[
+        int, typer.Option("--seed", help="Subset seed (must match the rl-simreal run)")
+    ] = 0,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run/--no-dry-run", help="$0 stand-in LLM: the delta must be exact"),
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Confirm the paid LLM calls (required unless --dry-run)")
+    ] = False,
+    graph_universe: Annotated[
+        Path, typer.Option("--graph-universe", help="Graph universe file (in_graph_universe flag)")
+    ] = Path("configs/graph_universe.txt"),
+    out: Annotated[
+        Path | None, typer.Option("--out", "-o", help="Report JSON (default: next to the policy)")
+    ] = None,
+) -> None:
+    """Re-run the promote comparison with BOTH policies on real (LLM-written) queries — **PAID**.
+
+    `rag rl-eval` judged the learned policy against the baselines under the sim's TEMPLATED queries,
+    and `rag rl-simreal` then showed the sim understates the learned policy. The obvious objection
+    to a REJECT is that the baseline never got real query text either — so this gives it the same
+    environment and re-measures the paired Δ. It costs roughly half of `rl-simreal`: the return is
+    computed by the env (coverage oracle + cost table, both `$0`), so only the baseline's query hops
+    bill, and the learned policy's real returns are read back from the already-paid report.
+    """
+    from stock_agent.research.rl_simreal import (
+        DryRunLLM,
+        HeadToHeadReport,
+        LLMQueryWriter,
+        RealRow,
+        format_h2h_markdown,
+        head_to_head,
+        measure_llm_calls,
+        run_real_policy,
+    )
+
+    settings = get_settings()
+    configure_logging(settings)
+    saved_path = simreal or policy_path.parent / "rl_simreal.json"
+    for path in (policy_path, test_queries, saved_path):
+        if not path.exists():
+            typer.echo(f"Not found: {path}  (run `rag rl-simreal` first)")
+            raise typer.Exit(code=1)
+
+    loaded = load_checkpoint(policy_path)
+    labeled = [MultiHopQuery.model_validate(obj) for obj in json.loads(test_queries.read_text())]
+    wanted = {s.strip().upper() for s in strata.split(",") if s.strip()}
+    pool = [q for q in labeled if (q.stratum or "NA").upper() in wanted]
+    # Reproduce the rl-simreal subset EXACTLY: same filter, same seeded shuffle, same truncation.
+    episodes = list(pool)
+    random.Random(seed).shuffle(episodes)
+    episodes = episodes[: min(n, len(episodes))]
+
+    saved = json.loads(saved_path.read_text())
+    # BOTH sides of the pair must face the SAME environment or the delta is meaningless. --dry-run
+    # gives the baseline a $0 stand-in writer that returns "" (⇒ the env keeps the template), so it
+    # must be paired against the learned policy's TEMPLATED (sim) returns; the paid run pairs
+    # against its LLM-written (real) ones. Mixing the two would hand the learned policy real query
+    # text and the baseline a template — exactly the bias this command exists to remove.
+    side = "sim" if dry_run else "real"
+    rows_a = [
+        RealRow(
+            question=e["question"],
+            stratum=e["stratum"],
+            group_id="",  # filled from the reconstructed episodes below (the JSON omits it)
+            coverage=e[f"coverage_{side}"],
+            total_return=e[f"return_{side}"],
+            actions=tuple(e[f"actions_{side}"]),
+            queries=tuple(e["queries"]) if not dry_run else (),
+            n_llm_calls=e["n_llm_calls"] if not dry_run else 0,
+        )
+        for e in saved["episodes"]
+    ]
+    # The pairing is only valid if BOTH runs cover the same episodes in the same order. Check that
+    # here rather than trusting the flags were retyped identically — a silent misalignment would
+    # look exactly like a result.
+    if len(rows_a) != len(episodes) or any(
+        a.question != e.question for a, e in zip(rows_a, episodes, strict=False)
+    ):
+        typer.echo(
+            f"Episode set does not match {saved_path}: rerun with the SAME "
+            f"--n/--strata/--seed/--test-queries used for `rag rl-simreal` "
+            f"({len(rows_a)} saved vs {len(episodes)} here)."
+        )
+        raise typer.Exit(code=1)
+    rows_a = [
+        replace(a, group_id=e.group_id or e.question)
+        for a, e in zip(rows_a, episodes, strict=True)
+    ]
+
+    space = named_action_space(loaded.action_space, n_discovered_slots=loaded.n_discovered_slots)
+    kind, _, arm = baseline.partition(":")
+    opponent: ScriptedPolicy
+    if kind == "sweep":  # the E3 strong baseline — the arm-parity opponent the RL verdict must beat
+        opponent = SweepBridgePolicy(arm, action_space=space)
+    elif kind == "react":
+        opponent = ReActBridgePolicy(arm, action_space=space)
+    elif kind == "fixed":
+        opponent = OneShotArmPolicy(arm, action_space=space)
+    else:
+        typer.echo(
+            f"Unknown --baseline {baseline!r} (expected `sweep:ARM`, `react:ARM` or `fixed:ARM`)"
+        )
+        raise typer.Exit(code=1)
+
+    alias_map = load_alias_map()
+    universe = load_universe(graph_universe) if graph_universe.exists() else None
+    cfg = loaded.config
+
+    def _build(writer: object | None) -> RagRetrievalEnv:
+        return RagRetrievalEnv(
+            episodes,
+            settings=settings,
+            action_space=space,
+            alias_map=alias_map,
+            graph_universe=universe,
+            gamma=float(cfg.get("gamma", 1.0)),
+            lambda_cost=cfg.get("lambda_cost"),
+            query_writer=writer,  # type: ignore[arg-type]
+        )
+
+    # Fan-out-aware spend estimate for the BASELINE side (the only side that bills here — the rl
+    # side was paid by `rag rl-simreal`). No synthesis on this path ⇒ query hops only. A sweep
+    # opponent fans out like the learned policy, so the naive bound undercounts it the same way.
+    count_writer = LLMQueryWriter(DryRunLLM(), alias_map=alias_map)
+    measured = measure_llm_calls(
+        opponent, episodes, env=_build(count_writer), writer=count_writer, include_synthesis=False
+    )
+    typer.echo(
+        f"Real-env head-to-head: rl({loaded.algo}) vs {baseline} on {len(episodes)} episodes. "
+        f"~{measured} calls (fan-out-aware, query hops only; the rl side is already paid for)."
+    )
+    if not dry_run and not yes:
+        typer.echo("This spends API budget. Re-run with --yes (or --dry-run for a $0 check).")
+        raise typer.Exit(code=1)
+
+    llm: TextLLM = DryRunLLM() if dry_run else AnthropicClient(settings)
+    writer = LLMQueryWriter(llm, alias_map=alias_map)
+    real_env = _build(writer)
+    rows_b = run_real_policy(opponent, episodes, real_env=real_env, writer=writer, seed=seed)
+
+    suffix = " [templated]" if dry_run else ""
+    report: HeadToHeadReport = head_to_head(
+        rows_a, rows_b, name_a=f"rl({loaded.algo}){suffix}", name_b=f"{baseline}{suffix}"
+    )
+    typer.echo("\n" + format_h2h_markdown(report))
+    if dry_run:
+        typer.echo(
+            "\nDRY RUN: both sides ran TEMPLATED queries ($0 stand-in writer), so this reproduces "
+            "the `rag rl-eval` comparison on this subset — it is NOT the sim-to-real head-to-head."
+        )
+    destination = out or policy_path.parent / "rl_h2h.json"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(report.to_json_dict(), indent=2), encoding="utf-8")
+    typer.echo(f"\nWrote head-to-head report to {destination}")

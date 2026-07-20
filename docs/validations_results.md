@@ -42,6 +42,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-06 | **Conformal interval coverage** — split-conformal correction over the universe (pooled offline, per model × {20,30,60}), measured stated-vs-conformalized CI coverage | every model **under-covered**: a stated 90% CI really covered **82–86% (h20), 81–87% (h30), 76–81% (h60)** → conformal `q` (+0.04 to +0.16) fixed all to **90–91%** | **Ship conformal-calibrated CIs/VaR** at inference + in the monthly retrain. The intervals are now honest-coverage (marginal). |
 | 2026-06-06 | **Sequence × news (Task 8 × 10)** — price-only vs price+news, **DEEP LSTM (3–4 layers, 128–256 hidden, LayerNorm), carefully tuned** (early-stop + temperature-calib + val-selected grid), 37 tickers, held-out TEST split, inner big-move band (h20 \|r\|>0.05, h60 \|r\|>0.15) | news adds **no skill** on the held-out test: big-move **ΔAUC −0.012 (h20) / −0.015 (h60)** (worse), Brier flat — and **robust across two hyperparameter grids** (dropout 0.2/lr 3e-4 and 0.3/lr 1e-3 agree). Deep nets **don't overfit** (train AUC ≈ val AUC). The one place news beat price was h60 *validation* Brier — it **reversed on held-out test** (spurious val signal). Price-only deep LSTM TEST big-move AUC **0.646 / 0.682**. | **Do not promote.** Robust to the obvious objections (depth, tuning, band, held-out) — the news-negative is an **INFORMATION ceiling, not a model-class limitation**: a deep, tuned temporal model given the raw sentiment sequence extracts no discrimination. **Caveat:** per-ticker + market sentiment only; **topic streams (July) untested.** |
 | 2026-06-28 | **A5.3 GraphRAG promotion** — agentic+graph (alias-bridge OFF) vs the production multi-hop path agentic+hybrid+alias-bridge, on the SEC **bridging benchmark** (2×2 control×substrate, **12 Q × 2 seeds**, aspect-coverage) | ✅ **scoped win** — HARD `D≥B` held both seeds (1.00 / 0.92 ≥ 0.92), **D=1.00 on controls** (agentic+graph never regresses easy Qs); the strict `D−A≥+0.5`-vs-single-shot bar **missed** (+0.38) but the decision-relevant **D-vs-B** comparison passed. n=12/2-seed → *directional* | **Promote graph for the MULTI-HOP path only** (`graph_multistep_enabled` ON; routes `research_multistep`→`GraphRetriever`); **single-shot stays hybrid** (single-shot graph regressed controls); **alias-bridge kept ON** as universal fallback (non-graph tickers) |
+| 2026-07-20 | **A4/A5/A6.1 re-baseline under entity-bound coverage on v2** — re-measure the pre-E1 numbers the entity-bound `coverage()` fix invalidated: `$0` DR-OPE on the full v2 fold (n_test=207) + **paid** real-ReAct agentic coverage on a stratified 42-Q subset (Voyage, Sonnet) | **Verdicts UNCHANGED, power ↑.** A6.1 DR-OPE still **REJECT** (linucb 0.294 vs best-fixed **graph** 0.250, Δ=+0.043, CI [−0.058,+0.147]) — but best-fixed arm flipped **dense→graph** and the CI tightened ~2.9×. Paid agentic: entity-bound multi-hop gain **+0.49 (hybrid) / +0.42 (graph)**; single-shot on HARD ≈ 0 (loop is the whole value-add). **Hybrid agentic ≥ graph agentic on every stratum** (subset signal, no CI) | **No production change** (A6.1 stays default-OFF; A5.3 graph-multistep stays ON — the hybrid≥graph signal is n=42/1-seed, not a demotion trigger). **RAG advanced track A1–A6 CLOSED.** Open (optional): full-fold multi-seed agentic re-eval to act on the graph-vs-hybrid question |
 
 ---
 
@@ -709,6 +710,8 @@ done
 
 ## 2026-06-28 — A5.3: GraphRAG promotion for the multi-hop path (the §15.9 2×2)
 
+> **⚠️ Coverage numbers below are pre-E1 (hackable metric).** The *promotion decision* stands (graph ON for multi-hop), but the aspect-coverage figures were re-measured under **entity-bound coverage on v2** in the **2026-07-20** section — which found hybrid-agentic ≥ graph-agentic on a 42-Q subset (subset signal, not a demotion). Read the two together.
+
 **Question.** Does **agentic RAG over the GraphRetriever** match-or-beat the production multi-hop path
 (**agentic + hybrid + the A4 alias-bridge**) on *bridging* questions — enough to route multi-hop
 queries through the graph — or is GraphRAG an opt-in with no measured win?
@@ -803,6 +806,8 @@ AGENTIC_BRIDGE_MAX_ENTITIES=0 PYTHONPATH=src python -m stock_agent rag eval-mult
 ---
 
 ## 2026-07-05 — A6.1: retrieval contextual bandit + off-policy evaluation (verdict 2026-07-08: **REJECT** — keep default-OFF) ❌
+
+> **⚠️ DR/coverage numbers below are pre-E1 (hackable metric, v1 fold).** The *verdict* (REJECT) is unchanged, but the DR values + best-fixed arm were re-measured under **entity-bound coverage on v2** in the **2026-07-20** section — best fixed flipped **dense→graph**, Δ=+0.043 CI [−0.058,+0.147], CI ~2.9× tighter. Use the 2026-07-20 numbers.
 
 **Question.** A5.3 showed the best retrieval config is **context-dependent** (HARD bridges → graph,
 CTRL → hybrid/dense). Can a **learned contextual-bandit policy** realize that per-query lift — beating
@@ -918,6 +923,8 @@ PYTHONPATH=src python -m stock_agent rag policy-eval \
 
 ## 2026-07-08 — A6.1 follow-up: gated router (deterministic gate → bandit on hard) ❌
 
+> **⚠️ Numbers below are pre-E1 (hackable metric, v1 fold).** Verdict (REJECT) stands; the entity-bound v2 re-baseline is the **2026-07-20** section (DR-OPE over the full v2 fold).
+
 **Question.** The A6.1 verdict rejected the *unified* bandit on two counts — the Δ CI included 0 **and**
 it regressed CTRL (−0.263) — and diagnosed the CTRL loss as ~97% a **routing/featurization** failure
 (the bandit sent easy queries to arms scoring ~0.47 coverage where `dense` scores ~0.74). It predicted:
@@ -1001,3 +1008,438 @@ EMBEDDING_PROVIDER=voyage PYTHONPATH=src python -m stock_agent rag gated-eval \
   --easy-arm dense --gate-feature is_bridging --hard-fixed-arm graph \
   --test-frac 0.3 --seed 42 --out outputs/rag_eval/gated_eval_seed42.json
 ```
+
+---
+
+## 2026-07-13 — A6.2 (full RL): verdict **RETRACTED — the experiment was invalid**, and a reward bug found 🔴
+
+**Headline.** The A6.2 REJECT is **withdrawn**. It is not evidence about RL. Two defects in the
+*environment* meant the MDP could not express the correct action on 89% of the episodes it graded,
+and the coverage reward paid out for evidence that answers nothing. Every coverage number below is
+superseded pending a re-run on the fixed environment.
+
+### What was run (all on the held-out fold; the numbers themselves are reproducible)
+| run | result |
+|---|---|
+| `$0` sim eval, 63 episodes, 9 candidates | rl(reinforce) greedy **+0.3643** vs best baseline react(hybrid) **+0.3875** → Δ = **−0.023**, 95% group-CI [−0.108, +0.064], P(Δ>0)=0.26 → REJECT |
+| paid sim-to-real, 24 HARD/MED, 49 calls | LLM-written queries beat the template: coverage 0.208 → 0.292 (**+0.083**); action sequences 96% unchanged |
+| paid real-env head-to-head, 24 eps, 57 calls | with **both** policies on real queries: rl **+0.2765** vs react **+0.2590**, Δ = **+0.0175**, CI [−0.050, +0.133], P(Δ>0)=**0.55** — a coin flip |
+
+The head-to-head *flips the sign* of the `$0` verdict, so the templated simulator was penalizing the
+learned policy specifically (rl gains +0.083 from real query text; react gains **0.000**). But the
+delta never clears the pre-registered gate (CI_low > 0), and the whole comparison rests on **9 bridge
+groups** — the bootstrap unit — where the CI half-width is ±0.077. The experiment could only ever
+have detected an effect ≥ ~0.08. It is underpowered by construction.
+
+### 🔴 The two invalidating defects (diagnosed 2026-07-13, `$0`)
+
+**1. The MDP cannot express the right action.** On 35 held-out HARD episodes:
+- the target is never named in hop-1 evidence **62.9%** of the time — the env's hop-1 template
+  searches the *whole question*, whose topic terms dominate, so it retrieves the seed's topic
+  paragraphs instead of the paragraph that **names** the competitors;
+- when the target *is* discovered, `disc0`/`disc1` expose only the **alphabetically first two** of a
+  mean **9.7** candidates, so it is addressable **4/13** times.
+- **Net: the correct bridge target is reachable by *any* policy in only 11.4% of HARD episodes.**
+- And **no label-free ranking beats random** (alphabetical 42.9% top-2, mention-count 40%, chunk-score
+  40%, random 40%) — you cannot know *which* competitor discloses topic X without reading their
+  filings. The ranking signal does not exist at hop 1, so no policy and no heuristic can recover it.
+- Working the ceiling: A1 ~40% + A2 ~11% ⇒ the action space caps HARD coverage at **~0.26**. React
+  scored **0.271**. **The scripted baseline was already sitting on the ceiling of the MDP** — there
+  was no headroom for any learner, and a null result was guaranteed regardless of RL's merit.
+
+**2. `coverage()` was hackable — this invalidates numbers beyond A6.2.** The metric asked "does *any*
+retrieved chunk contain the span?", never "does a chunk **from the right company**". A bridge
+question's A2 aspect reads "*that competitor's own* {topic} disclosure", so the topic phrase turning
+up in an unrelated company's 10-K is not evidence for it. Measured under a fan-out retrieval:
+reward-scored coverage **77.1%** vs truly-evidenced **68.6%** → **8.6% spurious credit**, and **28.6%**
+of episodes have some non-target company whose filings also carry the topic phrase. Any policy
+rewarded for retrieving *broadly* was partly being paid for nothing. The narrow action space is the
+only reason this never showed up. **Affects the A4/A5 multistep-eval coverage figures and the A6.1 +
+A6.2 rewards.** Treat every published coverage number as an upper bound until re-run.
+
+### Also established ($0, held-out HARD)
+- **The corpus is not the bottleneck.** All 424 gold aspects are present in the ingested chunks of the
+  company the aspect is bound to — a perfect retriever scores **1.000** (react scores 0.271).
+- **The hop-1 miss is a query-formulation bug, not a retrieval bug.** Searching the seed's filings for
+  the *relation* (`"competitors competition compete"`) instead of the whole question finds the naming
+  chunk **100%** of the time (vs 48.6%).
+- **Reranking makes hop-1 dramatically worse** (8.6% vs 48.6% with the template): the cross-encoder
+  chases the topic and buries the competitor paragraph. Do **not** un-prune `hybrid+rerank` for the
+  self hop.
+- ~~**Fan-out works**: scoping hop 2 to *all* discovered candidates lifts A2 from 11.9% → **68.6%**.
+  Ceiling on HARD rises **~0.26 → ~0.84**.~~ ⚠️ **RETRACTED (2026-07-13, same day).** This estimate
+  measured whether the evidence was *retrieved into a branch* and never asked whether the chunk
+  survived the capped union (`max_evidence=20`). It did not. See "E3/E6 measured results" below —
+  the true seated rate is **21.4%**, and `sweep(hybrid)` beats `react(hybrid)` by only +0.014
+  coverage while **losing on return**. A retrieval that never reaches the synthesis context did not
+  happen.
+
+### E3 / E6 — measured results (held-out fold, n=63; $0, no LLM)
+
+**The hop-2 funnel** (42 bridge episodes with an A2 target):
+
+| stage | pre-E3 | after E3 | after E3+E6 |
+|---|---|---|---|
+| 1. target IS a discovered candidate (**reachability**) | 11.4% | **78.6%** | 78.6% |
+| 2. its branch **retrieved** the evidence | — | 33.3% | **50.0%** |
+| 3. that chunk **seated** in the capped union | — | 21.4% | **21.4%** ← now binding |
+| 4. A2 scored covered | ~0% | 21.4% | 21.4% |
+
+**E3 did its job** — reachability 11.4% → 78.6%, exactly the defect that invalidated the verdict.
+**But each fix reveals the next bottleneck**, and the sweep's headline gain is small:
+
+| policy | HARD | MED | CTRL | ALL | arm cost | **return** |
+|---|---|---|---|---|---|---|
+| `react(hybrid)` | 0.486 | 0.429 | 0.571 | 0.508 | 0.225 | **+0.497** |
+| `sweep(hybrid)` | 0.500 | 0.500 | 0.571 | 0.524 | 0.835 | **+0.482** |
+
+Δ coverage = **+0.016** (6 episodes improved, 53 unchanged, 4 worse). Δ **return = −0.015**: the
+sweep's 3.7× arm cost outweighs the coverage it buys. **The scripted sweep does not currently pay
+for itself** — which is a genuine result, not a bug, and it is exactly the cost/quality margin a
+learned policy would have to win on.
+
+**Why seating is now the constraint.** The sweep seats ~1 chunk per branch (the union cap widens to
+`len(union) + n_branches`; with 19 candidates that is already 25 chunks). But the target's
+span-bearing chunk is only the *top* hit in its branch 27.3% of the time — rank histogram over the
+33 reachable targets: `{rank0: 9, rank1: 1, rank2: 3, rank3: 4, rank4: 4}`. So **12 targets are
+retrieved but never seated.**
+
+~~Seating them needs `m ≥ 2` chunks per branch ⇒ cap = `e + m·N`, i.e. 6 + 2×19 = **44 chunks** of
+synthesis context in the worst case. That is a real coverage-vs-context Pareto choice, not a free
+fix.~~ ⚠️ **RETRACTED by E7 (below) — there was no Pareto choice.** This assumed the only way to seat
+a deeper chunk is to seat *more* chunks per branch, i.e. it took the round-robin merge as given. Pool
+the branches and rescore them with a **cross-encoder** instead and the target's chunk competes on
+merit: `top_branches` beats this rule by **+0.083 coverage on a SMALLER context (13.5 vs 15.0
+chunks)**. The depth-`m` ladder was the expensive way to buy what a posteriori branch selection gives
+free. **Do not restore the 44-chunk framing.**
+
+**Reranking the hop-2 branches — modest, not a silver bullet** (33 reachable targets, top_k=6):
+
+| arm | evidence at rank 0 | in top-2 | found anywhere |
+|---|---|---|---|
+| `hybrid` | 27.3% | 30.3% | 63.6% |
+| `hybrid+rerank` | **33.3%** | **42.4%** | 60.6% |
+| `reranked` | 30.3% | 36.4% | 54.5% |
+
+Rerank moves ~2 more targets to rank 0 and *lowers* recall-anywhere. Note this is the **opposite
+sign** to hop 1, where reranking was catastrophic (8.6% vs 48.6%) — the two hops are different
+tasks (hop 1 = find the chunk that *names* companies; hop 2 = find a *topic* inside one company),
+so the arm that wins is hop-dependent. **That is itself an argument for a learned per-hop policy.**
+
+Even with perfect seating, the retrieval ceiling is 63.6% of reachable ⇒ ~50% of bridge episodes:
+the span simply is not in the target's top-6 for the topic query 36.4% of the time.
+
+### E7 — seating: the cap was throwing away evidence the sweep had already found
+
+**The rule was arithmetic, not a heuristic.** `breadth_first` merges branches round-robin by rank and
+caps at `len(union) + N`. With a hop-1 union of 6 and N=19 that cap is *exactly* 25, and the
+round-robin's first 19 entries are *exactly* the 19 rank-0 chunks. So the production seating rule
+was, literally, **"be your branch's rank-0 hit, or you do not exist."** The target's span-bearing
+chunk clears that bar only **27.3%** of the time — so **12 of the 21 episodes whose branch had
+already retrieved the span were evicted by the cap**, and **18 of the 25 seated chunks were rank-0
+noise from non-target companies**.
+
+**The fix.** Pool every branch's chunks and rescore them with a **cross-encoder**. Its scores are
+comparable *across* branches; RRF's are not (they are rank-derived, `1/(k+rank)`, so every branch's
+rank-1 chunk carries an identical score — which is precisely why `breadth_first` had to exist).
+Retrieval is held **byte-identical** in the table below; only the seating rule varies.
+
+| seating rule | reranker | A2 cov | all cov | ctx chunks |
+|---|---|---|---|---|
+| `breadth_first` (**production**) | — | 21.4% | 0.500 | 15.0 |
+| `pooled_rerank@20` | local MiniLM | 40.5% | 0.595 | 18.1 |
+| `pooled_rerank@25` | local MiniLM | 42.9% | 0.607 | 21.7 |
+| `pooled_rerank@25` | **Voyage rerank-2** | **47.6%** | 0.631 | 21.7 |
+| `pooled_rerank@25` (fetch k=12) | **Voyage rerank-2** | **52.4%** | **0.655** | 23.5 |
+| `top_branches` (b=3, m=3) | local MiniLM | 38.1% | 0.583 | **13.5** |
+| `top_branches` (b=3, m=3) | Voyage | 40.5% | 0.595 | **13.5** |
+
+**Coverage 0.500 → 0.607 (local) / 0.655 (Voyage) — roughly 7–10× the entire scripted sweep's
++0.016.** Seating *efficiency* (seated ÷ retrieved) goes **43% → 96%**.
+
+**`I(Y;E₂) > 0` — the E3 impossibility result does not reach seating.** E3 established `I(Y;E₁) ≈ 0`:
+hop-1 evidence carries no signal about *which* candidate discloses the topic, so candidates cannot be
+ranked **a priori** and must be swept. That is silent about `I(Y;E₂)`. Once each candidate's filings
+have actually been searched *for the topic*, the retrieved content is exactly the observation that
+discriminates — the target discloses the topic, most of the other N−1 do not. Ranking candidates
+**a posteriori** is legal, and it works: `top_branches` discards 16 of 19 branches and still beats
+production by **+0.083 coverage on a SMALLER context (13.5 vs 15.0 chunks)** — a strict Pareto
+improvement. **This kills the "seating them needs m≥2 ⇒ 44-chunk context" Pareto choice**: the
+depth-`m` ladder was the expensive way to buy what a posteriori selection gives away free.
+
+**The reranker's strength is load-bearing** (which is why the paid arm was run): Voyage beats local
+MiniLM by 5–7 points at every setting, and `top_branches` under MiniLM *degrades* when fed a deeper
+pool (k=12: 33.3% vs pooled's 45.2%) — a weak reranker picks the wrong branches. A local-only
+experiment would have reported 42.9% and understated the fix. **Default stays LOCAL anyway**: the env
+is the RL simulator (thousands of rollouts) and must remain `$0` and deterministic; Voyage is the
+sim-to-real **arbitrator**, exactly like the LLM `QueryWriter`.
+
+⚠️ **Upper bound, same caveat as E6:** the benchmark interpolates the gold A2 span verbatim as
+`{topic}`, so the pooled query the cross-encoder scores against literally contains the gold text. The
+*relative* ordering (pooled ≫ breadth-first) is robust — both rules see identical branches retrieved
+with an identical query — but the magnitudes need the paid LLM-query-writer run to arbitrate.
+
+### The funnel, after E7 (42 bridge episodes with an A2 target)
+
+| stage | pre-E3 | after E3 | after E3+E6 | **after E7** |
+|---|---|---|---|---|
+| 1. target IS a discovered candidate (reachability) | 11.4% | 78.6% | 78.6% | 78.6% |
+| 2. its branch **retrieved** the evidence | — | 33.3% | 50.0% | 50.0% (54.8% at k=12) ← **the wall** |
+| 3. that chunk **seated** in the capped union | — | 21.4% | 21.4% | **42.9% / 52.4%** |
+| 4. A2 scored covered | ~0% | 21.4% | 21.4% | **42.9% / 52.4%** |
+
+**Seating is no longer the constraint — stage 2 is, again.** For 12 of the 33 reachable episodes the
+span is simply not in the target's top-6 for the topic query, and **fetching deeper barely helps**
+(k=6 → k=12 recovers only 2 more: 50.0% → 54.8%, and the two it finds sit at ranks 6 and 7). So the
+residual loss is a **query-formulation** problem, not a depth problem and no longer a seating one.
+That is the next real lever, and it is exactly what the paid LLM query-writer speaks to.
+
+### Status
+E1 (entity-bound coverage), E2 (relation-targeted hop-1 query), E3 (fan-out action + `sweep()`
+baseline), E6 (topic-targeted hop-2 query) and **E7 (pooled-rerank seating)** are **landed and
+green**. **E4 is closed as obsolete,
+not built** — it existed so the policy could *rank* `disc0` vs `disc1`, and the information argument
+that motivated E3 (`I(Y; E₁) ≈ 0`) says per-candidate features are uninformative *by construction*;
+what the policy needs to *price* a sweep (`n_discovered_unretrieved`, `is_bridging`,
+`budget_remaining`) is already in the 18-dim state.
+
+**E5 (retrain + re-evaluate)** — now **CLOSED, REJECT** (2026-07-19; see the "VERDICT" block below).
+It was run against **`sweep(hybrid)`**, not `react(hybrid)`: fan-out is trivially scriptable, so handing
+the learner fan-out while the baseline stays on `disc0` would manufacture a win out of an action-space
+asymmetry — the same error class as the original bug (see `rag_concepts.md` §20.5).
+
+**The open question E5 answers is sharper than before.** The scripted sweep gets +0.016 coverage but
+**−0.015 return** — it does not pay for itself. So the learnable margin is explicitly the *cost*
+side: sweep only when it will pay (skip CTRL, skip episodes hop 1 already covered, skip candidate
+sets too large to be worth `N × cost`), and possibly pick a **different arm per hop** (rerank helps
+hop 2, is catastrophic on hop 1). If no policy beats the scripted sweeper on that margin, **RL
+genuinely adds nothing here** — a legitimate finding, honestly obtained. No RL verdict is
+supportable until that re-run.
+
+## 2026-07-18 — A6.2g sim-to-real gap: the `$0` simulator flatters the policy by 0.18 coverage 🔬
+
+**What was run (paid, $2.6).** The frozen REINFORCE policy (`outputs/experiments/e5/reinforce-s1/`,
+E7-seated env, Voyage embeddings) rolled twice over the **same** 42 held-out HARD+MED episodes —
+templated `$0` queries vs **real Sonnet-written** queries — changing only the query text (the
+`rag rl-simreal` harness; theory in `rag_concepts.md` §20.8). This is the "measure the sim-to-real
+gap" commitment in the A6.2 design (rollout realism), not the E5 retrain — it validates the frozen
+policy's `$0` numbers against a realistic query-writer.
+
+| metric | `$0` sim (templated) | real (LLM-written) | gap |
+|---|---|---|---|
+| coverage Φ(s_T) | 0.595 | 0.417 | **−0.179** (95% t-CI [−0.363, +0.006]; p≈0.06) |
+| return | +0.544 | +0.389 | **−0.155** |
+| same action sequence | — | — | 71.4% |
+| synthesis refused (insufficient) | — | — | 33.3% |
+| LLM calls (fan-out-aware) | — | 274 billed (473 ceiling) | — |
+
+**The mechanism is the realization channel, not decisions.** 30/42 episodes took the **identical**
+action sequence under real queries, yet **13 of those 30 still lost coverage** (mean −0.154). The
+policy's "action" is an action-*type* (`hybrid@self`, `hybrid@fanout`, `STOP`); the query *text* is
+what differs, and the templated text embeds the gold A2 span verbatim (the §20.7 / E6 upper-bound
+caveat). So the −0.18 is a **direct estimate of how much that gold-text leak inflated the templated
+coverage** — the caveat, quantified. Real coverage even *beats* sim on 7 episodes (impossible under a
+"real union never reaches synthesis" wiring bug — the mixed {0.0, 0.5, 1.0} spread was the live check
+that the pipeline was sound before the full spend).
+
+**Why this matters for the promote question.** The RL-vs-`sweep(hybrid)` margin the templated eval was
+built to detect is ~0.02–0.05. The sim-to-real bias (0.18) is **4–9× that margin**, so the `$0`
+verdict is dominated by simulator bias, *independent of* the 18-group power limit (that limit sets the
+CI width; this bias sets what the point estimate even measures — two separate obstructions, both must
+clear). Practical consequence: **the templated eval cannot arbitrate promote on its own**; a real-query
+eval is mandatory for any A6.2 promote claim, and the honest read of E5 stays "descriptive, not
+promote-able" — now for *two* independent reasons.
+
+**Caveats.** Direction is robust (sign split 7:18:17 pos:tie:neg; both strata agree, HARD −0.171 / MED
+−0.214) but **not significant at n=42** — per-episode gaps are {−0.5, 0, +0.5}-valued (sd 0.59), so the
+t-CI includes zero (one-sample t p≈0.06, Wilcoxon p≈0.08). The −0.18 is a point estimate of the bias,
+not a resolved magnitude. Measured under **Voyage** (the higher-ceiling substrate, §20.7), so the sim side is the
+0.595 Voyage number, not the 0.607 local one. The optional `sweep`-vs-RL real-query head-to-head
+(`rag rl-h2h`, ~$3.2) — which would say whether the RL *advantage* survives real queries, not just
+whether the policy degrades — is built and gated but **not yet run** (held).
+
+## 2026-07-18 — A6.0 EXPANSION: grow the graph 20→48 seeds → benchmark 212→680 Q (power gate only) 📈
+
+**What & why.** One-time expansion of the extraction graph and the multi-hop benchmark to attack the
+**first** of E5's two promote obstructions — the group-count/CI-width limit (§17.5) — *not* the
+sim-to-real bias (that stays untouched; see the 2026-07-18 A6.2g entry above). 28 already-ingested
+semis/hyperscaler/software names were added to the graph via an **additions-only** universe file
+(`configs/graph_universe_additions.txt`) so the original 20 seeds were never re-billed; then
+`make rag-gen-multistep` regenerated over the merged 48-seed universe (`rng_seed=0`, `frac=0.3`
+unchanged — only the universe varies).
+
+**Cost.** Graph extraction is the only paid step: **83 LLM calls** (offline pre-count predicted exactly
+83), **≈ \$10.80**, ceiling `GRAPH_MAX_EXTRACT_CALLS=100` never touched. Generation is \$0. Graph grew
+634→1,832 nodes / 1,352→4,024 edges (+2,370). All 48 seeds have edges; original 20 unchanged.
+
+**Before → after (v1 20-seed → v2 48-seed).**
+
+| Metric | v1 (20 seeds) | v2 (48 seeds) | Δ |
+|---|---|---|---|
+| Full benchmark Q | 212 | **680** | 3.2× |
+| Full HARD / MED / CTRL | 120 / 30 / 62 | 445 / 79 / 156 | — |
+| Test Q (HARD / MED / CTRL) | 63 (35/7/21) | 199 (130/24/45) | — |
+| **Test distinct HARD∪MED groups** (RL power denominator) | **13** | **38** | **2.9×** |
+| Projected bootstrap CI half-width ($k/\sqrt{G}$) | ±0.077 | **±0.045** | 1.7× tighter |
+| Supply: `distinct == emitted` (no cap hit) | ✓ | ✓ | — |
+
+The realized ±0.045 **beats the pre-run projection** (~±0.056); the extra hubs (HPE, MSFT, ORCL, IBM,
+TER — each 100+ edges) supplied far more bridge pairs than the conservative +10/+18-group estimate.
+
+**Independent span audit (test HARD/MED, n=154, $0).** Target-aspect (bridge-answer) misses **0/154** —
+the generator's probe is airtight. Seed-aspect misses **4/154 (2.6%), all one group** (`INTC|META`):
+the `INTC competes_with META` edge is real (Intel's 10-K names "…Amazon, Google, Meta and Microsoft…")
+but the gold spans are the formal aliases `meta platforms`/`facebook inc`, and Intel writes bare "Meta".
+**Documented, not fixed** — the alias policy excludes bare "Meta" on purpose (it false-matches
+`metal`/`metadata` across chip filings); the item stays valid (real edge + clean target hop). Known
+limitation: 1/38 test HARD∪MED groups has a seed-hop surface-form gap.
+
+**Verdict — this clears ONE of two gates.** The expansion tightens the CI for every *future* E5 run
+(±0.077 → ±0.045) but does **nothing** for the sim-to-real bias (~0.18, 4–9× the ~0.02–0.05 effect),
+which is orthogonal to $G$ (§17.5 two-obstruction table). So the standing read is unchanged: **E5 stays
+descriptive, not promote-able**, now bottlenecked purely on validity (needs a real-query eval), no longer
+on power. **All A6.1/A6.2 point estimates were computed on the v1 20-seed benchmark and remain valid in
+git history; the v2 set is not backward-compatible with them** — a future E5 must be re-run on v2 to use
+the tighter CI. **UPDATE 2026-07-19: E5 was re-run on v2 and REJECTED at `$0` on the *sim return* gate
+(0/3 seeds; RL byte-identical to `sweep(hybrid)` on HARD) — see the "VERDICT" block below. That settles
+the power axis empirically; the validity axis (real-query eval) was never reached because the sim margin
+is ≈ 0, so there is nothing for a paid check to rescue. A6.2 is closed.**
+
+### Frozen-policy inventory + next-session runbook (A6.2 close-out) — verified 2026-07-18
+
+**On-disk state (verified this session; corrects the "E5 is open" framing above).** The E5 retrain was
+already run on v1, and the checkpoints are **E7-seated** — `settings.rl_seating_rule="pooled_rerank"`
+with provider `"local"` is the *default*, and the env resolves `seating_rule or settings.rl_seating_rule`,
+so any run since E7 (2026-07-13) that did not override it trained under pooled-rerank/local:
+
+| artifact | date | fold | `n_actions` | seating | key result |
+|---|---|---|---|---|---|
+| `outputs/experiments/e5/reinforce-s{0,1,2}/` | 07-17 | v1 (train n=149) | 9 | E7 local | **`rl_eval` REJECT**: `rl-reinforce(greedy)` Δ_return **−0.001** vs `sweep(hybrid)`, CI [−0.0045,+0.0026], 71% same action |
+| `e5/reinforce-s1/rl_simreal.json` | 07-18 | v1 test | 9 | E7 Voyage | coverage −0.179 (sim 0.595→real 0.417) — the A6.2g gap above |
+| `outputs/experiments/a62g_reinforce_s0/` | 07-13 | v1 | 7 | older | `rl_h2h.json` Δ=+0.0175 vs **`react:hybrid`** — the **SUPERSEDED invalid-env** h2h; not the sweep baseline |
+| `e5_smoke*/` | — | — | — | — | smoke runs, ignore |
+
+So on the **sim objective the verdict is effectively settled: RL reproduces `sweep(hybrid)` (Δ≈0)** with
+a *tight* CI (this is not the power-limited coverage axis — it is the return-delta the promote gate
+actually uses). What is genuinely **not** yet run: (i) a v2 re-confirmation on the 2.9×-larger fold, and
+(ii) a real-query h2h **against `sweep:hybrid`** (only the old `react`-baseline/invalid-env h2h exists).
+
+**Runbook.** Prefix: `PYTHONPATH=src KMP_DUPLICATE_LIB_OK=TRUE .venv/bin/python -m stock_agent`. CLI
+defaults now auto-point at v2 (regenerated `train/test.json` + 48-seed `graph_universe.txt`); local
+E7 reranker is cached, so training is `$0`, no model download.
+
+1. **Re-confirm E5 on v2 (retrain + eval) — `$0`, minutes.**
+   `for s in 0 1 2; do … rag rl-train --seed $s --out-dir outputs/experiments/e5_v2/reinforce-s$s; done`
+   then `… rag rl-eval -p outputs/experiments/e5_v2/reinforce-s0/policy.json --seeds 0,1,2`.
+   Read `promote`/`delta_return`/`delta_ci`. **If REJECT again (expected) ⇒ close A6.2 with no spend:**
+   "RL not promote-able for multi-hop retrieval; deliverable = scripted `sweep(hybrid)` + E7 seating."
+2. **Only if Step 1 shows a positive, resolvable sim margin — paid validity, ~`$3–6`.**
+   `… rag rl-simreal -p <v2 policy> --n 42 --strata HARD,MED --yes`, then
+   `… rag rl-h2h -p <v2 policy> --baseline sweep:hybrid --simreal <that rl_simreal.json> --n 42 --strata HARD,MED --yes`.
+   ⚠️ `rl-h2h` defaults to the **wrong** `--baseline react:hybrid` — pass **`--baseline sweep:hybrid`**
+   (§20.5: else the win is an action-space artifact). Promote only if RL beats `sweep:hybrid` on real
+   queries with CI_low>0.
+
+**Honest expectation:** v1 already shows RL ≈ sweep (Δ=−0.001) and the sim inflating coverage by 0.18,
+so the most probable outcome is a **legitimate negative close-out at `$0`** (Step 1 confirms; Step 2 is
+due-diligence only). Housekeeping alongside: re-baseline A4/A5/A6.1 under entity-bound coverage on v2.
+
+**VERDICT 2026-07-19 — A6.2 CLOSED: E5-on-v2 REJECT (0/3 seeds), legitimate negative at `$0`.**
+Runbook Step 1 (retrain) + Step 2 (`rag rl-eval` vs `sweep(hybrid)`, v2 held-out fold, `--seeds 0,1,2`)
+both complete; Step 4 (paid real-query h2h) **not reached** (required a positive verdict — none). All
+three v2 policies trained bit-identical to v1/seed 0 (`reinforce`/`pruned`/`n_actions=9`/`iterations=200`/
+`gamma=1.0`/`lambda_cost=None`), only the fold differs (`n_train` 481 vs 149); final train `mean_return`
+s0 0.5275, s1 0.5106, s2 0.5444.
+
+**3-seed held-out gate — `rl-reinforce(greedy)` vs `sweep(hybrid)`** (v2, n_test=199, group-bootstrap CI):
+
+| seed | Δ return | 95% group-boot CI | P(Δ>0) | HARD Δ (n=130) | MED Δ (n=24) | CTRL Δ (n=45) | promote |
+|---|---|---|---|---|---|---|---|
+| s0 | −0.0014 | [−0.0085, +0.0100] | 0.316 | −0.0009 | −0.0010 | −0.0030 | ❌ |
+| s1 | +0.0037 | [−0.0030, +0.0158] | 0.682 | **+0.0000** | −0.0019 | +0.0173 | ❌ |
+| s2 | −0.0012 | [−0.0019, −0.0003] | 0.006 | −0.0011 | −0.0017 | −0.0011 | ❌ |
+
+- **0/3 promote; mean Δ ≈ +0.0004 return (≈ 0).** s0/s1 CIs straddle 0; **s2's CI is entirely negative**
+  (a small, significant loss). This is now on the **power-cleared v2 fold** (CI half-width ~±0.005 on the
+  return delta; the ±0.045 figure is the *coverage* axis) — tighter than v1's Δ=−0.001, and it agrees.
+- **On HARD (the multi-hop target, n=130) the learned policy is byte-identical to `sweep(hybrid)`**
+  across all seeds (Δ = −0.0009 / +0.0000 / −0.0011): **RL reproduces the sweep** — it recovers the
+  sweep's stop policy and adds nothing on-target. s1's positive *point* estimate is an artifact of the
+  **off-target CTRL stratum (+0.0173)**; HARD+MED are ≤ 0, so it is not a real edge.
+- Sentinel(always-search) is beaten by the learned policy in every seed (return +0.2967 < ~0.421) — the
+  policy *did* learn to gate/stop; it just learned the same thing the scripted sweep already encodes.
+- Generalization gap ≈ 0 (s2 +0.0006; s0/s1 ≈ −0.003): no train→test transfer of any edge, consistent
+  with "no promote-able edge exists."
+
+**Close-out.** A6.2 deliverable for multi-hop retrieval = the **scripted `sweep(hybrid)` controller + E7
+pooled-rerank seating**; a *learned* REINFORCE policy is **not promote-able** — it reproduces the sweep
+(Δ≈0) on the sim objective, and the sim-to-real bias (~0.18 coverage inflation, §A6.2g) would only
+subtract from a real-query claim. No spend incurred; the paid `rl-h2h --baseline sweep:hybrid` step was
+gated on a positive sim margin and is not run. Enabling change: a determinism-preserving Voyage-embedder
+resilience fix (`rag/embeddings.py`; client `max_retries=6`/`timeout=120s` + app-level retry over the
+full transient set incl. `APIConnectionError`, which the SDK's own controller does not retry) so the
+multi-hour live-embed retrains survive transient connection-aborts.
+
+---
+
+## 2026-07-20 — A4/A5/A6.1 re-baseline under **entity-bound coverage** on v2 ✅ (verdicts unchanged; RAG track A1–A6 CLOSED)
+
+**Objective.** The E1 fix (2026-07-13) made `coverage()` **entity-bound** — an aspect counts as covered only if a chunk *from the aspect's bound company* (`Aspect.ticker`) carries its answer span — closing an 8.6% reward-hack (§A6.2 "invalidating defects"). That fix retroactively invalidated the coverage-derived numbers behind **A4** (agentic ReAct), **A5** (GraphRAG), and **A6.1** (bandit + OPE), which were all measured on the pre-E1 (hackable) metric and the smaller v1 benchmark. This is the housekeeping re-measure on the corrected metric and the power-cleared **v2** fold (680 Q, 48-seed graph). No new method — the same three harnesses, re-run.
+
+**Scope + why two harnesses** (user-approved: "`$0` + paid agentic subset").
+- **A6.1 — `$0` DR-OPE** on the **full v2** fold. The reward oracle is deterministic and LLM-free, so the whole 5-arm reward matrix is computable for every query → OPE is `$0`. Run over all of v2 (group split n_train=473 / n_test=207).
+- **A4/A5 — PAID agentic** on a **stratified 42-Q subset** (HARD 26 / MED 6 / CTRL 10, whole `group_id`s, seed=42). The faithful agentic coverage needs the **real** bounded-ReAct loop (`rag eval-multistep`, Sonnet-4-6) — the `$0` MDP only has a *templated* `react` proxy, which §A6.2g measured as biased (~0.18 coverage inflation). A subset keeps the paid loop affordable.
+- **Provider = Voyage** for both (the local BM25/sparse store is empty → hybrid is only valid under Voyage; Voyage sparse = 96,576 rows / 108 tickers). Voyage `voyage-4`, entity-bound `coverage()`, `group_id` bootstrap unit.
+
+### A6.1 — DR-OPE on v2 (`$0`, entity-bound, Voyage, seed=42, λ_c=0.05, n_test=207)
+
+Reward $r = \text{coverage}_{\text{entity-bound}} - \lambda_c c(a)$ (single-shot, retrieval-only). DR value = doubly-robust off-policy estimate; ESS = effective sample size after reweighting a uniform-$\mu$ log.
+
+| policy | DR value | 95% CI | ESS |
+|---|---|---|---|
+| **linucb(α=1)** | **0.294** | [+0.202, +0.392] | 35 |
+| epsilon_greedy(ε=0.1) | 0.284 | [+0.184, +0.396] | 44 |
+| **fixed(graph)** ← best fixed | **0.250** | [+0.128, +0.371] | 47 |
+| fixed(dense) | 0.181 | [+0.102, +0.275] | 34 |
+| fixed(hybrid) | 0.180 | [+0.067, +0.321] | 47 |
+| fixed(reranked) | 0.149 | [+0.075, +0.246] | 39 |
+| fixed(hybrid+rerank) | 0.085 | [+0.013, +0.162] | 40 |
+
+**Δ (linucb − best fixed) = +0.0433, group-bootstrap CI [−0.0579, +0.1474], P(Δ>0)=78.9% → REJECT** (CI straddles 0; promote gate needs CI_low > 0). Per-stratum (bandit − best fixed): **HARD** n=131 Δ=+0.070 (0.188 vs 0.119), **MED** n=22 Δ=−0.048 (0.236 vs 0.284), **CTRL** n=54 Δ=+0.017 (0.573 vs 0.557).
+
+**What changed vs the pre-E1 v1 verdict** (`policy_eval_linucb_seed42.json`: linucb DR 0.438, best=fixed(**dense**) 0.414, Δ=+0.0239, CI [−0.208, +0.273]):
+- **Verdict identical (REJECT).** The bandit numerically leads but not past the CI — same conclusion the one-level-up full-RL A6.2 reached.
+- **Best fixed arm flipped `dense → graph`.** Entity-bound coverage rewards graph's cross-entity bridging *even single-shot* (a chunk from the *bound* company is what counts, and graph edges surface it); under the hackable metric any co-retrieved chunk sufficed, so plain dense looked best. **This is the substantive re-baseline result.**
+- **CI tightened ~2.9×** ([−0.058, +0.147] vs [−0.208, +0.273]) from n_test=207 vs 16 groups — the A6.0 expansion's power gate paying off.
+- Absolute DR values dropped (~0.18–0.29 vs ~0.41–0.44): expected from removing the 8.6% reward-hack + a stricter oracle + the cost tax.
+
+### A4/A5 — paid agentic coverage on the 42-Q subset (real ReAct, Sonnet-4-6, entity-bound)
+
+Single-shot vs the bounded multi-hop loop (`agentic_max_steps=3` decisions + 1 synthesis), scored by entity-bound aspect coverage (`research/multistep_eval.py`). `multi` = multi-hop union coverage; `single` = one-shot coverage; `gain = multi − single`.
+
+| arm | HARD (n=26) | MED (n=6) | CTRL (n=10) | overall multi / single / gain | cite-acc |
+|---|---|---|---|---|---|
+| **A4 hybrid** | multi 0.577 / single 0.058 / **+0.519** | 0.667 / 0.000 / +0.667 | 0.700 / 0.400 / +0.300 | **0.619 / 0.131 / +0.488** | 0.376 |
+| **A5 graph** | multi 0.538 / single 0.096 / +0.442 | 0.583 / 0.083 / +0.500 | 0.600 / 0.300 / +0.300 | 0.560 / 0.143 / +0.417 | 0.368 |
+
+Loop uses its budget (`n_steps` ≈ 2.9–3.0). 6/26 HARD questions still return **insufficient evidence** in both arms (real failure mode, not a scoring artifact).
+
+**Findings.**
+1. **Single-shot on HARD ≈ 0** (0.058 hybrid / 0.096 graph): one hop cannot bridge across companies, so the entire HARD stratum fails without the loop. The agentic loop recovers to ~0.55. **This gain (+0.44 to +0.52 on HARD) is the faithful, entity-bound A4 value-add** — no reward-hack, no templated proxy. It is the clean re-statement of what A4/A5 buy.
+2. **Hybrid agentic ≥ graph agentic on every stratum** here (overall gain +0.488 vs +0.417). Coherent with the DR-OPE result if read by hop-depth: **single-shot** → *graph* wins (edges surface the bound-company chunk in one shot — `fixed(graph)` is the best DR arm); **multi-step loop** → *hybrid* wins (once an LLM loop can bridge via issued queries, hybrid's stronger base retrieval dominates and graph traversal adds less / can dilute the union). This **qualifies** the A5.3 graph-multistep promotion (which was pre-E1, n=12/2-seed, on the hackable metric).
+
+### Caveats (the numbers are NOT cross-comparable across the three sets)
+
+- **Three different test sets / oracles.** DR-OPE = full v2 group-split (n=207), RL-env single-shot oracle; the `$0` per-arm coverage in `e5_v2/*/rl_eval.json` (fixed/react/sweep/bandit) = v2 test fold n=199, RL-env oracle; paid agentic = 42-Q HARD-heavy subset, `multistep_eval.py` oracle, real LLM. **Do not compare a coverage number across these** — e.g. the paid single-shot 0.131 is the multistep-eval single-shot on a HARD-heavy subset, *not* the same quantity as `fixed(hybrid)` DR 0.180 or the `$0` fixed(hybrid) 0.344.
+- **Valid within-run comparisons only:** DR-OPE — all 7 policies on the same n=207; paid — multi-vs-single (gain) and hybrid-vs-graph on the same 42 Q.
+- **Paid subset is under-powered for a promotion call:** n=42, single seed, no bootstrap CI. The hybrid≥graph result is a **signal**, not a re-promotion/demotion.
+
+### Decision
+
+- **A6.1 stays default-OFF** (bandit not promote-able; REJECT reconfirmed with more power).
+- **A5.3 graph-multistep stays ON** (`graph_multistep_enabled=True`): the hybrid≥graph signal is subset-limited (n=42, 1 seed, no CI) — **not** a demotion trigger. Production single-shot stays hybrid; multi-hop stays graph.
+- **No production/config change** from this re-baseline; it is a metric-correctness re-measure that leaves every earlier *decision* intact while replacing the invalidated *numbers*.
+- **RAG advanced track A1–A6 is CLOSED** (no A7 in `ADVANCED_RAG_TODO.md`/`ROADMAP.md`). A1–A5 shipped; A6.1 REJECT; A6.2 REJECT (`6ff3a9b`); this is the final entity-bound housekeeping.
+- **Open (optional, not scheduled):** a full-fold, multi-seed *paid* agentic re-eval with group-bootstrap CIs is the only run that could act on the graph-vs-hybrid-for-multi-hop question.
+
+**Cost / provenance.** Paid agentic: 2 sequential `rag eval-multistep` runs on the 42-Q subset (hybrid 16.1 min, graph 57.4 min wall), Sonnet-4-6, within the approved ~`$3–6` envelope (token cost not itemized). Artifacts: `outputs/rag_eval/eval_multistep_v2_{hybrid,graph}.json`; DR-OPE verdict in the run log (full-v2 `rag policy-eval --seed 42 --n-boot 1000`). Supersedes the pre-E1 numbers in the **2026-07-05 A6.1**, **2026-07-08 gated-router**, and **2026-06-28 A5.3** sections (those decisions stand; their coverage/DR figures are replaced here).
