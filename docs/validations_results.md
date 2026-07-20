@@ -42,6 +42,7 @@ The crucial interaction: a model can have **AUC > 0.5** (some real skill) yet st
 | 2026-06-06 | **Conformal interval coverage** — split-conformal correction over the universe (pooled offline, per model × {20,30,60}), measured stated-vs-conformalized CI coverage | every model **under-covered**: a stated 90% CI really covered **82–86% (h20), 81–87% (h30), 76–81% (h60)** → conformal `q` (+0.04 to +0.16) fixed all to **90–91%** | **Ship conformal-calibrated CIs/VaR** at inference + in the monthly retrain. The intervals are now honest-coverage (marginal). |
 | 2026-06-06 | **Sequence × news (Task 8 × 10)** — price-only vs price+news, **DEEP LSTM (3–4 layers, 128–256 hidden, LayerNorm), carefully tuned** (early-stop + temperature-calib + val-selected grid), 37 tickers, held-out TEST split, inner big-move band (h20 \|r\|>0.05, h60 \|r\|>0.15) | news adds **no skill** on the held-out test: big-move **ΔAUC −0.012 (h20) / −0.015 (h60)** (worse), Brier flat — and **robust across two hyperparameter grids** (dropout 0.2/lr 3e-4 and 0.3/lr 1e-3 agree). Deep nets **don't overfit** (train AUC ≈ val AUC). The one place news beat price was h60 *validation* Brier — it **reversed on held-out test** (spurious val signal). Price-only deep LSTM TEST big-move AUC **0.646 / 0.682**. | **Do not promote.** Robust to the obvious objections (depth, tuning, band, held-out) — the news-negative is an **INFORMATION ceiling, not a model-class limitation**: a deep, tuned temporal model given the raw sentiment sequence extracts no discrimination. **Caveat:** per-ticker + market sentiment only; **topic streams (July) untested.** |
 | 2026-06-28 | **A5.3 GraphRAG promotion** — agentic+graph (alias-bridge OFF) vs the production multi-hop path agentic+hybrid+alias-bridge, on the SEC **bridging benchmark** (2×2 control×substrate, **12 Q × 2 seeds**, aspect-coverage) | ✅ **scoped win** — HARD `D≥B` held both seeds (1.00 / 0.92 ≥ 0.92), **D=1.00 on controls** (agentic+graph never regresses easy Qs); the strict `D−A≥+0.5`-vs-single-shot bar **missed** (+0.38) but the decision-relevant **D-vs-B** comparison passed. n=12/2-seed → *directional* | **Promote graph for the MULTI-HOP path only** (`graph_multistep_enabled` ON; routes `research_multistep`→`GraphRetriever`); **single-shot stays hybrid** (single-shot graph regressed controls); **alias-bridge kept ON** as universal fallback (non-graph tickers) |
+| 2026-07-20 | **A4/A5/A6.1 re-baseline under entity-bound coverage on v2** — re-measure the pre-E1 numbers the entity-bound `coverage()` fix invalidated: `$0` DR-OPE on the full v2 fold (n_test=207) + **paid** real-ReAct agentic coverage on a stratified 42-Q subset (Voyage, Sonnet) | **Verdicts UNCHANGED, power ↑.** A6.1 DR-OPE still **REJECT** (linucb 0.294 vs best-fixed **graph** 0.250, Δ=+0.043, CI [−0.058,+0.147]) — but best-fixed arm flipped **dense→graph** and the CI tightened ~2.9×. Paid agentic: entity-bound multi-hop gain **+0.49 (hybrid) / +0.42 (graph)**; single-shot on HARD ≈ 0 (loop is the whole value-add). **Hybrid agentic ≥ graph agentic on every stratum** (subset signal, no CI) | **No production change** (A6.1 stays default-OFF; A5.3 graph-multistep stays ON — the hybrid≥graph signal is n=42/1-seed, not a demotion trigger). **RAG advanced track A1–A6 CLOSED.** Open (optional): full-fold multi-seed agentic re-eval to act on the graph-vs-hybrid question |
 
 ---
 
@@ -709,6 +710,8 @@ done
 
 ## 2026-06-28 — A5.3: GraphRAG promotion for the multi-hop path (the §15.9 2×2)
 
+> **⚠️ Coverage numbers below are pre-E1 (hackable metric).** The *promotion decision* stands (graph ON for multi-hop), but the aspect-coverage figures were re-measured under **entity-bound coverage on v2** in the **2026-07-20** section — which found hybrid-agentic ≥ graph-agentic on a 42-Q subset (subset signal, not a demotion). Read the two together.
+
 **Question.** Does **agentic RAG over the GraphRetriever** match-or-beat the production multi-hop path
 (**agentic + hybrid + the A4 alias-bridge**) on *bridging* questions — enough to route multi-hop
 queries through the graph — or is GraphRAG an opt-in with no measured win?
@@ -803,6 +806,8 @@ AGENTIC_BRIDGE_MAX_ENTITIES=0 PYTHONPATH=src python -m stock_agent rag eval-mult
 ---
 
 ## 2026-07-05 — A6.1: retrieval contextual bandit + off-policy evaluation (verdict 2026-07-08: **REJECT** — keep default-OFF) ❌
+
+> **⚠️ DR/coverage numbers below are pre-E1 (hackable metric, v1 fold).** The *verdict* (REJECT) is unchanged, but the DR values + best-fixed arm were re-measured under **entity-bound coverage on v2** in the **2026-07-20** section — best fixed flipped **dense→graph**, Δ=+0.043 CI [−0.058,+0.147], CI ~2.9× tighter. Use the 2026-07-20 numbers.
 
 **Question.** A5.3 showed the best retrieval config is **context-dependent** (HARD bridges → graph,
 CTRL → hybrid/dense). Can a **learned contextual-bandit policy** realize that per-query lift — beating
@@ -917,6 +922,8 @@ PYTHONPATH=src python -m stock_agent rag policy-eval \
 ```
 
 ## 2026-07-08 — A6.1 follow-up: gated router (deterministic gate → bandit on hard) ❌
+
+> **⚠️ Numbers below are pre-E1 (hackable metric, v1 fold).** Verdict (REJECT) stands; the entity-bound v2 re-baseline is the **2026-07-20** section (DR-OPE over the full v2 fold).
 
 **Question.** The A6.1 verdict rejected the *unified* bandit on two counts — the Δ CI included 0 **and**
 it regressed CTRL (−0.263) — and diagnosed the CTRL loss as ~97% a **routing/featurization** failure
@@ -1372,3 +1379,67 @@ gated on a positive sim margin and is not run. Enabling change: a determinism-pr
 resilience fix (`rag/embeddings.py`; client `max_retries=6`/`timeout=120s` + app-level retry over the
 full transient set incl. `APIConnectionError`, which the SDK's own controller does not retry) so the
 multi-hour live-embed retrains survive transient connection-aborts.
+
+---
+
+## 2026-07-20 — A4/A5/A6.1 re-baseline under **entity-bound coverage** on v2 ✅ (verdicts unchanged; RAG track A1–A6 CLOSED)
+
+**Objective.** The E1 fix (2026-07-13) made `coverage()` **entity-bound** — an aspect counts as covered only if a chunk *from the aspect's bound company* (`Aspect.ticker`) carries its answer span — closing an 8.6% reward-hack (§A6.2 "invalidating defects"). That fix retroactively invalidated the coverage-derived numbers behind **A4** (agentic ReAct), **A5** (GraphRAG), and **A6.1** (bandit + OPE), which were all measured on the pre-E1 (hackable) metric and the smaller v1 benchmark. This is the housekeeping re-measure on the corrected metric and the power-cleared **v2** fold (680 Q, 48-seed graph). No new method — the same three harnesses, re-run.
+
+**Scope + why two harnesses** (user-approved: "`$0` + paid agentic subset").
+- **A6.1 — `$0` DR-OPE** on the **full v2** fold. The reward oracle is deterministic and LLM-free, so the whole 5-arm reward matrix is computable for every query → OPE is `$0`. Run over all of v2 (group split n_train=473 / n_test=207).
+- **A4/A5 — PAID agentic** on a **stratified 42-Q subset** (HARD 26 / MED 6 / CTRL 10, whole `group_id`s, seed=42). The faithful agentic coverage needs the **real** bounded-ReAct loop (`rag eval-multistep`, Sonnet-4-6) — the `$0` MDP only has a *templated* `react` proxy, which §A6.2g measured as biased (~0.18 coverage inflation). A subset keeps the paid loop affordable.
+- **Provider = Voyage** for both (the local BM25/sparse store is empty → hybrid is only valid under Voyage; Voyage sparse = 96,576 rows / 108 tickers). Voyage `voyage-4`, entity-bound `coverage()`, `group_id` bootstrap unit.
+
+### A6.1 — DR-OPE on v2 (`$0`, entity-bound, Voyage, seed=42, λ_c=0.05, n_test=207)
+
+Reward $r = \text{coverage}_{\text{entity-bound}} - \lambda_c c(a)$ (single-shot, retrieval-only). DR value = doubly-robust off-policy estimate; ESS = effective sample size after reweighting a uniform-$\mu$ log.
+
+| policy | DR value | 95% CI | ESS |
+|---|---|---|---|
+| **linucb(α=1)** | **0.294** | [+0.202, +0.392] | 35 |
+| epsilon_greedy(ε=0.1) | 0.284 | [+0.184, +0.396] | 44 |
+| **fixed(graph)** ← best fixed | **0.250** | [+0.128, +0.371] | 47 |
+| fixed(dense) | 0.181 | [+0.102, +0.275] | 34 |
+| fixed(hybrid) | 0.180 | [+0.067, +0.321] | 47 |
+| fixed(reranked) | 0.149 | [+0.075, +0.246] | 39 |
+| fixed(hybrid+rerank) | 0.085 | [+0.013, +0.162] | 40 |
+
+**Δ (linucb − best fixed) = +0.0433, group-bootstrap CI [−0.0579, +0.1474], P(Δ>0)=78.9% → REJECT** (CI straddles 0; promote gate needs CI_low > 0). Per-stratum (bandit − best fixed): **HARD** n=131 Δ=+0.070 (0.188 vs 0.119), **MED** n=22 Δ=−0.048 (0.236 vs 0.284), **CTRL** n=54 Δ=+0.017 (0.573 vs 0.557).
+
+**What changed vs the pre-E1 v1 verdict** (`policy_eval_linucb_seed42.json`: linucb DR 0.438, best=fixed(**dense**) 0.414, Δ=+0.0239, CI [−0.208, +0.273]):
+- **Verdict identical (REJECT).** The bandit numerically leads but not past the CI — same conclusion the one-level-up full-RL A6.2 reached.
+- **Best fixed arm flipped `dense → graph`.** Entity-bound coverage rewards graph's cross-entity bridging *even single-shot* (a chunk from the *bound* company is what counts, and graph edges surface it); under the hackable metric any co-retrieved chunk sufficed, so plain dense looked best. **This is the substantive re-baseline result.**
+- **CI tightened ~2.9×** ([−0.058, +0.147] vs [−0.208, +0.273]) from n_test=207 vs 16 groups — the A6.0 expansion's power gate paying off.
+- Absolute DR values dropped (~0.18–0.29 vs ~0.41–0.44): expected from removing the 8.6% reward-hack + a stricter oracle + the cost tax.
+
+### A4/A5 — paid agentic coverage on the 42-Q subset (real ReAct, Sonnet-4-6, entity-bound)
+
+Single-shot vs the bounded multi-hop loop (`agentic_max_steps=3` decisions + 1 synthesis), scored by entity-bound aspect coverage (`research/multistep_eval.py`). `multi` = multi-hop union coverage; `single` = one-shot coverage; `gain = multi − single`.
+
+| arm | HARD (n=26) | MED (n=6) | CTRL (n=10) | overall multi / single / gain | cite-acc |
+|---|---|---|---|---|---|
+| **A4 hybrid** | multi 0.577 / single 0.058 / **+0.519** | 0.667 / 0.000 / +0.667 | 0.700 / 0.400 / +0.300 | **0.619 / 0.131 / +0.488** | 0.376 |
+| **A5 graph** | multi 0.538 / single 0.096 / +0.442 | 0.583 / 0.083 / +0.500 | 0.600 / 0.300 / +0.300 | 0.560 / 0.143 / +0.417 | 0.368 |
+
+Loop uses its budget (`n_steps` ≈ 2.9–3.0). 6/26 HARD questions still return **insufficient evidence** in both arms (real failure mode, not a scoring artifact).
+
+**Findings.**
+1. **Single-shot on HARD ≈ 0** (0.058 hybrid / 0.096 graph): one hop cannot bridge across companies, so the entire HARD stratum fails without the loop. The agentic loop recovers to ~0.55. **This gain (+0.44 to +0.52 on HARD) is the faithful, entity-bound A4 value-add** — no reward-hack, no templated proxy. It is the clean re-statement of what A4/A5 buy.
+2. **Hybrid agentic ≥ graph agentic on every stratum** here (overall gain +0.488 vs +0.417). Coherent with the DR-OPE result if read by hop-depth: **single-shot** → *graph* wins (edges surface the bound-company chunk in one shot — `fixed(graph)` is the best DR arm); **multi-step loop** → *hybrid* wins (once an LLM loop can bridge via issued queries, hybrid's stronger base retrieval dominates and graph traversal adds less / can dilute the union). This **qualifies** the A5.3 graph-multistep promotion (which was pre-E1, n=12/2-seed, on the hackable metric).
+
+### Caveats (the numbers are NOT cross-comparable across the three sets)
+
+- **Three different test sets / oracles.** DR-OPE = full v2 group-split (n=207), RL-env single-shot oracle; the `$0` per-arm coverage in `e5_v2/*/rl_eval.json` (fixed/react/sweep/bandit) = v2 test fold n=199, RL-env oracle; paid agentic = 42-Q HARD-heavy subset, `multistep_eval.py` oracle, real LLM. **Do not compare a coverage number across these** — e.g. the paid single-shot 0.131 is the multistep-eval single-shot on a HARD-heavy subset, *not* the same quantity as `fixed(hybrid)` DR 0.180 or the `$0` fixed(hybrid) 0.344.
+- **Valid within-run comparisons only:** DR-OPE — all 7 policies on the same n=207; paid — multi-vs-single (gain) and hybrid-vs-graph on the same 42 Q.
+- **Paid subset is under-powered for a promotion call:** n=42, single seed, no bootstrap CI. The hybrid≥graph result is a **signal**, not a re-promotion/demotion.
+
+### Decision
+
+- **A6.1 stays default-OFF** (bandit not promote-able; REJECT reconfirmed with more power).
+- **A5.3 graph-multistep stays ON** (`graph_multistep_enabled=True`): the hybrid≥graph signal is subset-limited (n=42, 1 seed, no CI) — **not** a demotion trigger. Production single-shot stays hybrid; multi-hop stays graph.
+- **No production/config change** from this re-baseline; it is a metric-correctness re-measure that leaves every earlier *decision* intact while replacing the invalidated *numbers*.
+- **RAG advanced track A1–A6 is CLOSED** (no A7 in `ADVANCED_RAG_TODO.md`/`ROADMAP.md`). A1–A5 shipped; A6.1 REJECT; A6.2 REJECT (`6ff3a9b`); this is the final entity-bound housekeeping.
+- **Open (optional, not scheduled):** a full-fold, multi-seed *paid* agentic re-eval with group-bootstrap CIs is the only run that could act on the graph-vs-hybrid-for-multi-hop question.
+
+**Cost / provenance.** Paid agentic: 2 sequential `rag eval-multistep` runs on the 42-Q subset (hybrid 16.1 min, graph 57.4 min wall), Sonnet-4-6, within the approved ~`$3–6` envelope (token cost not itemized). Artifacts: `outputs/rag_eval/eval_multistep_v2_{hybrid,graph}.json`; DR-OPE verdict in the run log (full-v2 `rag policy-eval --seed 42 --n-boot 1000`). Supersedes the pre-E1 numbers in the **2026-07-05 A6.1**, **2026-07-08 gated-router**, and **2026-06-28 A5.3** sections (those decisions stand; their coverage/DR figures are replaced here).
