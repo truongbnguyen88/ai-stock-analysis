@@ -1196,10 +1196,10 @@ that motivated E3 (`I(Y; E₁) ≈ 0`) says per-candidate features are uninforma
 what the policy needs to *price* a sweep (`n_discovered_unretrieved`, `is_bridging`,
 `budget_remaining`) is already in the 18-dim state.
 
-**E5 (retrain + re-evaluate) is open**, and it must now be run against **`sweep(hybrid)`**, not
-`react(hybrid)`: fan-out is trivially scriptable, so handing the learner fan-out while the baseline
-stays on `disc0` would manufacture a win out of an action-space asymmetry — the same error class as
-the original bug (see `rag_concepts.md` §20.5).
+**E5 (retrain + re-evaluate)** — now **CLOSED, REJECT** (2026-07-19; see the "VERDICT" block below).
+It was run against **`sweep(hybrid)`**, not `react(hybrid)`: fan-out is trivially scriptable, so handing
+the learner fan-out while the baseline stays on `disc0` would manufacture a win out of an action-space
+asymmetry — the same error class as the original bug (see `rag_concepts.md` §20.5).
 
 **The open question E5 answers is sharper than before.** The scripted sweep gets +0.016 coverage but
 **−0.015 return** — it does not pay for itself. So the learnable margin is explicitly the *cost*
@@ -1293,7 +1293,10 @@ which is orthogonal to $G$ (§17.5 two-obstruction table). So the standing read 
 descriptive, not promote-able**, now bottlenecked purely on validity (needs a real-query eval), no longer
 on power. **All A6.1/A6.2 point estimates were computed on the v1 20-seed benchmark and remain valid in
 git history; the v2 set is not backward-compatible with them** — a future E5 must be re-run on v2 to use
-the tighter CI.
+the tighter CI. **UPDATE 2026-07-19: E5 was re-run on v2 and REJECTED at `$0` on the *sim return* gate
+(0/3 seeds; RL byte-identical to `sweep(hybrid)` on HARD) — see the "VERDICT" block below. That settles
+the power axis empirically; the validity axis (real-query eval) was never reached because the sim margin
+is ≈ 0, so there is nothing for a paid check to rescue. A6.2 is closed.**
 
 ### Frozen-policy inventory + next-session runbook (A6.2 close-out) — verified 2026-07-18
 
@@ -1333,3 +1336,39 @@ E7 reranker is cached, so training is `$0`, no model download.
 **Honest expectation:** v1 already shows RL ≈ sweep (Δ=−0.001) and the sim inflating coverage by 0.18,
 so the most probable outcome is a **legitimate negative close-out at `$0`** (Step 1 confirms; Step 2 is
 due-diligence only). Housekeeping alongside: re-baseline A4/A5/A6.1 under entity-bound coverage on v2.
+
+**VERDICT 2026-07-19 — A6.2 CLOSED: E5-on-v2 REJECT (0/3 seeds), legitimate negative at `$0`.**
+Runbook Step 1 (retrain) + Step 2 (`rag rl-eval` vs `sweep(hybrid)`, v2 held-out fold, `--seeds 0,1,2`)
+both complete; Step 4 (paid real-query h2h) **not reached** (required a positive verdict — none). All
+three v2 policies trained bit-identical to v1/seed 0 (`reinforce`/`pruned`/`n_actions=9`/`iterations=200`/
+`gamma=1.0`/`lambda_cost=None`), only the fold differs (`n_train` 481 vs 149); final train `mean_return`
+s0 0.5275, s1 0.5106, s2 0.5444.
+
+**3-seed held-out gate — `rl-reinforce(greedy)` vs `sweep(hybrid)`** (v2, n_test=199, group-bootstrap CI):
+
+| seed | Δ return | 95% group-boot CI | P(Δ>0) | HARD Δ (n=130) | MED Δ (n=24) | CTRL Δ (n=45) | promote |
+|---|---|---|---|---|---|---|---|
+| s0 | −0.0014 | [−0.0085, +0.0100] | 0.316 | −0.0009 | −0.0010 | −0.0030 | ❌ |
+| s1 | +0.0037 | [−0.0030, +0.0158] | 0.682 | **+0.0000** | −0.0019 | +0.0173 | ❌ |
+| s2 | −0.0012 | [−0.0019, −0.0003] | 0.006 | −0.0011 | −0.0017 | −0.0011 | ❌ |
+
+- **0/3 promote; mean Δ ≈ +0.0004 return (≈ 0).** s0/s1 CIs straddle 0; **s2's CI is entirely negative**
+  (a small, significant loss). This is now on the **power-cleared v2 fold** (CI half-width ~±0.005 on the
+  return delta; the ±0.045 figure is the *coverage* axis) — tighter than v1's Δ=−0.001, and it agrees.
+- **On HARD (the multi-hop target, n=130) the learned policy is byte-identical to `sweep(hybrid)`**
+  across all seeds (Δ = −0.0009 / +0.0000 / −0.0011): **RL reproduces the sweep** — it recovers the
+  sweep's stop policy and adds nothing on-target. s1's positive *point* estimate is an artifact of the
+  **off-target CTRL stratum (+0.0173)**; HARD+MED are ≤ 0, so it is not a real edge.
+- Sentinel(always-search) is beaten by the learned policy in every seed (return +0.2967 < ~0.421) — the
+  policy *did* learn to gate/stop; it just learned the same thing the scripted sweep already encodes.
+- Generalization gap ≈ 0 (s2 +0.0006; s0/s1 ≈ −0.003): no train→test transfer of any edge, consistent
+  with "no promote-able edge exists."
+
+**Close-out.** A6.2 deliverable for multi-hop retrieval = the **scripted `sweep(hybrid)` controller + E7
+pooled-rerank seating**; a *learned* REINFORCE policy is **not promote-able** — it reproduces the sweep
+(Δ≈0) on the sim objective, and the sim-to-real bias (~0.18 coverage inflation, §A6.2g) would only
+subtract from a real-query claim. No spend incurred; the paid `rl-h2h --baseline sweep:hybrid` step was
+gated on a positive sim margin and is not run. Enabling change: a determinism-preserving Voyage-embedder
+resilience fix (`rag/embeddings.py`; client `max_retries=6`/`timeout=120s` + app-level retry over the
+full transient set incl. `APIConnectionError`, which the SDK's own controller does not retry) so the
+multi-hour live-embed retrains survive transient connection-aborts.

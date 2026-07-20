@@ -1122,17 +1122,32 @@ Ridge backend = hand-rolled numpy normal equations (no sklearn dep). (4) `λ_c`=
 >   - **Default = `pooled_rerank` + LOCAL cross-encoder**: the env is the RL simulator (thousands of
 >     rollouts) and must stay `$0` + deterministic. **Voyage seats better (52.4% vs 45.2%)** and is
 >     the sim-to-real **arbitrator**, like the LLM `QueryWriter` — not the training default.
-> - [ ] **E5 — retrain + re-evaluate**, now against **`sweep(hybrid)`** (not `react`), **in the
->   E7-seated env**. Also re-baseline A4/A5/A6.1 under entity-bound coverage.
+> - [x] **E5 — retrain + re-evaluate** against **`sweep(hybrid)`** (not `react`), **in the E7-seated
+>   env** — **DONE 2026-07-19, verdict REJECT (0/3 seeds), A6.2 CLOSED no-spend.**
+>   **RETRAIN ✅ on v2** — `outputs/experiments/e5_v2/reinforce-s{0,1,2}`, config bit-identical to v1
+>   (only `n_train` 481 vs 149); final train `mean_return` 0.5275/0.5106/0.5444. Needed a Voyage-embedder
+>   resilience fix (app-level retry over `APIConnectionError`, which the voyageai SDK does not retry;
+>   `rag/embeddings.py`, determinism-preserving).
+>   **EVAL ✅ (`rag rl-eval`, v2 held-out n_test=199, `$0`):** Δ_return greedy − `sweep(hybrid)` =
+>   **−0.0014 / +0.0037 / −0.0012** (s0/s1/s2), P(Δ>0) 0.316/0.682/0.006, **0/3 promote** (s2 CI fully
+>   <0; s0/s1 straddle 0; mean Δ≈0). **On HARD the learned policy is byte-identical to `sweep(hybrid)`**
+>   all three seeds ⇒ **RL reproduces the sweep**; s1's +0.0037 is an off-target CTRL-stratum artifact.
+>   Deliverable = scripted `sweep(hybrid)` + E7 seating; a learned policy is **not promote-able**. Paid
+>   Step 4 (`rl-h2h --baseline sweep:hybrid`) **not reached** — sim margin ≈ 0, nothing for a real-query
+>   check to rescue. Full table → validations_results.md 2026-07-19 "VERDICT"; journal → rag_implementation_notes.md
+>   §A6.2-E5. (Re-baseline A4/A5/A6.1 under entity-bound coverage on v2 remains optional housekeeping.)
 >   **Measured reality check (see validations_results.md):** E3 fixed *reachability* (11.4% →
 >   **78.6%**), E7 fixed *seating* (21.4% → 42.9%), and the bottleneck has moved **back to stage 2**:
 >   the span is simply not in the target's top-6 for **12 of 33** reachable episodes, and fetching
 >   deeper barely helps (k=12 buys only +2). That is a **query-formulation** problem, not a depth or
 >   seating one — the next real lever, and the one the paid LLM query-writer speaks to.
 >   The learnable margin for RL stays the **cost** side (when *not* to sweep) plus **per-hop arm
->   choice** (rerank helps hop 2, is catastrophic on hop 1). ⚠️ **Still power-limited: 18 test groups
->   ⇒ ±0.077 CI vs a ~0.02–0.05 effect** — run E5 descriptively; *promote* is blocked on benchmark
->   size, not on RL. The old "ceiling ~0.84" was **wrong** — it never checked the union cap.
+>   choice** (rerank helps hop 2, is catastrophic on hop 1). ⚠️ **Power gate CLEARED by A6.0 (v2: 38
+>   test HARD∪MED groups ⇒ ±0.045, was 18 groups/±0.077).** **RESOLVED 2026-07-19: on the power-cleared
+>   v2 fold the learner found *no* cost-side or per-hop margin — Δ_return ≈ 0, byte-identical to the sweep
+>   on HARD — so the validity gate (sim-to-real bias ~0.18, A6.2g) never even bound; there is no positive
+>   sim effect for it to erode. A6.2 closes on the sim gate itself.** The old "ceiling ~0.84" was
+>   **wrong** — it never checked the union cap.
 > - [x] **A6.2g — sim-to-real gap MEASURED (2026-07-18, paid $2.6).** Fulfils the A6.2 "rollout
 >   realism / measure the sim-to-real gap" commitment; **not** E5 retrain. Frozen REINFORCE
 >   (`e5/reinforce-s1`, E7-seated, Voyage) run twice over the same 42 held-out episodes — templated

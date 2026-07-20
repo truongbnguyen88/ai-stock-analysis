@@ -2129,3 +2129,62 @@ its CI is $\approx\pm 0.045$ not $\pm 0.077$ — but the **sim-to-real bias (~0.
 / A6.2g); it is orthogonal to $G$. So E5 stays *descriptive, not promote-able* until a real-query eval
 clears the *second* gate. The v1 (20-seed) benchmark and every A6.1/A6.2 number computed on it remain in
 git history; the expanded set is **v2** and is not backward-compatible with those point estimates.
+
+## A6.2-E5 — v2 retrain (`outputs/experiments/e5_v2/`) + Voyage embedder resilience fix (`rag/embeddings.py`)
+
+**Role.** Step 1 of the A6.2 close-out runbook: re-train the E5 REINFORCE policy on the v2 (48-seed,
+481-train-episode) fold so the sim eval runs on the 2.9×-larger, tighter-CI benchmark. Retrieval space
+is the Voyage (`voyage-4`) store — a strict-local retrain would have been **invalid** (the local sparse
+store is stale/empty), so training issues *live* Voyage query embeds per rollout.
+
+**The blocker this surfaced (and the durable fix).** The retrain is a multi-hour, `$0`, CPU-bound run
+that fires thousands of live query embeds (concentrated in each seed's first iteration, before the
+per-process `TransitionCache` warms). Two seeds died mid-run on **transient Voyage network errors**:
+- seed 1 → `ReadTimeoutError` (600 s read hang), then a relaunch → `APIConnectionError` ("Connection
+  aborted" / `ConnectTimeoutError`); seed 2 (auto-started on the pre-fix code) → the same
+  `APIConnectionError`.
+- **Root cause = two independent gaps.** (1) `voyageai.Client` was built with the SDK defaults
+  `max_retries=0, timeout=None`, so a single blip is fatal. (2) Even with retries on, the SDK's own
+  retry controller (`_make_retry_controller`) only retries `RateLimitError | ServiceUnavailableError |
+  Timeout` — it **does not retry `APIConnectionError`**, which is exactly the connection-abort that
+  recurred (~1 h apart; live probes showed Voyage otherwise healthy and sub-second → transient
+  per-connection drops, not an outage).
+- **Fix (two layers, in `VoyageEmbedder`):** (a) construct the client with `max_retries=6,
+  timeout=120.0` (fail fast then back off, vs the 600 s hang); (b) wrap every `embed`/`embed_query`
+  call in an app-level `_voyage_call_with_retry` — 5 attempts, exponential backoff (2/4/8/16 s) over the
+  **full transient set incl. `APIConnectionError`**; non-transient errors (auth, malformed) propagate
+  immediately. `functools.partial` binds each batch by value (no loop-variable closure). A retry
+  re-issues the *identical* request, so a successful embedding is byte-identical → **determinism and the
+  retrieval space are unchanged**; only the failure path differs (seed 0, trained pre-fix on the success
+  path, stays comparable). Guarded by ruff + mypy + a fail-then-succeed unit probe (survives 3 attempts;
+  auth error is not retried). Post-fix, all three seeds trained with **zero** retries logged (network
+  was quiet that run) — the wrapper is insurance for the long tail, not a hot path.
+
+**Result (all `$0`, local compute + trivial Voyage query embeds).** `e5_v2/reinforce-s{0,1,2}/policy.json`,
+config **bit-identical to v1 / seed 0** — `reinforce`, `pruned`, `n_actions=9`, `iterations=200`,
+`gamma=1.0`, `lambda_cost=None` — the **only** difference vs v1 is the fold size (`n_train` 481 vs 149).
+Final train `mean_return`: s0 0.5275, s1 0.5106, s2 0.5444.
+
+**Step 2 result — the settled verdict (2026-07-19, `$0`).** `rag rl-eval -p e5_v2/reinforce-s{0,1,2}/policy.json
+--seeds 0,1,2` on the v2 **held-out** fold (n_test=199) vs `sweep(hybrid)` (the eval auto-selects
+`best_baseline`, so the react-vs-sweep trap only bites the *paid* `rl-h2h`, not this gate). **REJECT, 0/3
+seeds promote:**
+
+| seed | Δ return (greedy − sweep) | 95% group-boot CI | P(Δ>0) | HARD Δ (n=130) |
+|---|---|---|---|---|
+| s0 | −0.0014 | [−0.0085, +0.0100] | 0.316 | −0.0009 |
+| s1 | +0.0037 | [−0.0030, +0.0158] | 0.682 | +0.0000 (byte-identical) |
+| s2 | −0.0012 | [−0.0019, −0.0003] | 0.006 | −0.0011 |
+
+Mean Δ ≈ +0.0004 (≈ 0); s2's CI is entirely negative. **On HARD (the multi-hop target) the learned
+policy is byte-identical to `sweep(hybrid)` in all three seeds — RL reproduces the sweep.** s1's positive
+point estimate is an artifact of the off-target CTRL stratum (+0.0173); HARD+MED ≤ 0. Sentinel(always-
+search) is beaten every seed (the policy did learn to gate/stop — it just learned the sweep's stop rule).
+Generalization gap ≈ 0. This confirms v1 (Δ_return −0.001) on the 2.9×-larger, power-cleared fold.
+
+**Close-out.** A6.2 is **CLOSED as a legitimate negative at `$0`**. Deliverable for multi-hop retrieval =
+the scripted `sweep(hybrid)` controller + E7 pooled-rerank seating; a *learned* REINFORCE policy is **not
+promote-able**. The paid Step 4 (`rl-simreal` + `rl-h2h --baseline sweep:hybrid`) was gated on a positive
+sim margin and is **not run** — with the sim margin ≈ 0 and the sim-to-real bias (~0.18, §A6.2g) only able
+to subtract, there is nothing a paid real-query check could rescue. Full 3-seed table +
+per-stratum/sentinel/generalization detail in `docs/validations_results.md` (the 2026-07-19 "VERDICT" block).

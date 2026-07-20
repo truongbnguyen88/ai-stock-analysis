@@ -161,6 +161,96 @@ def test_voyage_embed_documents_empty_makes_no_call() -> None:
     assert client.calls == []  # no empty request sent
 
 
+# ---- Voyage transient-retry wrapper (e5_v2 resilience fix) -------------------
+# Regression guard: long RL retrains issue thousands of live embeds and died on transient
+# `APIConnectionError`, which the voyageai SDK's own controller does NOT retry. These test the
+# app-level wrapper deterministically — monkeypatched transient set + no-op sleep, so they run
+# with or without the (CI-absent) voyage extra and never actually sleep.
+class _Transient(Exception):
+    """Stand-in for a Voyage transient error, independent of the optional voyageai package."""
+
+
+def _no_backoff(monkeypatch: Any) -> None:
+    import stock_agent.rag.embeddings as emb
+
+    # Zero the backoff base so retries don't actually sleep (delay = base * 2**attempt = 0).
+    monkeypatch.setattr(emb, "_VOYAGE_RETRY_BASE_S", 0.0)
+
+
+def test_voyage_transient_excs_returns_tuple() -> None:
+    # Locally (voyage extra present) it names APIConnectionError — the exact error the SDK
+    # skips; in CI (extra absent) the ImportError branch degrades to () — see the helper.
+    import stock_agent.rag.embeddings as emb
+
+    excs = emb._voyage_transient_excs()
+    assert isinstance(excs, tuple)
+    from voyageai import error as ve  # dev env has the extra; asserts the set is the intended one
+
+    assert ve.APIConnectionError in excs
+
+
+def test_voyage_retry_retries_transient_then_succeeds(monkeypatch: Any) -> None:
+    import stock_agent.rag.embeddings as emb
+
+    monkeypatch.setattr(emb, "_voyage_transient_excs", lambda: (_Transient,))
+    _no_backoff(monkeypatch)
+    calls = {"n": 0}
+
+    def flaky() -> str:
+        calls["n"] += 1
+        if calls["n"] < 3:  # fail twice, then succeed on the 3rd attempt
+            raise _Transient("connection aborted")
+        return "ok"
+
+    assert emb._voyage_call_with_retry(flaky) == "ok"
+    assert calls["n"] == 3  # retried, did not give up early
+
+
+def test_voyage_retry_exhausts_after_max_attempts(monkeypatch: Any) -> None:
+    import stock_agent.rag.embeddings as emb
+
+    monkeypatch.setattr(emb, "_voyage_transient_excs", lambda: (_Transient,))
+    _no_backoff(monkeypatch)
+    calls = {"n": 0}
+
+    def always_fails() -> str:
+        calls["n"] += 1
+        raise _Transient("still down")
+
+    with pytest.raises(_Transient):
+        emb._voyage_call_with_retry(always_fails)
+    assert calls["n"] == emb._VOYAGE_APP_RETRIES  # bounded attempts, then the last error surfaces
+
+
+def test_voyage_retry_propagates_non_transient_immediately(monkeypatch: Any) -> None:
+    # An auth / malformed-request error is not in the transient set -> raise on the first try.
+    import stock_agent.rag.embeddings as emb
+
+    monkeypatch.setattr(emb, "_voyage_transient_excs", lambda: (_Transient,))
+    _no_backoff(monkeypatch)
+    calls = {"n": 0}
+
+    def bad_request() -> str:
+        calls["n"] += 1
+        raise ValueError("401 unauthorized")
+
+    with pytest.raises(ValueError):
+        emb._voyage_call_with_retry(bad_request)
+    assert calls["n"] == 1  # no retry on a non-transient error
+
+
+def test_voyage_embed_works_when_transient_set_empty(monkeypatch: Any) -> None:
+    # Simulates the CI path: voyageai absent -> _voyage_transient_excs() == () -> the wrapper
+    # must still issue the (fake-client) embed exactly once and return its vectors unchanged.
+    import stock_agent.rag.embeddings as emb
+
+    monkeypatch.setattr(emb, "_voyage_transient_excs", lambda: ())
+    client = _FakeVoyageClient()
+    e = VoyageEmbedder(Settings(_env_file=None), client=client)
+    assert e.embed_documents(["risk factors"]) == [[0.5, 0.6]]
+    assert e.embed_query("query") == [0.5, 0.6]
+
+
 # ---- real fastembed model (gated; never runs in CI) --------------------------
 @pytest.mark.skipif(
     not os.environ.get("RUN_EMBED_TESTS"),
